@@ -2,7 +2,8 @@ import joblib
 import numpy as np
 import os
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'spy_model.pkl')
+# Consistent model path (inside ml/models/)
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'spy_model.pkl')
 
 class SPYModel:
     def __init__(self):
@@ -10,18 +11,28 @@ class SPYModel:
         self.load_model()
 
     def load_model(self):
+        """Load the ML model from disk."""
         if os.path.exists(MODEL_PATH):
-            self.model = joblib.load(MODEL_PATH)
+            try:
+                self.model = joblib.load(MODEL_PATH)
+                print("[Model] Model loaded successfully.")
+            except Exception as e:
+                print(f"[Model Load Error] {e}")
+                self.model = None
         else:
-            self.model = None
             print("[Model] No model file found. ML predictions will be skipped.")
+            self.model = None
 
     def predict(self, features: np.ndarray):
+        """
+        Predict confidence score (0.0 to 1.0).
+        Returns 0.5 (neutral) if model not loaded or if prediction fails.
+        """
         if self.model is None:
-            return 0.5  # Neutral confidence if no model
+            return 0.5
         try:
             prob = self.model.predict_proba([features])[0][1]
-            return prob
+            return float(round(prob, 4))  # Return 4-decimal float
         except Exception as e:
-            print(f"[Model] Prediction error: {e}")
+            print(f"[Model Prediction Error] {e}")
             return 0.5
