@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 
 # === Logger Setup ===
 def setup_logger(name, log_file, level=logging.INFO):
@@ -33,3 +34,19 @@ def calculate_pct_change(new_value, old_value):
         return round(((new_value - old_value) / old_value) * 100, 2)
     except ZeroDivisionError:
         return 0.0
+
+# === Trade Type Determination ===
+eastern = pytz.timezone("US/Eastern")
+
+def is_day_trade(position):
+    """Return True if trade was opened and closed on same day (Eastern time)."""
+    try:
+        opened = datetime.strptime(position['asset_class']['trade_opened_at'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=pytz.utc).astimezone(eastern)
+        now = datetime.now(eastern)
+        return opened.date() == now.date()
+    except Exception:
+        return False
+
+def is_swing_trade(position):
+    """Return True if trade is held overnight."""
+    return not is_day_trade(position)
