@@ -10,7 +10,7 @@ import joblib
 from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL
 
 # === Model Save Path ===
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'spy_model.pkl')
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'spy_model.pkl')
 
 # === Initialize Alpaca ===
 alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL)
