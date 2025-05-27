@@ -31,16 +31,17 @@ def calculate_pct_change(new_value, old_value):
     except ZeroDivisionError:
         return 0.0
 
-# === Trade Type Determination ===
+# === Trade Type Checkers ===
 eastern = pytz.timezone("US/Eastern")
 
 def is_day_trade(position):
-    """Returns True if trade was opened and still on the same calendar day (Eastern time)."""
+    """Return True if entry_time is today (Eastern Time)."""
     try:
-        entry_time = datetime.fromisoformat(position['entry_time']).replace(tzinfo=pytz.utc).astimezone(eastern)
+        entry_time = datetime.fromisoformat(position['entry_time']).astimezone(eastern)
         now = datetime.now(eastern)
         return entry_time.date() == now.date()
-    except Exception:
+    except Exception as e:
+        print(f"Error in is_day_trade: {e}")
         return False
 
 def is_swing_trade(position):
