@@ -1,4 +1,15 @@
-alpaca-trade-api
-numpy
+requests
 pandas
+numpy
+python-dotenv
+ta
+yfinance
 scikit-learn
+matplotlib
+seaborn
+telegram
+schedule
+datetime
+scipy
+beautifulsoup4
+lxml
