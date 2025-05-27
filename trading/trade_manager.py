@@ -10,6 +10,9 @@ eastern = pytz.timezone("US/Eastern")
 # Alpaca client
 alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL, api_version='v2')
 
+# In-memory store for bot-tracked positions (optional enhancement)
+bot_positions = []
+
 def get_current_time_et():
     return datetime.now(eastern)
 
@@ -35,6 +38,17 @@ def place_order(symbol, qty, side, type="market", time_in_force="gtc"):
             time_in_force=time_in_force
         )
         print(f"Order placed: {side.upper()} {qty} {symbol}")
+
+        # Add entry_time to local tracking
+        position = {
+            'symbol': symbol,
+            'qty': qty,
+            'side': side,
+            'entry_price': None,  # you can fill this from order.filled_avg_price later if needed
+            'entry_time': datetime.utcnow().isoformat()
+        }
+        bot_positions.append(position)
+
         return order
     except Exception as e:
         print(f"Error placing order: {e}")
@@ -47,10 +61,10 @@ def close_position(symbol):
     except Exception as e:
         print(f"Error closing position: {e}")
 
-def manage_open_positions(positions):
+def manage_open_positions():
     now = get_current_time_et()
 
-    for pos in positions:
+    for pos in bot_positions:
         symbol = pos['symbol']
         if is_day_trade(pos) and should_exit_day_trades():
             print(f"Day trade cutoff hit, closing position: {symbol}")
