@@ -2,8 +2,8 @@ import joblib
 import numpy as np
 import os
 
-# Consistent model path (inside ml/models/)
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'spy_model.pkl')
+# Save model directly to ml/ folder
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'spy_model.pkl')
 
 class SPYModel:
     def __init__(self):
