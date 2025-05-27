@@ -3,9 +3,9 @@
 # -------------------------
 # ALPACA PAPER TRADING CONFIGURATION
 # -------------------------
-ALPACA_API_KEY = 'your_alpaca_paper_api_key'
-ALPACA_SECRET_KEY = 'your_alpaca_paper_secret_key'
-ALPACA_BASE_URL = 'https://paper-api.alpaca.markets'
+ALPACA_API_KEY = 'PKN2XOI35DSOTP92V13U'
+ALPACA_SECRET_KEY = 'IlSkwCrARFRrKe74VbBM6XaeYAEnUl0KDoihzXqi'
+ALPACA_BASE_URL = 'https://paper-api.alpaca.markets/v2'
 
 # -------------------------
 # TRADING SETTINGS
