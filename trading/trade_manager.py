@@ -1,61 +1,65 @@
-import alpaca_trade_api as tradeapi
-import logging
-import time
-from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
+import pytz
+from datetime import datetime, timedelta
+from alpaca_trade_api.rest import REST, TimeFrame
+from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL
+from helpers import is_day_trade, is_swing_trade
 
-logger = logging.getLogger(__name__)
+# Set timezone to Eastern
+eastern = pytz.timezone("US/Eastern")
 
-class TradeManager:
-    def __init__(self):
-        self.api = tradeapi.REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, api_version='v2')
+# Alpaca client
+alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL, api_version='v2')
 
-    def get_account(self):
-        try:
-            return self.api.get_account()
-        except Exception as e:
-            logger.error(f"Failed to get account: {e}")
-            return None
+def get_current_time_et():
+    return datetime.now(eastern)
 
-    def get_positions(self):
-        try:
-            return self.api.list_positions()
-        except Exception as e:
-            logger.error(f"Failed to get positions: {e}")
-            return []
+def is_market_open():
+    clock = alpaca.get_clock()
+    return clock.is_open
 
-    def close_position(self, symbol):
-        try:
-            self.api.close_position(symbol)
-            logger.info(f"Closed position for {symbol}")
-        except Exception as e:
-            logger.error(f"Failed to close position for {symbol}: {e}")
+def should_enter_day_trade():
+    now = get_current_time_et()
+    return now.hour < 15 or (now.hour == 15 and now.minute < 30)
 
-    def submit_order(self, symbol, qty, side, type='market', time_in_force='gtc'):
-        try:
-            order = self.api.submit_order(
-                symbol=symbol,
-                qty=qty,
-                side=side,
-                type=type,
-                time_in_force=time_in_force
-            )
-            logger.info(f"{side.capitalize()} order submitted for {qty} shares of {symbol}")
-            return order
-        except Exception as e:
-            logger.error(f"Order submission failed: {e}")
-            return None
+def should_exit_day_trades():
+    now = get_current_time_et()
+    return now.hour == 15 and now.minute >= 55  # 3:55 PM ET
 
-    def check_existing_order(self, symbol):
-        try:
-            orders = self.api.list_orders(status='open', symbols=[symbol])
-            return any(order.symbol == symbol for order in orders)
-        except Exception as e:
-            logger.error(f"Failed to check existing orders: {e}")
-            return False
+def place_order(symbol, qty, side, type="market", time_in_force="gtc"):
+    try:
+        order = alpaca.submit_order(
+            symbol=symbol,
+            qty=qty,
+            side=side,
+            type=type,
+            time_in_force=time_in_force
+        )
+        print(f"Order placed: {side.upper()} {qty} {symbol}")
+        return order
+    except Exception as e:
+        print(f"Error placing order: {e}")
+        return None
 
-    def cancel_all_orders(self):
-        try:
-            self.api.cancel_all_orders()
-            logger.info("All open orders cancelled")
-        except Exception as e:
-            logger.error(f"Failed to cancel orders: {e}")
+def close_position(symbol):
+    try:
+        alpaca.close_position(symbol)
+        print(f"Closed position: {symbol}")
+    except Exception as e:
+        print(f"Error closing position: {e}")
+
+def manage_open_positions(positions):
+    now = get_current_time_et()
+
+    for pos in positions:
+        symbol = pos['symbol']
+        if is_day_trade(pos) and should_exit_day_trades():
+            print(f"Day trade cutoff hit, closing position: {symbol}")
+            close_position(symbol)
+
+def get_open_positions():
+    try:
+        positions = alpaca.list_positions()
+        return [p._raw for p in positions if p.qty != '0']
+    except Exception as e:
+        print(f"Error fetching positions: {e}")
+        return []
