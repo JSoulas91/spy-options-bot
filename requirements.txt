@@ -7,7 +7,5 @@ matplotlib
 yfinance
 requests
 beautifulsoup4
-python-telegram-bot
-datetime
 schedule
 pytz
