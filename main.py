@@ -1,11 +1,19 @@
 import schedule
 import time
+from datetime import datetime
+import pytz
+import os
+import subprocess
 from data.data_collector import DataCollector
 from strategy.strategy import TradingStrategy
 from trading.trade_manager import TradeManager
 from reporting.telegram_bot import TelegramBot
 from reporting.performance_dashboard import PerformanceDashboard
-from ml.retrain import retrain_model  # Make sure this path is correct
+from utils.log_cleanup import cleanup_logs
+from utils.backup import backup_data
+
+# Timezone
+eastern = pytz.timezone('US/Eastern')
 
 # Initialize components
 data_collector = DataCollector()
@@ -15,46 +23,62 @@ telegram_bot = TelegramBot()
 dashboard = PerformanceDashboard()
 
 def run_bot():
-    try:
-        market_data = data_collector.collect_market_data()
-        signal, confidence = strategy.generate_trade_signal(market_data)
+    now = datetime.now(eastern)
+    if now.strftime('%H:%M') == "09:30":
+        try:
+            market_data = data_collector.collect_market_data()
+            signal, confidence = strategy.generate_trade_signal(market_data)
 
-        if signal:
-            option_contract = trade_manager.select_option_contract(signal, market_data)
-            trade_result = trade_manager.execute_trade(option_contract, signal, confidence)
-            dashboard.record_trade(trade_result)
+            if signal:
+                option_contract = trade_manager.select_option_contract(signal, market_data)
+                trade_result = trade_manager.execute_trade(option_contract, signal, confidence)
+                dashboard.record_trade(trade_result)
 
-            msg = (
-                f"📥 Trade Executed\n"
-                f"🧠 Signal: {signal.upper()}\n"
-                f"📈 Confidence: {confidence:.2f}\n"
-                f"🎯 Result: {trade_result['pnl']}%\n"
-            )
-            telegram_bot.send_message(msg)
-        else:
-            telegram_bot.send_message("🤖 No trade signal generated.")
+                msg = (
+                    f"📥 Trade Executed\n"
+                    f"🧠 Signal: {signal.upper()}\n"
+                    f"📈 Confidence: {confidence:.2f}\n"
+                    f"🎯 Result: {trade_result['pnl']}%\n"
+                )
+                telegram_bot.send_message(msg)
+            else:
+                telegram_bot.send_message("🤖 No trade signal generated.")
 
-    except Exception as e:
-        telegram_bot.send_message(f"❌ Error occurred: {str(e)}")
+        except Exception as e:
+            telegram_bot.send_message(f"❌ Error occurred during trade: {str(e)}")
 
 def send_daily_summary():
-    summary = dashboard.generate_summary()
-    telegram_bot.send_message(summary)
+    now = datetime.now(eastern)
+    if now.strftime('%H:%M') == "16:45":
+        try:
+            summary = dashboard.generate_summary()
+            telegram_bot.send_message(summary)
+        except Exception as e:
+            telegram_bot.send_message(f"❌ Error during summary: {str(e)}")
 
-def run_retraining():
-    try:
-        retrain_model()
-        telegram_bot.send_message("🧠 ML model retrained successfully.")
-    except Exception as e:
-        telegram_bot.send_message(f"❌ Retrain error: {str(e)}")
-
-# Schedule tasks
-schedule.every().day.at("09:30").do(run_bot)             # Market open trade
-schedule.every().day.at("16:45").do(send_daily_summary)  # Summary 15 min after market close
-schedule.every().day.at("17:00").do(run_retraining)      # Retraining after close
+def retrain_model_and_maintenance():
+    now = datetime.now(eastern)
+    if now.strftime('%H:%M') == "16:50":
+        try:
+            telegram_bot.send_message("🔁 Starting daily retraining and cleanup...")
+            # Run retraining script
+            subprocess.run(["python3", "ml/retrain.py"], check=True)
+            # Clean up logs
+            cleanup_logs()
+            # Backup data
+            backup_data()
+            telegram_bot.send_message("✅ Daily retraining, cleanup, and backup complete.")
+        except Exception as e:
+            telegram_bot.send_message(f"❌ Error during retraining or maintenance: {str(e)}")
 
 if __name__ == "__main__":
     telegram_bot.send_message("🚀 SPY Options Bot Started")
+
+    # Run check every minute for timezone-aware scheduling
+    schedule.every().minute.do(run_bot)
+    schedule.every().minute.do(send_daily_summary)
+    schedule.every().minute.do(retrain_model_and_maintenance)
+
     while True:
         schedule.run_pending()
         time.sleep(1)
