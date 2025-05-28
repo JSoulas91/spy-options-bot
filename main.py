@@ -4,6 +4,13 @@ from datetime import datetime
 import pytz
 import os
 import subprocess
+
+from config import (
+    MARKET_OPEN,
+    MARKET_CLOSE,
+    NO_NEW_TRADES_AFTER
+)
+
 from data.data_collector import DataCollector
 from strategy.strategy import TradingStrategy
 from trading.trade_manager import TradeManager
@@ -24,7 +31,7 @@ dashboard = PerformanceDashboard()
 
 def run_bot():
     now = datetime.now(eastern)
-    if now.strftime('%H:%M') == "09:30":
+    if now.strftime('%H:%M') == MARKET_OPEN:
         try:
             market_data = data_collector.collect_market_data()
             signal, confidence = strategy.generate_trade_signal(market_data)
@@ -74,7 +81,7 @@ def retrain_model_and_maintenance():
 if __name__ == "__main__":
     telegram_bot.send_message("🚀 SPY Options Bot Started")
 
-    # Run check every minute for timezone-aware scheduling
+    # Schedule to run checks every minute
     schedule.every().minute.do(run_bot)
     schedule.every().minute.do(send_daily_summary)
     schedule.every().minute.do(retrain_model_and_maintenance)
