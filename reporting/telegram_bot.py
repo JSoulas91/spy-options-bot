@@ -1,9 +1,6 @@
 import requests
-import os
 from datetime import datetime
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 class TelegramBot:
     def __init__(self):
