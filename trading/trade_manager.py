@@ -7,15 +7,19 @@ from helpers import is_day_trade, is_swing_trade
 # Set timezone to Eastern
 eastern = pytz.timezone("US/Eastern")
 
-# Alpaca client
+# Alpaca client using keys loaded from .env via config.py
 alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, api_version='v2')
 
 def get_current_time_et():
     return datetime.now(eastern)
 
 def is_market_open():
-    clock = alpaca.get_clock()
-    return clock.is_open
+    try:
+        clock = alpaca.get_clock()
+        return clock.is_open
+    except Exception as e:
+        print(f"Error checking market status: {e}")
+        return False
 
 def should_enter_day_trade():
     now = get_current_time_et()
