@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from pytz import timezone
 from trade_manager import manage_open_positions, get_open_positions
-from retrain import run_retraining_pipeline
+from retrain import retrain_model  # ✅ Updated import
 from telegram_bot import TelegramBot
 from utils.backup import backup_logs
 from utils.log_cleanup import cleanup_logs
@@ -28,7 +28,7 @@ def run_end_of_day_tasks():
     manage_open_positions(positions)
 
     # Retrain model
-    run_retraining_pipeline()
+    retrain_model()  # ✅ Updated function call
 
     # Backup logs
     backup_logs()
