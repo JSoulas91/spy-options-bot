@@ -1,14 +1,14 @@
 import pytz
 from datetime import datetime
 from alpaca_trade_api.rest import REST, TimeFrame
-from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL
+from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
 from helpers import is_day_trade, is_swing_trade
 
 # Set timezone to Eastern
 eastern = pytz.timezone("US/Eastern")
 
 # Alpaca client
-alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL, api_version='v2')
+alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, api_version='v2')
 
 def get_current_time_et():
     return datetime.now(eastern)
