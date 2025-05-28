@@ -11,15 +11,17 @@ import requests
 from config import (
     ALPACA_API_KEY,
     ALPACA_SECRET_KEY,
-    ALPACA_PAPER_BASE_URL,
-    TELEGRAM_TOKEN,
+    ALPACA_BASE_URL,
+    TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID
 )
 
+# Paths for model and log files
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'spy_model.pkl')
 LOG_PATH = os.path.join(os.path.dirname(__file__), 'retrain_log.txt')
 
-alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_BASE_URL)
+# Initialize Alpaca
+alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL)
 
 def fetch_data(symbol="SPY", lookback_days=60):
     end_dt = datetime.utcnow()
@@ -44,7 +46,7 @@ def extract_features(df):
     return df[['return', 'volatility', 'sma_5', 'sma_10', 'sma_ratio', 'label']]
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
         requests.post(url, data=data)
