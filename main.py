@@ -1,26 +1,23 @@
-import logging
 import time
+import traceback
 from scheduler import run_scheduler_loop
-
-# Optional: Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s — %(levelname)s — %(message)s",
-    handlers=[
-        logging.FileHandler("logs/main.log"),
-        logging.StreamHandler()
-    ]
-)
+from utils.logger import bot_logger
+from telegram_bot import send_telegram_message
 
 def main():
-    logging.info("SPY Options Trading Bot starting scheduler loop...")
+    bot_logger.info("🚀 SPY Options Trading Bot is launching...")
+    send_telegram_message("🚀 *Bot Online*\nScheduler loop is starting.")
+
     try:
         run_scheduler_loop()
     except Exception as e:
-        logging.exception(f"Fatal error in main scheduler loop: {e}")
+        bot_logger.critical(f"🔥 Fatal error in scheduler loop: {e}")
+        bot_logger.debug(traceback.format_exc())
+        send_telegram_message(f"❌ *Fatal Error in main.py*\n\nError: `{str(e)}`")
         raise
     finally:
-        logging.info("Bot has stopped. Exiting main.py.")
+        bot_logger.info("🛑 Bot has stopped. main.py exiting.")
+        send_telegram_message("🛑 *Bot Offline*\nMain loop has exited.")
 
 if __name__ == "__main__":
     main()
