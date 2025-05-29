@@ -1,53 +1,46 @@
 import schedule
 import time
+import traceback
+import pytz
 from datetime import datetime
-from config import (
-    TRADE_EXECUTION_TIME,
-    SUMMARY_REPORT_TIME,
-    RETRAINING_TIME,
-    TELEGRAM_ALERTS_ENABLED
-)
+from retrain import retrain_model
+from trade_manager import run_trading_bot
+from telegram_bot import send_telegram_message
+from performance_summary import send_daily_summary
+from cleanup import cleanup_logs_and_backups
 
-from trade_manager import run_daily_trades
-from telegram_bot import send_daily_summary
-from retrain import run_retraining_pipeline
-from utils import cleanup_old_logs, backup_logs
+# Set Eastern Timezone
+eastern = pytz.timezone('US/Eastern')
 
+def log_and_notify(task_name, func):
+    start_time = datetime.now(eastern).strftime("%Y-%m-%d %I:%M %p")
+    send_telegram_message(f"⏰ *Scheduled Task Started*\n🛠️ Task: {task_name}\n🕒 Time: {start_time}")
+    try:
+        func()
+        send_telegram_message(f"✅ *Task Complete*\n🛠️ {task_name} finished successfully.")
+    except Exception as e:
+        error_time = datetime.now(eastern).strftime("%Y-%m-%d %I:%M %p")
+        error_msg = (
+            f"🚨 *Scheduled Task Error*\n"
+            f"🧩 Task: {task_name}\n"
+            f"❌ Reason: `{str(e)}`\n"
+            f"🕒 Time: {error_time}"
+        )
+        send_telegram_message(error_msg)
+        print(traceback.format_exc())
 
-def log(message):
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+# Daily Schedule (Eastern Time)
+schedule.every().day.at("09:30").do(lambda: log_and_notify("Trading Bot", run_trading_bot))
+schedule.every().day.at("16:45").do(lambda: log_and_notify("Performance Summary", send_daily_summary))
+schedule.every().day.at("16:50").do(lambda: log_and_notify("Model Retraining", retrain_model))
+schedule.every().day.at("17:00").do(lambda: log_and_notify("Log & Backup Cleanup", cleanup_logs_and_backups))
 
-
-def job_run_trades():
-    log("Running daily trade execution.")
-    run_daily_trades()
-
-
-def job_send_summary():
-    if TELEGRAM_ALERTS_ENABLED:
-        log("Sending daily Telegram performance summary.")
-        send_daily_summary()
-    else:
-        log("Telegram alerts disabled in config.")
-
-
-def job_retrain_and_cleanup():
-    log("Running model retraining and cleanup pipeline.")
-    run_retraining_pipeline()
-    cleanup_old_logs()
-    backup_logs()
-
-
-def schedule_all_tasks():
-    schedule.every().day.at(TRADE_EXECUTION_TIME).do(job_run_trades)
-    schedule.every().day.at(SUMMARY_REPORT_TIME).do(job_send_summary)
-    schedule.every().day.at(RETRAINING_TIME).do(job_retrain_and_cleanup)
-
-
-def run_scheduler_loop():
-    log("Scheduler started. Waiting for jobs to run...")
-    schedule_all_tasks()
-
+def run_scheduler():
+    print("📅 Scheduler started. Waiting for scheduled tasks...")
+    send_telegram_message("✅ *Scheduler Online*\n📆 All tasks initialized and standing by.")
     while True:
         schedule.run_pending()
         time.sleep(1)
+
+if __name__ == "__main__":
+    run_scheduler()
