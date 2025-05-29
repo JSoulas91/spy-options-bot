@@ -7,6 +7,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import joblib
 import requests
+import traceback
+
 from config import (
     ALPACA_API_KEY,
     ALPACA_SECRET_KEY,
@@ -14,6 +16,7 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID
 )
+from utils.logger import bot_logger as logger
 
 # Paths
 BASE_DIR = os.path.dirname(__file__)
@@ -55,7 +58,7 @@ def send_telegram_message(message):
     try:
         requests.post(url, data=data)
     except Exception as e:
-        print(f"[Telegram Error] {e}")
+        logger.error(f"[Telegram Error] {e}")
 
 def get_last_accuracy():
     if os.path.exists(LOG_PATH):
@@ -69,7 +72,7 @@ def get_last_accuracy():
 
 def retrain_model():
     try:
-        print("[ML Retraining] Fetching data...")
+        logger.info("[ML Retraining] Starting retraining process...")
         raw = fetch_data()
         labeled = create_labels(raw)
         data = extract_features(labeled)
@@ -77,10 +80,10 @@ def retrain_model():
         X = data.drop(columns=['label'])
         y = data['label']
 
-        print("[ML Retraining] Splitting data...")
+        logger.info("[ML Retraining] Splitting data...")
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        print("[ML Retraining] Training RandomForest...")
+        logger.info("[ML Retraining] Training RandomForest model...")
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_train, y_train)
 
@@ -88,7 +91,6 @@ def retrain_model():
         acc = accuracy_score(y_test, y_pred)
         acc_pct = f"{acc:.2%}"
 
-        # Save model and log
         joblib.dump(model, MODEL_PATH)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -110,12 +112,14 @@ def retrain_model():
             f"📈 Status: ✅ Saved & Logged"
         )
 
-        print(message)
+        logger.info(f"[ML Retraining] Success — Accuracy: {acc_pct}")
+        logger.info(message.replace("*", "").replace("`", ""))  # Plain version in logs
         send_telegram_message(message)
 
     except Exception as e:
         error_msg = f"❌ *ML Retraining Failed*\nReason: `{str(e)}`"
-        print(error_msg)
+        logger.critical(error_msg)
+        logger.debug(traceback.format_exc())
         send_telegram_message(error_msg)
 
 if __name__ == "__main__":
