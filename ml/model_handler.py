@@ -1,6 +1,8 @@
-import joblib
 import os
+import joblib
+import traceback
 from sklearn.ensemble import RandomForestClassifier
+from utils.logger import bot_logger
 
 # Save directly inside ml/
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "spy_model.pkl")
@@ -9,21 +11,27 @@ def load_model():
     """Load the trained ML model from disk."""
     if os.path.exists(MODEL_PATH):
         try:
-            return joblib.load(MODEL_PATH)
+            model = joblib.load(MODEL_PATH)
+            bot_logger.info("🧠 [Model Handler] Model loaded successfully.")
+            return model
         except Exception as e:
-            print(f"[Model Load Error] {e}")
+            bot_logger.error(f"[Model Load Error] {e}")
+            bot_logger.debug(traceback.format_exc())
             return None
-    return None
+    else:
+        bot_logger.warning("⚠️ [Model Handler] No model file found.")
+        return None
 
 def predict(model, features):
     """Predict using the given model and input features."""
     if model is None:
-        print("[Prediction Warning] Model not loaded.")
+        bot_logger.warning("[Prediction Warning] Model not loaded. Returning default prediction: 0")
         return 0
     try:
         return model.predict([features])[0]
     except Exception as e:
-        print(f"[Prediction Error] {e}")
+        bot_logger.error(f"[Prediction Error] {e}")
+        bot_logger.debug(traceback.format_exc())
         return 0
 
 def retrain_model(data, labels):
@@ -31,10 +39,11 @@ def retrain_model(data, labels):
     try:
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(data, labels)
-
         joblib.dump(model, MODEL_PATH)
-        print("[Model Retrained] New model saved successfully.")
+
+        bot_logger.info("🔁 [Retrain] Model retrained and saved successfully.")
         return model
     except Exception as e:
-        print(f"[Retrain Error] {e}")
+        bot_logger.error(f"[Retrain Error] {e}")
+        bot_logger.debug(traceback.format_exc())
         return None
