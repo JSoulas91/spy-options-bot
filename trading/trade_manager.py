@@ -4,8 +4,9 @@ from datetime import datetime
 from alpaca_trade_api.rest import REST, TimeFrame
 
 from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
-from helpers import is_day_trade, is_swing_trade
+from helpers import is_day_trade
 from utils.logger import bot_logger as logger
+from telegram_bot import send_telegram_message
 
 # Set timezone to Eastern
 eastern = pytz.timezone("US/Eastern")
@@ -19,7 +20,8 @@ def get_current_time_et():
     except Exception as e:
         logger.error(f"[Time Conversion Error] {str(e)}")
         logger.debug(traceback.format_exc())
-        return datetime.utcnow()  # Fallback to UTC if timezone fails
+        send_telegram_message("⚠️ Timezone conversion failed — using UTC fallback.")
+        return datetime.utcnow()  # Fallback to UTC
 
 def is_market_open():
     try:
@@ -28,6 +30,7 @@ def is_market_open():
     except Exception as e:
         logger.error(f"[Market Status Check Error] {str(e)}")
         logger.debug(traceback.format_exc())
+        send_telegram_message("⚠️ Failed to check if market is open.")
         return False
 
 def should_enter_day_trade():
@@ -58,6 +61,7 @@ def place_order(symbol, qty, side, type="market", time_in_force="gtc"):
             time_in_force=time_in_force
         )
         logger.info(f"🟢 Order Placed: {side.upper()} {qty} {symbol}")
+        send_telegram_message(f"🟢 Order Placed: `{side.upper()} {qty} {symbol}`")
         return {
             'symbol': symbol,
             'qty': qty,
@@ -68,15 +72,18 @@ def place_order(symbol, qty, side, type="market", time_in_force="gtc"):
     except Exception as e:
         logger.error(f"[Order Placement Error] {str(e)}")
         logger.debug(traceback.format_exc())
+        send_telegram_message(f"❌ Order Failed: `{side.upper()} {qty} {symbol}`\nReason: `{str(e)}`")
         return None
 
 def close_position(symbol):
     try:
         alpaca.close_position(symbol)
         logger.info(f"🔴 Closed position: {symbol}")
+        send_telegram_message(f"🔴 Closed position: `{symbol}`")
     except Exception as e:
         logger.error(f"[Position Close Error] {str(e)}")
         logger.debug(traceback.format_exc())
+        send_telegram_message(f"⚠️ Failed to close position: `{symbol}`\nReason: `{str(e)}`")
 
 def manage_open_positions(positions):
     try:
@@ -89,9 +96,11 @@ def manage_open_positions(positions):
             except Exception as e:
                 logger.error(f"[Position Management Error — {symbol}] {str(e)}")
                 logger.debug(traceback.format_exc())
+                send_telegram_message(f"⚠️ Error managing open position `{symbol}`\nReason: `{str(e)}`")
     except Exception as e:
         logger.critical(f"[manage_open_positions() Failed] {str(e)}")
         logger.debug(traceback.format_exc())
+        send_telegram_message("🚨 Failed to manage open positions.")
 
 def get_open_positions():
     try:
@@ -100,4 +109,5 @@ def get_open_positions():
     except Exception as e:
         logger.error(f"[Fetch Open Positions Error] {str(e)}")
         logger.debug(traceback.format_exc())
+        send_telegram_message("⚠️ Could not fetch open positions.")
         return []
