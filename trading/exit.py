@@ -1,10 +1,11 @@
 from utils.logger import bot_logger
+from telegram_bot import send_telegram_message
 import traceback
 
 def evaluate_exit_conditions(position, market_data, indicators, confidence_score, trailing_stop_enabled=True):
     """
     Determines whether to exit a position based on various conditions.
-    
+
     :param position: dict of current position details
     :param market_data: dict of current price data
     :param indicators: dict of technical indicators
@@ -40,4 +41,9 @@ def evaluate_exit_conditions(position, market_data, indicators, confidence_score
     except Exception as e:
         bot_logger.error(f"[Exit Evaluation Error] {str(e)}")
         bot_logger.debug(traceback.format_exc())
-        return False
+        send_telegram_message(
+            f"⚠️ *Exit Module Error*\n"
+            f"Could not evaluate exit conditions.\n"
+            f"Reason: `{str(e)}`"
+        )
+        return False  # Safe fallback
