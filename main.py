@@ -10,21 +10,29 @@ def main():
 
     while True:
         try:
-            run_scheduler_loop()  # this will never return unless there's a failure
+            run_scheduler_loop()  # Infinite loop unless it crashes
         except Exception as e:
             logger.critical(f"🔥 Scheduler loop crashed: {e}")
             logger.debug(traceback.format_exc())
+
             send_telegram_message(
                 f"❌ *Main Loop Crash Detected*\n"
                 f"📛 Error: `{str(e)}`\n"
-                f"⏳ Attempting auto-recovery in 5 seconds..."
+                f"⏳ Retrying in 5 seconds..."
             )
-            time.sleep(5)  # short pause before retrying
+            logger.debug("🔁 Retrying scheduler loop in 5 seconds...")
+            time.sleep(5)
+
         else:
-            # This branch will only run if the loop exits without exception
             logger.warning("⚠️ Scheduler loop exited unexpectedly.")
-            send_telegram_message("⚠️ *Scheduler exited unexpectedly.* Restarting in 5 seconds...")
+            send_telegram_message("⚠️ *Scheduler exited unexpectedly.* Retrying in 5 seconds...")
+            logger.debug("🔁 Retrying scheduler loop due to unexpected exit...")
             time.sleep(5)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.critical(f"💀 Bot main entry failed: {e}")
+        logger.debug(traceback.format_exc())
+        send_telegram_message(f"💥 *Fatal Error in main.py*\n\n{str(e)}")
