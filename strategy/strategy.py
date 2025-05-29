@@ -9,7 +9,7 @@ from config import (
     AGGRESSIVE_TRADE_SIZE,
     DEFAULT_POSITION_SIZE
 )
-from utils.logger import bot_logger  # ✅ Import logger
+from utils.logger import bot_logger as logger
 
 def evaluate_trade(position, market_data):
     """
@@ -23,31 +23,33 @@ def evaluate_trade(position, market_data):
         entry_price = position.get('entry_price')
         price = market_data.get('price')
 
-        if not entry_price or not price:
+        if entry_price is None or price is None:
             raise ValueError("Missing 'entry_price' or 'price' in input data.")
 
+        logger.debug(f"[Strategy] Evaluating trade — Entry: {entry_price}, Current: {price}")
+
         if is_day_trade(position):
-            # Day trade logic
+            logger.debug("[Strategy] Trade type: Day Trade")
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT):
-                bot_logger.info("Day trade hit profit target. Exiting.")
+                logger.info("✅ Day trade hit profit target. Exiting.")
                 action = "exit"
             elif price <= entry_price * (1 - STOP_LOSS_ATR_MULTIPLIER * 0.05):
-                bot_logger.info("Day trade hit stop-loss. Exiting.")
+                logger.info("🛑 Day trade hit stop-loss. Exiting.")
                 action = "exit"
 
         elif is_swing_trade(position):
-            # Swing trade logic
+            logger.debug("[Strategy] Trade type: Swing Trade")
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT * 1.5):
-                bot_logger.info("Swing trade profit target hit. Exiting.")
+                logger.info("✅ Swing trade hit profit target. Exiting.")
                 action = "exit"
             elif price <= entry_price * (1 - STOP_LOSS_ATR_MULTIPLIER * 0.06):
-                bot_logger.info("Swing trade stop-loss hit. Exiting.")
+                logger.info("🛑 Swing trade hit stop-loss. Exiting.")
                 action = "exit"
 
+        logger.debug(f"[Strategy] Action determined: {action}")
         return action
 
     except Exception as e:
-        error_message = f"[Strategy Error] {str(e)}"
-        bot_logger.error(error_message)
-        bot_logger.debug(traceback.format_exc())
+        logger.error(f"[Strategy Error] {str(e)}")
+        logger.debug(traceback.format_exc())
         return "hold"  # Safe fallback
