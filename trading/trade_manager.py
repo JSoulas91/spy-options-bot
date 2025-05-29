@@ -1,13 +1,15 @@
 import pytz
+import traceback
 from datetime import datetime
 from alpaca_trade_api.rest import REST, TimeFrame
 from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
 from helpers import is_day_trade, is_swing_trade
+from utils.logger import bot_logger
 
 # Set timezone to Eastern
 eastern = pytz.timezone("US/Eastern")
 
-# Alpaca client using keys loaded from .env via config.py
+# Alpaca client
 alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, api_version='v2')
 
 def get_current_time_et():
@@ -18,7 +20,8 @@ def is_market_open():
         clock = alpaca.get_clock()
         return clock.is_open
     except Exception as e:
-        print(f"Error checking market status: {e}")
+        bot_logger.error(f"[Market Status Check Error] {str(e)}")
+        bot_logger.debug(traceback.format_exc())
         return False
 
 def should_enter_day_trade():
@@ -38,36 +41,43 @@ def place_order(symbol, qty, side, type="market", time_in_force="gtc"):
             type=type,
             time_in_force=time_in_force
         )
-        print(f"Order placed: {side.upper()} {qty} {symbol}")
+        bot_logger.info(f"🟢 Order Placed: {side.upper()} {qty} {symbol}")
         return {
             'symbol': symbol,
             'qty': qty,
             'side': side,
-            'entry_time': datetime.utcnow().isoformat(),  # Required for trade classification
+            'entry_time': datetime.utcnow().isoformat(),
             'order_id': order.id
         }
     except Exception as e:
-        print(f"Error placing order: {e}")
+        bot_logger.error(f"[Order Placement Error] {str(e)}")
+        bot_logger.debug(traceback.format_exc())
         return None
 
 def close_position(symbol):
     try:
         alpaca.close_position(symbol)
-        print(f"Closed position: {symbol}")
+        bot_logger.info(f"🔴 Closed position: {symbol}")
     except Exception as e:
-        print(f"Error closing position: {e}")
+        bot_logger.error(f"[Position Close Error] {str(e)}")
+        bot_logger.debug(traceback.format_exc())
 
 def manage_open_positions(positions):
     for pos in positions:
         symbol = pos['symbol']
-        if is_day_trade(pos) and should_exit_day_trades():
-            print(f"Day trade cutoff hit, closing position: {symbol}")
-            close_position(symbol)
+        try:
+            if is_day_trade(pos) and should_exit_day_trades():
+                bot_logger.info(f"⏰ Day trade cutoff hit — closing: {symbol}")
+                close_position(symbol)
+        except Exception as e:
+            bot_logger.error(f"[Position Management Error] {str(e)}")
+            bot_logger.debug(traceback.format_exc())
 
 def get_open_positions():
     try:
         positions = alpaca.list_positions()
         return [p._raw for p in positions if p.qty != '0']
     except Exception as e:
-        print(f"Error fetching positions: {e}")
+        bot_logger.error(f"[Fetch Open Positions Error] {str(e)}")
+        bot_logger.debug(traceback.format_exc())
         return []
