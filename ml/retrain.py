@@ -27,30 +27,42 @@ LOG_PATH = os.path.join(BASE_DIR, 'retrain_log.csv')
 alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL)
 
 def fetch_data(symbol="SPY", lookback_days=60):
-    end_dt = datetime.utcnow()
-    start_dt = end_dt - timedelta(days=lookback_days)
-    bars = alpaca.get_bars(symbol, TimeFrame.Day, start=start_dt.isoformat(), end=end_dt.isoformat()).df
+    try:
+        end_dt = datetime.utcnow()
+        start_dt = end_dt - timedelta(days=lookback_days)
+        bars = alpaca.get_bars(symbol, TimeFrame.Day, start=start_dt.isoformat(), end=end_dt.isoformat()).df
 
-    if bars.empty:
-        raise ValueError("No data returned from Alpaca. Market may be closed or unavailable.")
-    
-    bars = bars.reset_index()
-    bars['timestamp'] = pd.to_datetime(bars['timestamp'])
-    return bars
+        if bars.empty:
+            raise ValueError("No data returned from Alpaca. Market may be closed or unavailable.")
+        
+        bars = bars.reset_index()
+        bars['timestamp'] = pd.to_datetime(bars['timestamp'])
+        return bars
+    except Exception as e:
+        logger.error(f"[ML Retraining] Error in fetch_data: {e}")
+        raise
 
 def create_labels(df):
-    df['future_close'] = df['close'].shift(-1)
-    df['label'] = (df['future_close'] > df['close']).astype(int)
-    return df.dropna()
+    try:
+        df['future_close'] = df['close'].shift(-1)
+        df['label'] = (df['future_close'] > df['close']).astype(int)
+        return df.dropna()
+    except Exception as e:
+        logger.error(f"[ML Retraining] Error in create_labels: {e}")
+        raise
 
 def extract_features(df):
-    df['return'] = df['close'].pct_change()
-    df['volatility'] = df['close'].rolling(window=5).std()
-    df['sma_5'] = df['close'].rolling(window=5).mean()
-    df['sma_10'] = df['close'].rolling(window=10).mean()
-    df['sma_ratio'] = df['sma_5'] / df['sma_10']
-    df = df.dropna()
-    return df[['return', 'volatility', 'sma_5', 'sma_10', 'sma_ratio', 'label']]
+    try:
+        df['return'] = df['close'].pct_change()
+        df['volatility'] = df['close'].rolling(window=5).std()
+        df['sma_5'] = df['close'].rolling(window=5).mean()
+        df['sma_10'] = df['close'].rolling(window=10).mean()
+        df['sma_ratio'] = df['sma_5'] / df['sma_10']
+        df = df.dropna()
+        return df[['return', 'volatility', 'sma_5', 'sma_10', 'sma_ratio', 'label']]
+    except Exception as e:
+        logger.error(f"[ML Retraining] Error in extract_features: {e}")
+        raise
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
