@@ -10,6 +10,8 @@ from config import (
     DEFAULT_POSITION_SIZE
 )
 from utils.logger import bot_logger as logger
+from telegram_bot import send_telegram_message
+
 
 def evaluate_trade(position, market_data):
     """
@@ -52,4 +54,9 @@ def evaluate_trade(position, market_data):
     except Exception as e:
         logger.error(f"[Strategy Error] {str(e)}")
         logger.debug(traceback.format_exc())
+        send_telegram_message(
+            f"⚠️ *Strategy Module Error*\n"
+            f"Could not evaluate trade.\n"
+            f"Reason: `{str(e)}`"
+        )
         return "hold"  # Safe fallback
