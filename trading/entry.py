@@ -1,15 +1,31 @@
 from strategy import generate_trade_signal
-from utils.logger import log_info
+from utils.logger import bot_logger  # Swapped from log_info to bot_logger for consistency
+import traceback
 
 def evaluate_entry_signals(market_data, indicators, sentiment, confidence_score):
-    signal = generate_trade_signal(market_data, indicators, sentiment, confidence_score)
-    
-    if signal == "buy_call":
-        log_info("Entry Signal: BUY CALL triggered.")
-        return "CALL"
-    elif signal == "buy_put":
-        log_info("Entry Signal: BUY PUT triggered.")
-        return "PUT"
-    else:
-        log_info("No valid entry signal.")
+    """
+    Evaluates whether to enter a CALL or PUT trade based on strategy output.
+
+    :param market_data: dict of market prices, etc.
+    :param indicators: dict of technical indicator values
+    :param sentiment: float from NLP/sentiment module
+    :param confidence_score: float from ML model
+    :return: "CALL", "PUT", or None
+    """
+    try:
+        signal = generate_trade_signal(market_data, indicators, sentiment, confidence_score)
+
+        if signal == "buy_call":
+            bot_logger.info("📥 Entry Signal: BUY CALL triggered.")
+            return "CALL"
+        elif signal == "buy_put":
+            bot_logger.info("📥 Entry Signal: BUY PUT triggered.")
+            return "PUT"
+        else:
+            bot_logger.info("🔍 Entry Signal: No valid signal generated.")
+            return None
+
+    except Exception as e:
+        bot_logger.error(f"[Entry Error] {str(e)}")
+        bot_logger.debug(traceback.format_exc())
         return None
