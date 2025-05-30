@@ -2,6 +2,7 @@ import os
 import joblib
 import traceback
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.calibration import CalibratedClassifierCV
 from utils.logger import bot_logger
 
 # Save directly inside ml/
@@ -37,7 +38,8 @@ def predict(model, features):
 def retrain_model(data, labels):
     """Train a new model with the given features and labels."""
     try:
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        base_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model = CalibratedClassifierCV(base_model, method="sigmoid", cv=5)
         model.fit(data, labels)
         joblib.dump(model, MODEL_PATH)
 
