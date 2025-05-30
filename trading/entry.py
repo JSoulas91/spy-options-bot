@@ -1,53 +1,74 @@
-import traceback
-from strategy import generate_trade_signal
-from event_filter import is_blackout_time, is_fed_event_today
-from utils.logger import bot_logger as logger
-from telegram_bot import send_telegram_message
+# event_filter.py
 
-def evaluate_entry_signals(market_data, indicators, sentiment, confidence_score):
+import datetime
+import pytz
+import requests
+from config import ECONOMIC_EVENTS, FED_SPEECH_KEYWORDS, VIX_RISK_THRESHOLD
+from utils.logger import bot_logger as logger
+
+eastern = pytz.timezone("US/Eastern")
+
+def is_blackout_time(now=None):
     """
-    Determines whether to enter a CALL or PUT trade based on strategy signal, sentiment, indicators,
-    confidence, and macro filters (economic blackouts, Fed speeches).
-    Returns: "CALL", "PUT", or None
+    Check if the current time falls within an economic event blackout window.
+    """
+    if now is None:
+        now = datetime.datetime.now(eastern)
+
+    for event in ECONOMIC_EVENTS:
+        start = eastern.localize(datetime.datetime.combine(now.date(), event["start"]))
+        end = eastern.localize(datetime.datetime.combine(now.date(), event["end"]))
+        if start <= now <= end:
+            logger.info(f"🛑 Trading blocked due to economic event: {event['name']}")
+            return True, event["name"]
+    return False, None
+
+def is_fed_event_today(now=None):
+    """
+    Check for any Fed-related scheduled speeches today.
+    """
+    if now is None:
+        now = datetime.datetime.now(eastern)
+
+    for event in ECONOMIC_EVENTS:
+        if event["date"] == now.date() and any(
+            keyword.lower() in event["name"].lower() for keyword in FED_SPEECH_KEYWORDS
+        ):
+            logger.warning(f"📢 Fed-related event detected: {event['name']}")
+            return True, event["name"]
+    return False, None
+
+def is_vix_high():
+    """
+    Check if the VIX index is above a danger threshold.
     """
     try:
-        # Check for economic event blackout
-        in_blackout, blackout_event = is_blackout_time()
-        if in_blackout:
-            logger.warning(f"🚫 Entry blocked due to economic blackout: {blackout_event}")
-            send_telegram_message(
-                f"🚫 *Entry Blocked — Economic Event*\n"
-                f"Event: `{blackout_event}`\n"
-                f"Skipping trade to reduce risk."
-            )
-            return None
-
-        # Check for Fed speech or announcement risk
-        fed_event, fed_event_name = is_fed_event_today()
-        if fed_event:
-            logger.warning(f"📢 Caution: Fed-related event today — {fed_event_name}")
-            send_telegram_message(
-                f"📢 *Caution — Fed Event Today*\n"
-                f"Event: `{fed_event_name}`\n"
-                f"Proceeding with extra caution."
-            )
-
-        signal = generate_trade_signal(market_data, indicators, sentiment, confidence_score)
-
-        if signal == "buy_call" and confidence_score >= 0.5:
-            logger.info(f"📥 Entry: CALL (Confidence: {confidence_score:.2f})")
-            return "CALL"
-        elif signal == "buy_put" and confidence_score >= 0.5:
-            logger.info(f"📥 Entry: PUT (Confidence: {confidence_score:.2f})")
-            return "PUT"
-        else:
-            logger.info(f"🔍 No entry — Signal: {signal}, Confidence: {confidence_score:.2f}")
-            return None
-
+        # Replace with real API request or mock this in testing
+        response = requests.get("https://api.tradier.com/v1/markets/quotes?symbols=VIX",
+                                headers={"Authorization": "Bearer YOUR_TOKEN", "Accept": "application/json"})
+        data = response.json()
+        vix_price = float(data["quotes"]["quote"]["last"])
+        if vix_price >= VIX_RISK_THRESHOLD:
+            logger.warning(f"⚠️ VIX is elevated at {vix_price} — risk-off environment.")
+            return True, vix_price
     except Exception as e:
-        logger.error(f"[Entry Error] {str(e)}")
-        logger.debug(traceback.format_exc())
-        send_telegram_message(
-            f"⚠️ *Entry Module Error*\nCould not evaluate entry.\nReason: `{str(e)}`"
-        )
-        return None
+        logger.error(f"[VIX Check Error] Could not retrieve VIX: {str(e)}")
+    return False, None
+
+def is_high_risk_event_active():
+    """
+    Combine all major event-based risk checks into a single filter.
+    """
+    blackout, event = is_blackout_time()
+    if blackout:
+        return True
+
+    fed_event, _ = is_fed_event_today()
+    if fed_event:
+        return True
+
+    vix_risk, _ = is_vix_high()
+    if vix_risk:
+        return True
+
+    return False
