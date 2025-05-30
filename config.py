@@ -42,4 +42,17 @@ NO_NEW_TRADES_AFTER = os.getenv('NO_NEW_TRADES_AFTER', "15:30")
 USE_AGGRESSIVE_MODE = os.getenv('USE_AGGRESSIVE_MODE', 'false').lower() == 'true'
 BLACKLISTED_DATES = []  # You can load this from a file or API if needed
 
+# === ADVANCED STRATEGY FILTERS ===
+ENABLE_EVENT_BLACKOUT = os.getenv("ENABLE_EVENT_BLACKOUT", "true").lower() == "true"
+ENABLE_VIX_THROTTLING = os.getenv("ENABLE_VIX_THROTTLING", "true").lower() == "true"
+ENABLE_FED_SPEAKER_FILTER = os.getenv("ENABLE_FED_SPEAKER_FILTER", "true").lower() == "true"
+ENABLE_ADAPTIVE_CONFIDENCE = os.getenv("ENABLE_ADAPTIVE_CONFIDENCE", "true").lower() == "true"
+
+# === VIX SETTINGS ===
+VIX_MAX_THRESHOLD = float(os.getenv("VIX_MAX_THRESHOLD", 30.0))      # Above this = no trades
+VIX_MODERATE_THRESHOLD = float(os.getenv("VIX_MODERATE_THRESHOLD", 25.0))  # Above this = raise confidence filter
+
+# === CONFIDENCE ADJUSTMENTS ===
+CONFIDENCE_STEP_UP = float(os.getenv("CONFIDENCE_STEP_UP", 0.05))  # How much to raise base threshold if VIX is high
+
 bot_logger.info("✅ Configuration loaded successfully.")
