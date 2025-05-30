@@ -14,15 +14,22 @@ def execute_trade(order):
     Replace this with your broker API (e.g., Alpaca) execution logic.
     """
     try:
-        # Example simulation: pretend it fails randomly
-        # Replace this with actual broker call
-        success = True  # Set False to test retry
+        success = True  # Set False to simulate failure
         if not success:
             raise Exception("Simulated broker failure")
         return True
     except Exception as e:
         logger.warning(f"[Trade Execution] Failed to execute trade: {e}")
         return False
+
+def is_fatal_error(error: Exception) -> bool:
+    """
+    Checks if the error is fatal and should not be retried.
+    """
+    fatal_errors = [
+        "invalid symbol", "bad request", "insufficient funds", "permission denied"
+    ]
+    return any(msg in str(error).lower() for msg in fatal_errors)
 
 def manage_trades(market_data):
     global active_trades
@@ -65,24 +72,34 @@ def try_trade_entry(market_data, indicators, sentiment, confidence_score):
         }
 
         success = False
+
         for attempt in range(1, MAX_RETRIES_PER_TRADE + 1):
             logger.info(f"⚙️ Attempt {attempt}/{MAX_RETRIES_PER_TRADE} to execute trade: {order}")
             send_telegram_message(f"🔁 *Trade Execution Attempt {attempt}*\n{order}")
-            success = execute_trade(order)
-            if success:
-                logger.info("✅ Trade executed successfully.")
-                send_telegram_message(f"✅ *Trade Executed Successfully*\n{order}")
-                break
-            else:
-                logger.warning("⚠️ Trade execution failed.")
-                time.sleep(RETRY_DELAY_SECONDS)
+            
+            try:
+                success = execute_trade(order)
+                if success:
+                    logger.info("✅ Trade executed successfully.")
+                    send_telegram_message(f"✅ *Trade Executed Successfully*\n{order}")
+                    break
+            except Exception as e:
+                if is_fatal_error(e):
+                    logger.error(f"❌ Fatal trade execution error: {str(e)} — aborting retries.")
+                    send_telegram_message(f"❌ *Fatal Trade Error — Aborting*\n{str(e)}")
+                    return
+                else:
+                    logger.warning(f"⚠️ Retryable trade error: {str(e)} — will retry.")
+                    send_telegram_message(f"⚠️ *Trade Retry {attempt} Failed*\nReason: `{str(e)}`")
+
+            time.sleep(RETRY_DELAY_SECONDS)
 
         if not success:
             logger.error("🚫 Max trade retries exceeded. Aborting trade.")
             send_telegram_message(f"🚫 *Trade Failed After {MAX_RETRIES_PER_TRADE} Attempts*\n{order}")
             return
 
-        # Only store the trade if successful
+        # Only store successful trades
         active_trades.append(order)
 
     except Exception as e:
