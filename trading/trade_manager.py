@@ -1,10 +1,13 @@
 import time
 import traceback
+from datetime import datetime
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
 from entry import evaluate_entry_signals
 from exit import check_exit_conditions
 from config import DEFAULT_POSITION_SIZE, MAX_RETRIES_PER_TRADE, RETRY_DELAY_SECONDS
+from utils.vix import get_current_vix
+from utils.calendar import has_major_event_on  # You need to implement this if not present
 
 active_trades = []
 
@@ -23,13 +26,35 @@ def execute_trade(order):
         return False
 
 def is_fatal_error(error: Exception) -> bool:
-    """
-    Checks if the error is fatal and should not be retried.
-    """
     fatal_errors = [
         "invalid symbol", "bad request", "insufficient funds", "permission denied"
     ]
     return any(msg in str(error).lower() for msg in fatal_errors)
+
+def is_friday():
+    return datetime.now().weekday() == 4
+
+def is_viable_weekend_swing(order, confidence_score):
+    """
+    Determines if a trade is safe to hold over the weekend.
+    """
+    vix = get_current_vix()
+    monday = (datetime.now() + timedelta(days=3)).date()
+
+    reasons = []
+
+    if order["type"] != "swing":
+        reasons.append("Trade is not a swing type.")
+    if vix > 22:
+        reasons.append(f"VIX too high: {vix}")
+    if confidence_score < 0.85:
+        reasons.append(f"Confidence score too low: {confidence_score}")
+    if has_major_event_on(monday):
+        reasons.append("Monday has high-impact economic events.")
+
+    if reasons:
+        return False, reasons
+    return True, ["Favorable VIX", "High confidence", "No major events Monday"]
 
 def manage_trades(market_data):
     global active_trades
@@ -41,19 +66,28 @@ def manage_trades(market_data):
                     logger.info(f"🚪 Exiting trade: {trade}")
                     active_trades.remove(trade)
                     send_telegram_message(f"✅ *Trade Exited*\n{trade}")
+                elif action == "hold" and trade["type"] == "swing" and is_friday():
+                    confidence_score = market_data.get("confidence_score", 0.0)
+                    viable, reasons = is_viable_weekend_swing(trade, confidence_score)
+                    if not viable:
+                        logger.info(f"⚠️ Not holding over weekend: {reasons}")
+                        active_trades.remove(trade)
+                        send_telegram_message(
+                            f"🚫 *Exiting Swing Before Weekend*\nReason(s):\n• " + "\n• ".join(reasons)
+                        )
+                    else:
+                        send_telegram_message(
+                            f"✅ *Holding Swing Over Weekend*\nConfidence: `{confidence_score}`\nReason(s):\n• " + "\n• ".join(reasons)
+                        )
             except Exception as e:
                 logger.error(f"[Exit Evaluation Error] {str(e)}")
                 send_telegram_message(f"⚠️ *Exit Evaluation Error*\n{e}")
-
     except Exception as e:
         logger.error(f"[Trade Manager Error] {str(e)}")
         logger.debug(traceback.format_exc())
         send_telegram_message(f"⚠️ *Trade Manager Error*\n{str(e)}")
 
 def try_trade_entry(market_data, indicators, sentiment, confidence_score):
-    """
-    Attempts to enter a trade with retry logic on failure.
-    """
     try:
         direction = evaluate_entry_signals(market_data, indicators, sentiment, confidence_score)
         if not direction:
@@ -76,7 +110,7 @@ def try_trade_entry(market_data, indicators, sentiment, confidence_score):
         for attempt in range(1, MAX_RETRIES_PER_TRADE + 1):
             logger.info(f"⚙️ Attempt {attempt}/{MAX_RETRIES_PER_TRADE} to execute trade: {order}")
             send_telegram_message(f"🔁 *Trade Execution Attempt {attempt}*\n{order}")
-            
+
             try:
                 success = execute_trade(order)
                 if success:
@@ -99,7 +133,6 @@ def try_trade_entry(market_data, indicators, sentiment, confidence_score):
             send_telegram_message(f"🚫 *Trade Failed After {MAX_RETRIES_PER_TRADE} Attempts*\n{order}")
             return
 
-        # Only store successful trades
         active_trades.append(order)
 
     except Exception as e:
