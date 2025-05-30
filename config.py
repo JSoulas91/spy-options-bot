@@ -56,3 +56,7 @@ VIX_MODERATE_THRESHOLD = float(os.getenv("VIX_MODERATE_THRESHOLD", 25.0))  # Abo
 CONFIDENCE_STEP_UP = float(os.getenv("CONFIDENCE_STEP_UP", 0.05))  # How much to raise base threshold if VIX is high
 
 bot_logger.info("✅ Configuration loaded successfully.")
+
+# === RETRY SETTINGS ===
+MAX_RETRIES_PER_TRADE = int(os.getenv("MAX_RETRIES_PER_TRADE", 3))
+RETRY_DELAY_SECONDS = int(os.getenv("RETRY_DELAY_SECONDS", 5))
