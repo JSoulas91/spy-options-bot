@@ -40,4 +40,4 @@ class SPYModel:
         except Exception as e:
             bot_logger.error(f"[Model Prediction Error] {e}")
             bot_logger.debug(traceback.format_exc())
-            return 0.5 
+            return 0.5
