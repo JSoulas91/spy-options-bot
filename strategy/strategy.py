@@ -5,10 +5,16 @@ from config import (
     CONFIDENCE_THRESHOLD,
     STOP_LOSS_ATR_MULTIPLIER,
     TRAILING_STOP_PERCENT,
+    ENABLE_VIX_THROTTLING,
+    ENABLE_ADAPTIVE_CONFIDENCE,
+    VIX_MAX_THRESHOLD,
+    VIX_MODERATE_THRESHOLD,
+    CONFIDENCE_STEP_UP
 )
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
-from event_filter import is_high_risk_event_active  # ✅ NEW
+from event_filter import is_high_risk_event_active
+from utils.vix_utils import get_current_vix  # ✅ NEW
 
 def is_market_closing_soon(timestamp_str):
     try:
@@ -17,13 +23,26 @@ def is_market_closing_soon(timestamp_str):
     except Exception:
         return False
 
+def get_adaptive_confidence_threshold():
+    base_threshold = CONFIDENCE_THRESHOLD
+    if ENABLE_VIX_THROTTLING or ENABLE_ADAPTIVE_CONFIDENCE:
+        try:
+            vix_value = get_current_vix()
+            logger.info(f"📈 VIX value: {vix_value}")
+            if vix_value is None:
+                return base_threshold
+            if vix_value >= VIX_MAX_THRESHOLD:
+                logger.warning("❌ VIX above max threshold — skipping trade.")
+                return float("inf")  # Prevent any trade
+            elif vix_value >= VIX_MODERATE_THRESHOLD:
+                adjusted_threshold = base_threshold + CONFIDENCE_STEP_UP
+                logger.info(f"⚠️ Elevated VIX — adjusting confidence threshold to {adjusted_threshold}")
+                return adjusted_threshold
+        except Exception as e:
+            logger.error(f"[VIX Error] Failed to retrieve VIX: {str(e)}")
+    return base_threshold
+
 def evaluate_trade(position, market_data):
-    """
-    Evaluate trade action for current open position.
-    :param position: dict of current open position info
-    :param market_data: dict of latest price, indicators, confidence, timestamp, etc.
-    :return: 'hold', 'exit', or 'scale'
-    """
     try:
         action = "hold"
         entry_price = position.get('entry_price')
@@ -35,10 +54,15 @@ def evaluate_trade(position, market_data):
         if entry_price is None or price is None:
             raise ValueError("Missing 'entry_price' or 'price'.")
 
-        # Event-based risk filtering
         if is_high_risk_event_active():
             logger.warning("🚨 Live economic event detected — exiting to reduce risk.")
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
+            return "exit"
+
+        # === Adaptive Confidence Filter ===
+        adaptive_threshold = get_adaptive_confidence_threshold()
+        if confidence < adaptive_threshold:
+            logger.info(f"⚠️ Confidence {confidence:.2f} below adaptive threshold {adaptive_threshold:.2f} — skipping/exiting.")
             return "exit"
 
         # Indicators
@@ -96,10 +120,6 @@ def evaluate_trade(position, market_data):
                 logger.info("⚠️ Near support — protect capital.")
                 return "exit"
 
-            if confidence < CONFIDENCE_THRESHOLD * 0.8:
-                logger.info("⚠️ Confidence score dropped significantly — exit.")
-                return "exit"
-
         # === SWING TRADE LOGIC ===
         elif is_swing_trade(position):
             logger.debug("[Strategy] Trade type: Swing Trade")
@@ -138,10 +158,6 @@ def evaluate_trade(position, market_data):
                 return "exit"
             if support and price < support * 1.005:
                 logger.info("⚠️ Approaching support — risk manage.")
-                return "exit"
-
-            if confidence < CONFIDENCE_THRESHOLD * 0.75:
-                logger.info("⚠️ Confidence dropped — swing exit filter triggered.")
                 return "exit"
 
         logger.debug(f"[Strategy] Final action: {action}")
