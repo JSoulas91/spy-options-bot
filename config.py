@@ -1,3 +1,5 @@
+# config.py
+
 import os
 from dotenv import load_dotenv
 from utils.logger import bot_logger
@@ -55,8 +57,14 @@ VIX_MODERATE_THRESHOLD = float(os.getenv("VIX_MODERATE_THRESHOLD", 25.0))  # Abo
 # === CONFIDENCE ADJUSTMENTS ===
 CONFIDENCE_STEP_UP = float(os.getenv("CONFIDENCE_STEP_UP", 0.05))  # How much to raise base threshold if VIX is high
 
-bot_logger.info("✅ Configuration loaded successfully.")
+# === ADAPTIVE CONFIDENCE THRESHOLDS ===
+BASE_CONFIDENCE_THRESHOLD = float(os.getenv("BASE_CONFIDENCE_THRESHOLD", 0.55))     # Normal market base
+OPENING_RANGE_THRESHOLD = float(os.getenv("OPENING_RANGE_THRESHOLD", 0.50))          # Early session
+HIGH_VIX_THRESHOLD = float(os.getenv("HIGH_VIX_THRESHOLD", 0.65))                    # When VIX is extreme
+SWING_TRADE_THRESHOLD = float(os.getenv("SWING_TRADE_THRESHOLD", 0.60))              # For swing trades
 
 # === RETRY SETTINGS ===
 MAX_RETRIES_PER_TRADE = int(os.getenv("MAX_RETRIES_PER_TRADE", 3))
 RETRY_DELAY_SECONDS = int(os.getenv("RETRY_DELAY_SECONDS", 5))
+
+bot_logger.info("✅ Configuration loaded successfully.")
