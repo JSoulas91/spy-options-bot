@@ -49,7 +49,7 @@ def evaluate_exit_conditions(
 
         # === ATR-BASED STOP ===
         if atr and price and entry_price:
-            stop_loss_atr = entry_price - (atr * 1.5)  # you can tune the multiple
+            stop_loss_atr = entry_price - (atr * 1.5)
             if price < stop_loss_atr:
                 exit_signal = True
                 reason = "🛑 ATR-based stop-loss triggered"
