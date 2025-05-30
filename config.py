@@ -68,4 +68,30 @@ SWING_TRADE_CONFIDENCE_THRESHOLD = float(os.getenv("SWING_TRADE_CONFIDENCE_THRES
 MAX_RETRIES_PER_TRADE = int(os.getenv("MAX_RETRIES_PER_TRADE", 3))
 RETRY_DELAY_SECONDS = int(os.getenv("RETRY_DELAY_SECONDS", 5))
 
+# === OPTION FILTER SETTINGS ===
+OPTION_TYPE_FILTER = os.getenv("OPTION_TYPE_FILTER", "both").lower()  # 'call', 'put', or 'both'
+MIN_EXPIRY_DAYS = int(os.getenv("MIN_OPTION_EXPIRY_DAYS", 7))         # used above
+
+# Greeks filter bounds
+MIN_DELTA = float(os.getenv("MIN_DELTA", 0.25))
+MAX_DELTA = float(os.getenv("MAX_DELTA", 0.75))
+MAX_THETA = float(os.getenv("MAX_THETA", -0.01))  # Negative theta
+MAX_VEGA = float(os.getenv("MAX_VEGA", 0.15))
+MAX_GAMMA = float(os.getenv("MAX_GAMMA", 0.15))
+
+# Liquidity filter
+MIN_VOLUME = int(os.getenv("MIN_VOLUME", 100))
+MIN_OPEN_INTEREST = int(os.getenv("MIN_OPEN_INTEREST", 100))
+
+# Bid-Ask Spread
+MAX_BID_ASK_SPREAD_PCT = float(os.getenv("MAX_BID_ASK_SPREAD_PCT", 0.15))  # 15%
+
+# Moneyness
+MIN_MONEYNESS = float(os.getenv("MIN_MONEYNESS", 0.90))
+MAX_MONEYNESS = float(os.getenv("MAX_MONEYNESS", 1.10))
+ENABLE_DIRECTIONAL_SKEW = os.getenv("ENABLE_DIRECTIONAL_SKEW", "true").lower() == "true"
+
+# Debugging
+DEBUG_OPTION_FILTER = os.getenv("DEBUG_OPTION_FILTER", "false").lower() == "true"
+
 bot_logger.info("✅ Configuration loaded successfully.")
