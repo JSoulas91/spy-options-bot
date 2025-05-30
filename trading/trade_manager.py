@@ -1,15 +1,17 @@
 import pytz
+import time
 import traceback
 from datetime import datetime
 from alpaca_trade_api.rest import REST, TimeFrame
 
-from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
+from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, MAX_ORDER_RETRIES, RETRY_DELAY_SECONDS
 from helpers import is_day_trade
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
 
 eastern = pytz.timezone("US/Eastern")
 alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, api_version='v2')
+
 
 def get_current_time_et():
     try:
@@ -20,6 +22,7 @@ def get_current_time_et():
         send_telegram_message("⚠️ Timezone conversion failed — fallback to UTC.")
         return datetime.utcnow()
 
+
 def is_market_open():
     try:
         return alpaca.get_clock().is_open
@@ -28,6 +31,7 @@ def is_market_open():
         logger.debug(traceback.format_exc())
         send_telegram_message("⚠️ Could not check market status.")
         return False
+
 
 def should_enter_day_trade():
     try:
@@ -38,6 +42,7 @@ def should_enter_day_trade():
         logger.debug(traceback.format_exc())
         return False
 
+
 def should_exit_day_trades():
     try:
         now = get_current_time_et()
@@ -46,6 +51,7 @@ def should_exit_day_trades():
         logger.error(f"[Day Trade Exit Time Error] {str(e)}")
         logger.debug(traceback.format_exc())
         return False
+
 
 def place_order(symbol, qty, side, type="market", time_in_force="gtc"):
     try:
@@ -71,6 +77,26 @@ def place_order(symbol, qty, side, type="market", time_in_force="gtc"):
         send_telegram_message(f"❌ Order Failed: `{side.upper()} {qty} {symbol}`\nReason: `{str(e)}`")
         return None
 
+
+def retry_order_placement(symbol, qty, side, type="market", time_in_force="gtc",
+                          retries=MAX_ORDER_RETRIES, delay=RETRY_DELAY_SECONDS):
+    attempt = 1
+    while attempt <= retries:
+        logger.info(f"📦 Attempt {attempt} placing order: {side.upper()} {qty} {symbol}")
+        result = place_order(symbol, qty, side, type, time_in_force)
+        if result is not None:
+            logger.info(f"✅ Order succeeded on attempt {attempt}: {symbol}")
+            return result
+        else:
+            logger.warning(f"🔁 Order failed on attempt {attempt} for {symbol}. Retrying in {delay}s...")
+            time.sleep(delay)
+            attempt += 1
+
+    logger.error(f"❌ All {retries} attempts failed for {symbol}. Giving up.")
+    send_telegram_message(f"❌ All {retries} order attempts failed for `{symbol}`.")
+    return None
+
+
 def close_position(symbol):
     try:
         alpaca.close_position(symbol)
@@ -80,6 +106,7 @@ def close_position(symbol):
         logger.error(f"[Close Position Error] {str(e)}")
         logger.debug(traceback.format_exc())
         send_telegram_message(f"⚠️ Failed to close `{symbol}`\nReason: `{str(e)}`")
+
 
 def manage_open_positions(positions):
     try:
@@ -97,6 +124,7 @@ def manage_open_positions(positions):
         logger.critical(f"[manage_open_positions Failed] {str(e)}")
         logger.debug(traceback.format_exc())
         send_telegram_message("🚨 Failed to manage open positions.")
+
 
 def get_open_positions():
     try:
