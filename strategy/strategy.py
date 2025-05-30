@@ -8,7 +8,7 @@ from config import (
 )
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
-
+from event_filter import is_high_risk_event_active  # ✅ NEW
 
 def is_market_closing_soon(timestamp_str):
     try:
@@ -16,7 +16,6 @@ def is_market_closing_soon(timestamp_str):
         return current_time >= time(15, 55)  # 3:55 PM ET
     except Exception:
         return False
-
 
 def evaluate_trade(position, market_data):
     """
@@ -35,6 +34,12 @@ def evaluate_trade(position, market_data):
 
         if entry_price is None or price is None:
             raise ValueError("Missing 'entry_price' or 'price'.")
+
+        # Event-based risk filtering
+        if is_high_risk_event_active():
+            logger.warning("🚨 Live economic event detected — exiting to reduce risk.")
+            send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
+            return "exit"
 
         # Indicators
         rsi = indicators.get('rsi')
@@ -56,23 +61,19 @@ def evaluate_trade(position, market_data):
         if is_day_trade(position):
             logger.debug("[Strategy] Trade type: Day Trade")
 
-            # Exit if market is closing
             if is_market_closing_soon(timestamp):
                 logger.info("⏰ Market closing soon — exiting day trade.")
                 return "exit"
 
-            # Trailing stop-loss if >10% gain
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT):
                 if price <= price * (1 - 0.10):
                     logger.info("📉 Trailing stop-loss hit after 10% gain.")
                     return "exit"
 
-            # ATR stop-loss
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER):
                 logger.info("🛑 Day trade ATR stop-loss hit.")
                 return "exit"
 
-            # RSI + VWAP combo
             if rsi and rsi > 70 and vwap and price < vwap:
                 logger.info("⚠️ RSI overbought + VWAP rejection — exit.")
                 return "exit"
@@ -80,17 +81,14 @@ def evaluate_trade(position, market_data):
                 logger.info("⚠️ RSI oversold + VWAP reclaim — exit.")
                 return "exit"
 
-            # Bollinger Band extremes
             if price > upper_band or price < lower_band:
                 logger.info("⚠️ Price outside Bollinger Bands — exit.")
                 return "exit"
 
-            # EMA trend reversal
             if ema_50 and ema_200 and ema_50 < ema_200:
                 logger.info("⚠️ EMA50 below EMA200 — exit.")
                 return "exit"
 
-            # Support/resistance reaction
             if resistance and price > resistance * 0.995:
                 logger.info("⚠️ Near resistance — consider profit.")
                 return "exit"
@@ -98,7 +96,6 @@ def evaluate_trade(position, market_data):
                 logger.info("⚠️ Near support — protect capital.")
                 return "exit"
 
-            # Confidence drops
             if confidence < CONFIDENCE_THRESHOLD * 0.8:
                 logger.info("⚠️ Confidence score dropped significantly — exit.")
                 return "exit"
@@ -107,18 +104,15 @@ def evaluate_trade(position, market_data):
         elif is_swing_trade(position):
             logger.debug("[Strategy] Trade type: Swing Trade")
 
-            # Profit target w/ trailing stop logic
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT * 1.5):
                 if price <= price * (1 - 0.10):
                     logger.info("📉 Swing trailing stop-loss hit after strong gains.")
                     return "exit"
 
-            # ATR stop-loss (wider for swing)
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER * 1.2):
                 logger.info("🛑 Swing trade ATR stop-loss hit.")
                 return "exit"
 
-            # RSI + MACD reversal signals
             if rsi and macd_hist:
                 if rsi > 70 and macd_hist < 0 and price < resistance:
                     logger.info("⚠️ RSI overbought + MACD reversal + resistance — exit.")
@@ -127,22 +121,18 @@ def evaluate_trade(position, market_data):
                     logger.info("⚠️ RSI oversold + MACD recovery + support — exit.")
                     return "exit"
 
-            # VWAP fade
             if vwap and price < vwap and rsi and rsi > 65:
                 logger.info("⚠️ VWAP fade + elevated RSI — swing exit.")
                 return "exit"
 
-            # EMA death cross
             if ema_50 and ema_200 and ema_50 < ema_200:
                 logger.info("⚠️ EMA50 crossed below EMA200 — exit.")
                 return "exit"
 
-            # Bollinger extremes
             if price > upper_band or price < lower_band:
                 logger.info("⚠️ Bollinger Band extremes — swing exit.")
                 return "exit"
 
-            # Resistance or support areas
             if resistance and price > resistance * 0.995:
                 logger.info("⚠️ Approaching resistance — take profit.")
                 return "exit"
@@ -150,7 +140,6 @@ def evaluate_trade(position, market_data):
                 logger.info("⚠️ Approaching support — risk manage.")
                 return "exit"
 
-            # Confidence score fading
             if confidence < CONFIDENCE_THRESHOLD * 0.75:
                 logger.info("⚠️ Confidence dropped — swing exit filter triggered.")
                 return "exit"
