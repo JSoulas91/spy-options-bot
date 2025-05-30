@@ -51,17 +51,18 @@ ENABLE_FED_SPEAKER_FILTER = os.getenv("ENABLE_FED_SPEAKER_FILTER", "true").lower
 ENABLE_ADAPTIVE_CONFIDENCE = os.getenv("ENABLE_ADAPTIVE_CONFIDENCE", "true").lower() == "true"
 
 # === VIX SETTINGS ===
-VIX_MAX_THRESHOLD = float(os.getenv("VIX_MAX_THRESHOLD", 30.0))      # Above this = no trades
-VIX_MODERATE_THRESHOLD = float(os.getenv("VIX_MODERATE_THRESHOLD", 25.0))  # Above this = raise confidence filter
+VIX_MAX_THRESHOLD = float(os.getenv("VIX_MAX_THRESHOLD", 30.0))                 # Above this = no trades
+VIX_MODERATE_THRESHOLD = float(os.getenv("VIX_MODERATE_THRESHOLD", 25.0))       # Above this = raise confidence filter
+VIX_SAFE_FOR_SWING = float(os.getenv("VIX_SAFE_FOR_SWING", 20.0))               # Max VIX allowed for weekend swing
 
 # === CONFIDENCE ADJUSTMENTS ===
-CONFIDENCE_STEP_UP = float(os.getenv("CONFIDENCE_STEP_UP", 0.05))  # How much to raise base threshold if VIX is high
+CONFIDENCE_STEP_UP = float(os.getenv("CONFIDENCE_STEP_UP", 0.05))               # Increase base if VIX is high
 
 # === ADAPTIVE CONFIDENCE THRESHOLDS ===
 BASE_CONFIDENCE_THRESHOLD = float(os.getenv("BASE_CONFIDENCE_THRESHOLD", 0.55))     # Normal market base
 OPENING_RANGE_THRESHOLD = float(os.getenv("OPENING_RANGE_THRESHOLD", 0.50))          # Early session
 HIGH_VIX_THRESHOLD = float(os.getenv("HIGH_VIX_THRESHOLD", 0.65))                    # When VIX is extreme
-SWING_TRADE_THRESHOLD = float(os.getenv("SWING_TRADE_THRESHOLD", 0.60))              # For swing trades
+SWING_TRADE_CONFIDENCE_THRESHOLD = float(os.getenv("SWING_TRADE_CONFIDENCE_THRESHOLD", 0.70))  # Minimum for swing
 
 # === RETRY SETTINGS ===
 MAX_RETRIES_PER_TRADE = int(os.getenv("MAX_RETRIES_PER_TRADE", 3))
