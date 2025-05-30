@@ -1,37 +1,30 @@
 from strategy import generate_trade_signal
-from utils.logger import bot_logger  # Swapped from log_info to bot_logger for consistency
+from utils.logger import bot_logger
 from telegram_bot import send_telegram_message
 import traceback
 
 def evaluate_entry_signals(market_data, indicators, sentiment, confidence_score):
     """
-    Evaluates whether to enter a CALL or PUT trade based on strategy output.
-
-    :param market_data: dict of market prices, etc.
-    :param indicators: dict of technical indicator values
-    :param sentiment: float from NLP/sentiment module
-    :param confidence_score: float from ML model
-    :return: "CALL", "PUT", or None
+    Determines whether to enter a CALL or PUT trade based on strategy signal + confidence.
+    Returns: "CALL", "PUT", or None
     """
     try:
         signal = generate_trade_signal(market_data, indicators, sentiment, confidence_score)
 
-        if signal == "buy_call":
-            bot_logger.info("📥 Entry Signal: BUY CALL triggered.")
+        if signal == "buy_call" and confidence_score >= 0.5:
+            bot_logger.info(f"📥 Entry: CALL (confidence: {confidence_score:.2f})")
             return "CALL"
-        elif signal == "buy_put":
-            bot_logger.info("📥 Entry Signal: BUY PUT triggered.")
+        elif signal == "buy_put" and confidence_score >= 0.5:
+            bot_logger.info(f"📥 Entry: PUT (confidence: {confidence_score:.2f})")
             return "PUT"
         else:
-            bot_logger.info("🔍 Entry Signal: No valid signal generated.")
+            bot_logger.info(f"🔍 No entry — Signal: {signal}, Confidence: {confidence_score:.2f}")
             return None
 
     except Exception as e:
         bot_logger.error(f"[Entry Error] {str(e)}")
         bot_logger.debug(traceback.format_exc())
         send_telegram_message(
-            f"⚠️ *Entry Module Error*\n"
-            f"Could not evaluate entry signal.\n"
-            f"Reason: `{str(e)}`"
+            f"⚠️ *Entry Module Error*\nCould not evaluate entry.\nReason: `{str(e)}`"
         )
-        return None  # Safe fallback
+        return None
