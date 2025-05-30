@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from utils.logger import bot_logger
 from utils.telegram_notifier import TelegramNotifier
 from utils.vix_utils import get_vix_level
-from filters.event_filter import is_blackout_day
+from strategy.event_filter import is_blackout_day
 from config import (
     MAX_RETRIES_PER_TRADE,
     RETRY_DELAY_SECONDS,
