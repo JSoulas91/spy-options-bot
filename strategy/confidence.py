@@ -4,10 +4,13 @@ def calculate_confidence_score(signal_data):
     Expects signal_data to be a dictionary with the following boolean or numeric keys:
         - 'trend_alignment' (bool)
         - 'vwap_confirmation' (bool)
-        - 'support_resistance_nearby' (bool)
+        - 'near_support' (bool)
+        - 'near_resistance' (bool)
         - 'volume_spike' (bool)
         - 'news_sentiment_score' (float, -1 to 1)
         - 'regime' (str: bullish, bearish, sideways, choppy)
+        - 'momentum_up' (bool) — optional
+        - 'exit_pressure' (bool) — optional, for smarter exits
     """
     score = 0
 
@@ -15,10 +18,16 @@ def calculate_confidence_score(signal_data):
         score += 25
     if signal_data.get('vwap_confirmation'):
         score += 20
-    if signal_data.get('support_resistance_nearby'):
-        score += 15
+    if signal_data.get('near_support'):
+        score += 10
+    if signal_data.get('near_resistance'):
+        score -= 10
     if signal_data.get('volume_spike'):
         score += 15
+    if signal_data.get('momentum_up'):
+        score += 10
+    if signal_data.get('exit_pressure'):
+        score -= 15
 
     sentiment_score = signal_data.get('news_sentiment_score', 0)
     score += max(0, min(15, sentiment_score * 15))  # scale -1 to 1 → -15 to +15
