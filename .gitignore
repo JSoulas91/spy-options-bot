@@ -1,29 +1,63 @@
-# Ignore Python bytecode
+# === PYTHON ===
 __pycache__/
 *.py[cod]
-*.so
-
-# Ignore virtual environment folders
-.env/
-venv/
-ENV/
-env/
-
-# Ignore environment variables file
-.env
-
-# Ignore logs and backups
+*.pyo
+*.pyd
+*.pkl
+*.sqlite3
 *.log
-*.bak
-*.tmp
+*.db
 
-# Ignore Jupyter Notebook checkpoints
-.ipynb_checkpoints/
+# === ENVIRONMENT ===
+.env
+.env.*
+*.env
 
-# Ignore OS files
+# === VIRTUAL ENV ===
+venv/
+env/
+ENV/
+.venv/
+.pip-wheel-metadata/
+
+# === DATA / ARTIFACTS ===
+/data/
+/logs/
+/backtests/
+/reports/
+/models/
+*.csv
+*.json
+*.zip
+*.h5
+*.hdf5
+*.joblib
+*.npy
+*.npz
+
+# === SYSTEM ===
 .DS_Store
 Thumbs.db
+ehthumbs.db
+desktop.ini
 
-# Ignore IDE/project settings
+# === IDE FILES ===
 .vscode/
 .idea/
+*.code-workspace
+
+# === JUPYTER / NOTEBOOK ===
+.ipynb_checkpoints
+*.ipynb
+
+# === TEST ARTIFACTS ===
+.coverage
+.cache
+pytest_cache/
+
+# === GIT ===
+*.orig
+*.swp
+*.swo
+*.bak
+*.tmp
