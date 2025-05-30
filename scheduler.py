@@ -3,14 +3,14 @@ import time
 import traceback
 import pytz
 from datetime import datetime
+from strategy.strategy import run_strategy  # ✅ updated path
 from retrain import retrain_model
-from trade_manager import run_trading_bot
-from telegram_bot import send_telegram_message
 from performance_summary import send_daily_summary
 from cleanup import cleanup_logs_and_backups
+from telegram_bot import send_telegram_message
 from utils.logger import bot_logger as logger
 
-# Set Eastern Timezone
+# Timezone
 eastern = pytz.timezone('US/Eastern')
 
 MAX_RETRIES = 3
@@ -63,16 +63,32 @@ def log_and_notify(task_name, func):
             f"🕒 Time: {error_time}"
         )
 
-# Daily Schedule (Eastern Time)
-schedule.every().day.at("09:30").do(lambda: log_and_notify("Trading Bot", run_trading_bot))
+# ===========================
+# ✅ Scheduled Daily Tasks
+# ===========================
+
+# Day trades at 9:30 AM ET
+schedule.every().day.at("09:30").do(lambda: log_and_notify("Day Trade Strategy", lambda: run_strategy(mode="day")))
+
+# Optional swing trades near close
+schedule.every().day.at("15:55").do(lambda: log_and_notify("Swing Trade Strategy", lambda: run_strategy(mode="swing")))
+
+# Daily summary report at 4:45 PM ET
 schedule.every().day.at("16:45").do(lambda: log_and_notify("Performance Summary", send_daily_summary))
+
+# Model retraining at 4:50 PM ET
 schedule.every().day.at("16:50").do(lambda: log_and_notify("Model Retraining", retrain_model))
+
+# Cleanup logs and backups at 5:00 PM ET
 schedule.every().day.at("17:00").do(lambda: log_and_notify("Log & Backup Cleanup", cleanup_logs_and_backups))
+
+# ===========================
+# Scheduler Loop
+# ===========================
 
 def run_scheduler():
     logger.info("📅 [Scheduler] Started. Waiting for scheduled tasks...")
 
-    # Restart detection message
     startup_time = datetime.now(eastern).strftime("%Y-%m-%d %I:%M %p")
     send_telegram_message(
         f"🔄 *Bot Restart Detected*\n"
