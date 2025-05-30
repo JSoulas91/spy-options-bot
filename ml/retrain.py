@@ -1,69 +1,35 @@
 import os
 import pandas as pd
-from datetime import datetime, timedelta
-from alpaca_trade_api.rest import REST, TimeFrame
+from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import joblib
-import requests
 import traceback
+import requests
 
-from config import (
-    ALPACA_API_KEY,
-    ALPACA_SECRET_KEY,
-    ALPACA_BASE_URL,
-    TELEGRAM_BOT_TOKEN,
-    TELEGRAM_CHAT_ID
-)
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from utils.logger import bot_logger as logger
+from technical_analysis.indicators import calculate_indicators
 
 # === Paths ===
 BASE_DIR = os.path.dirname(__file__)
+DATA_PATH = os.path.join(BASE_DIR, 'spy_data.csv')
 MODEL_PATH = os.path.join(BASE_DIR, 'spy_model.pkl')
 LOG_PATH = os.path.join(BASE_DIR, 'retrain_log.csv')
 
-# === Alpaca API Client ===
-alpaca = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL)
-
-def fetch_data(symbol="SPY", lookback_days=60):
-    try:
-        end_dt = datetime.utcnow()
-        start_dt = end_dt - timedelta(days=lookback_days)
-        bars = alpaca.get_bars(symbol, TimeFrame.Day, start=start_dt.isoformat(), end=end_dt.isoformat()).df
-
-        if bars.empty:
-            raise ValueError("No data returned from Alpaca. Market may be closed or unavailable.")
-        
-        bars = bars.reset_index()
-        bars['timestamp'] = pd.to_datetime(bars['timestamp'])
-        return bars
-
-    except Exception as e:
-        logger.error(f"[ML Retraining] Error in fetch_data: {e}")
-        raise
+def load_data():
+    if not os.path.exists(DATA_PATH):
+        raise FileNotFoundError(f"{DATA_PATH} not found.")
+    df = pd.read_csv(DATA_PATH, parse_dates=['timestamp'])
+    df = df.sort_values("timestamp").dropna().reset_index(drop=True)
+    return df
 
 def create_labels(df):
-    try:
-        df['future_close'] = df['close'].shift(-1)
-        df['label'] = (df['future_close'] > df['close']).astype(int)
-        return df.dropna()
-    except Exception as e:
-        logger.error(f"[ML Retraining] Error in create_labels: {e}")
-        raise
-
-def extract_features(df):
-    try:
-        df['return'] = df['close'].pct_change()
-        df['volatility'] = df['close'].rolling(window=5).std()
-        df['sma_5'] = df['close'].rolling(window=5).mean()
-        df['sma_10'] = df['close'].rolling(window=10).mean()
-        df['sma_ratio'] = df['sma_5'] / df['sma_10']
-        df = df.dropna()
-        return df[['return', 'volatility', 'sma_5', 'sma_10', 'sma_ratio', 'label']]
-    except Exception as e:
-        logger.error(f"[ML Retraining] Error in extract_features: {e}")
-        raise
+    df['future_close'] = df['close'].shift(-1)
+    df['label'] = (df['future_close'] > df['close']).astype(int)
+    return df.dropna()
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -86,28 +52,27 @@ def get_last_accuracy():
 def retrain_model():
     try:
         logger.info("[ML Retraining] Starting retraining process...")
-        
-        # === Load + Preprocess ===
-        raw = fetch_data()
-        labeled = create_labels(raw)
-        data = extract_features(labeled)
 
-        # === Train/Test Split ===
-        X = data.drop(columns=['label'])
-        y = data['label']
+        df = load_data()
+        df = calculate_indicators(df)
+        df = create_labels(df)
+
+        X = df.drop(columns=["timestamp", "future_close", "label"])
+        y = df["label"]
+
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # === Train Model ===
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        base_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model = CalibratedClassifierCV(base_model, method="sigmoid", cv=5)
         model.fit(X_train, y_train)
+
         y_pred = model.predict(X_test)
         acc = accuracy_score(y_test, y_pred)
         acc_pct = f"{acc:.2%}"
 
-        # === Save Model ===
         joblib.dump(model, MODEL_PATH)
 
-        # === Log Accuracy ===
+        # Log accuracy
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_exists = os.path.exists(LOG_PATH)
         try:
@@ -118,14 +83,12 @@ def retrain_model():
         except Exception as e:
             logger.error(f"[ML Retraining] Failed to write to retrain_log.csv: {e}")
 
-        # === Accuracy Comparison ===
         prev_acc = get_last_accuracy()
         if prev_acc:
             comparison = f"Compared to last: *{float(prev_acc):.2%}*"
         else:
             comparison = "First run or previous accuracy unavailable"
 
-        # === Notify ===
         message = (
             f"📊 *ML Retraining Complete*\n"
             f"🗓️  Date: {now.split()[0]}\n"
@@ -136,7 +99,7 @@ def retrain_model():
         )
 
         logger.info(f"[ML Retraining] Success — Accuracy: {acc_pct}")
-        logger.info(message.replace("*", "").replace("`", ""))  # plain log version
+        logger.info(message.replace("*", "").replace("`", ""))
         send_telegram_message(message)
 
     except Exception as e:
