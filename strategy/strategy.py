@@ -1,3 +1,5 @@
+# strategy.py
+
 import traceback
 from datetime import datetime, time
 from helpers import is_day_trade, is_swing_trade
@@ -9,19 +11,21 @@ from config import (
     ENABLE_ADAPTIVE_CONFIDENCE,
     VIX_MAX_THRESHOLD,
     VIX_MODERATE_THRESHOLD,
-    CONFIDENCE_STEP_UP
+    CONFIDENCE_STEP_UP,
 )
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
-from event_filter import is_high_risk_event_active
-from utils.vix_utils import get_current_vix  # ✅ NEW
+from event_filter import is_high_risk_event_active, has_monday_event
+from utils.vix_utils import get_current_vix
+
 
 def is_market_closing_soon(timestamp_str):
     try:
         current_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").time()
-        return current_time >= time(15, 55)  # 3:55 PM ET
+        return current_time >= time(15, 55)
     except Exception:
         return False
+
 
 def get_adaptive_confidence_threshold():
     base_threshold = CONFIDENCE_THRESHOLD
@@ -33,7 +37,7 @@ def get_adaptive_confidence_threshold():
                 return base_threshold
             if vix_value >= VIX_MAX_THRESHOLD:
                 logger.warning("❌ VIX above max threshold — skipping trade.")
-                return float("inf")  # Prevent any trade
+                return float("inf")
             elif vix_value >= VIX_MODERATE_THRESHOLD:
                 adjusted_threshold = base_threshold + CONFIDENCE_STEP_UP
                 logger.info(f"⚠️ Elevated VIX — adjusting confidence threshold to {adjusted_threshold}")
@@ -41,6 +45,7 @@ def get_adaptive_confidence_threshold():
         except Exception as e:
             logger.error(f"[VIX Error] Failed to retrieve VIX: {str(e)}")
     return base_threshold
+
 
 def evaluate_trade(position, market_data):
     try:
@@ -59,13 +64,11 @@ def evaluate_trade(position, market_data):
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
             return "exit"
 
-        # === Adaptive Confidence Filter ===
         adaptive_threshold = get_adaptive_confidence_threshold()
         if confidence < adaptive_threshold:
             logger.info(f"⚠️ Confidence {confidence:.2f} below adaptive threshold {adaptive_threshold:.2f} — skipping/exiting.")
             return "exit"
 
-        # Indicators
         rsi = indicators.get('rsi')
         atr = indicators.get('atr')
         vwap = indicators.get('vwap')
@@ -123,6 +126,26 @@ def evaluate_trade(position, market_data):
         # === SWING TRADE LOGIC ===
         elif is_swing_trade(position):
             logger.debug("[Strategy] Trade type: Swing Trade")
+
+            # === WEEKEND HOLD CHECK ===
+            now = datetime.now()
+            if now.weekday() == 4:  # Friday
+                try:
+                    vix = get_current_vix()
+                    has_event = has_monday_event()
+                    if vix is None or vix > 18 or confidence < 0.8 or has_event:
+                        logger.info("🚪 Unsafe to hold over the weekend — exiting swing.")
+                        send_telegram_message(
+                            f"🚪 *Forced Swing Exit — Unsafe Weekend Hold*\n"
+                            f"- VIX: {vix}\n"
+                            f"- Confidence: {confidence:.2f}\n"
+                            f"- Monday Events: {has_event}"
+                        )
+                        return "exit"
+                except Exception as e:
+                    logger.error(f"[Weekend Swing Check Error] {str(e)}")
+                    send_telegram_message(f"⚠️ Weekend hold check failed — Exiting to be safe.\nReason: `{str(e)}`")
+                    return "exit"
 
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT * 1.5):
                 if price <= price * (1 - 0.10):
