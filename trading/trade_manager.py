@@ -1,75 +1,95 @@
 # trade_manager.py
 
-import datetime
-import pytz
-from config import MAX_RETRIES, SWING_TRADE_CONFIDENCE_THRESHOLD, VIX_SAFE_FOR_SWING
+import time
+from datetime import datetime, timedelta
 from utils.logger import bot_logger
-from utils.vix_utils import fetch_vix_price, should_throttle_trades, is_vix_moderately_high
-from strategy.event_filter import has_major_event_on
-from trading.broker import execute_order, close_position
+from utils.telegram_notifier import TelegramNotifier
+from utils.vix_utils import get_vix_level
+from filters.event_filter import is_blackout_day
+from config import (
+    MAX_RETRIES_PER_TRADE,
+    RETRY_DELAY_SECONDS,
+    USE_AGGRESSIVE_MODE,
+    ENABLE_VIX_THROTTLING,
+    ENABLE_EVENT_BLACKOUT,
+    ENABLE_ADAPTIVE_CONFIDENCE,
+    SWING_TRADE_THRESHOLD,
+    VIX_MAX_THRESHOLD
+)
 
-eastern = pytz.timezone("US/Eastern")
-
-def should_convert_to_weekend_swing(confidence, vix_value, setup_valid):
-    """
-    Evaluates if a Friday trade should be held over the weekend.
-    Conditions:
-    - High confidence
-    - VIX low
-    - No major Monday event
-    - Setup is valid
-    """
-    now = datetime.datetime.now(eastern)
-    if now.weekday() != 4:  # Not Friday
-        return False
-
-    monday = now.date() + datetime.timedelta(days=3)
-
-    if vix_value is None or vix_value > VIX_SAFE_FOR_SWING:
-        bot_logger.info(f"⛔️ VIX too high for weekend swing: {vix_value}")
-        return False
-
-    if confidence < SWING_TRADE_CONFIDENCE_THRESHOLD:
-        bot_logger.info(f"❌ Confidence too low for weekend swing: {confidence}")
-        return False
-
-    if not setup_valid:
-        bot_logger.info("📉 Technical setup invalid for weekend hold.")
-        return False
-
-    if has_major_event_on(monday):
-        bot_logger.info("📅 Major Monday event blocks weekend swing.")
-        return False
-
-    bot_logger.info("✅ Holding trade over weekend — all conditions met.")
-    return True
+telegram = TelegramNotifier()
 
 
-def safe_execute_trade(trade_signal):
-    """
-    Attempt to execute a trade with retry logic.
-    """
-    retry_count = 0
-    while retry_count < MAX_RETRIES:
+def execute_trade_with_retries(trade_function, contract):
+    """Attempts trade with retries."""
+    for attempt in range(1, MAX_RETRIES_PER_TRADE + 1):
         try:
-            order = execute_order(trade_signal)
-            bot_logger.info(f"✅ Trade executed on attempt {retry_count + 1}")
-            return order
+            trade_function(contract)
+            bot_logger.info(f"✅ Trade executed on attempt {attempt}")
+            return True
         except Exception as e:
-            bot_logger.warning(f"⚠️ Trade execution failed: {e}")
-            retry_count += 1
-    bot_logger.error("❌ Trade execution failed after maximum retries.")
-    return None
+            bot_logger.warning(f"⚠️ Trade attempt {attempt} failed: {e}")
+            if attempt < MAX_RETRIES_PER_TRADE:
+                time.sleep(RETRY_DELAY_SECONDS)
+    bot_logger.error("❌ Trade failed after all retry attempts.")
+    return False
 
 
-def manage_exit(position, exit_signal):
+def evaluate_weekend_swing_hold(contract):
     """
-    Safely close a position based on exit signal or end-of-day logic.
+    Determines if a Friday trade should be held as a weekend swing.
+    Returns True if safe to hold, else False.
     """
     try:
-        result = close_position(position, exit_signal)
-        bot_logger.info(f"💼 Position closed: {result}")
-        return result
+        now = datetime.now()
+        is_friday = now.weekday() == 4  # Friday = 4
+
+        if not is_friday:
+            return False  # Only care on Friday
+
+        confidence = contract.get("confidence", 0)
+        if confidence < SWING_TRADE_THRESHOLD:
+            bot_logger.info("❌ Swing rejected: confidence too low.")
+            return False
+
+        if ENABLE_VIX_THROTTLING:
+            vix = get_vix_level()
+            if vix > VIX_MAX_THRESHOLD:
+                bot_logger.info(f"❌ Swing rejected: VIX too high ({vix}).")
+                return False
+
+        if ENABLE_EVENT_BLACKOUT:
+            monday = now + timedelta(days=3)  # Check Monday
+            if is_blackout_day(monday):
+                bot_logger.info("❌ Swing rejected: Monday has blackout event.")
+                return False
+
+        # Passed all checks – allow swing
+        telegram.send_swing_hold_alert(contract, reason="High confidence + low VIX + no Monday risk")
+        bot_logger.info("✅ Holding position over weekend as swing.")
+        return True
+
     except Exception as e:
-        bot_logger.error(f"❌ Failed to close position: {e}")
-        return None
+        bot_logger.warning(f"[Swing Evaluation Error] {e}")
+        return False
+
+
+def manage_trade_execution(trade_function, contract):
+    """
+    Handles trade execution and weekend swing evaluation logic.
+    """
+    try:
+        trade_success = execute_trade_with_retries(trade_function, contract)
+
+        if trade_success:
+            # Weekend swing logic only applies on Friday and for swing trades
+            if evaluate_weekend_swing_hold(contract):
+                contract["swing_held"] = True
+            else:
+                contract["swing_held"] = False
+
+        return trade_success
+
+    except Exception as e:
+        bot_logger.error(f"[Trade Manager Error] {e}")
+        return False
