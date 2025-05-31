@@ -2,6 +2,7 @@ import schedule
 import time
 import traceback
 import pytz
+import subprocess
 from datetime import datetime
 from strategy.strategy import run_strategy  # ✅ updated path
 from retrain import retrain_model
@@ -81,6 +82,17 @@ schedule.every().day.at("16:50").do(lambda: log_and_notify("Model Retraining", r
 
 # Cleanup logs and backups at 5:00 PM ET
 schedule.every().day.at("17:00").do(lambda: log_and_notify("Log & Backup Cleanup", cleanup_logs_and_backups))
+
+# ✅ Meta-agent retraining from log at 7:00 PM ET
+def retrain_meta_agent():
+    try:
+        subprocess.run(["python3", "meta/train_meta_agent.py"], check=True)
+        logger.info("✅ Meta-agent retrained successfully.")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Meta-agent training failed: {e}")
+        raise
+
+schedule.every().day.at("19:00").do(lambda: log_and_notify("Meta-Agent Retraining", retrain_meta_agent))
 
 # ===========================
 # Scheduler Loop
