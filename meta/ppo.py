@@ -1,5 +1,6 @@
 # meta/ppo.py
 
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,6 +8,7 @@ from torch.distributions import Categorical
 from meta.meta_agent_info import get_meta_agent_dims
 from utils.logger import bot_logger as logger
 
+PPO_MODEL_PATH = "meta/ppo_weights.pth"
 
 class PPOActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=64):
@@ -41,7 +43,6 @@ class PPOActorCritic(nn.Module):
 
 class PPOAgent:
     def __init__(self, state_dim=None, action_dim=None, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4):
-        # Load from meta_agent_info.json if not provided
         if state_dim is None or action_dim is None:
             state_dim, action_dim = get_meta_agent_dims()
             logger.info(f"📦 Loaded PPO state/action dims from file: {state_dim}, {action_dim}")
@@ -105,3 +106,15 @@ class PPOAgent:
             self.optimizer.step()
 
         logger.info("✅ PPO update complete.")
+
+    def save_model(self, path=PPO_MODEL_PATH):
+        torch.save(self.model.state_dict(), path)
+        logger.info(f"💾 PPO model saved to {path}")
+
+    def load_model(self, path=PPO_MODEL_PATH):
+        if os.path.exists(path):
+            self.model.load_state_dict(torch.load(path))
+            self.model.eval()
+            logger.info(f"📥 PPO model loaded from {path}")
+        else:
+            logger.warning(f"⚠️ PPO model file not found at {path}. Starting fresh.")
