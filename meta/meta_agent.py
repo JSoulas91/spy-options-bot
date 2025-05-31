@@ -1,81 +1,46 @@
-# meta/meta_agent.py
-
-import json
 import os
-from datetime import datetime
-from utils.logger import bot_logger as logger
+import numpy as np
 from meta.ppo import PPOPolicy
-
-META_STATE_PATH = os.path.join(os.path.dirname(__file__), 'meta_state.json')
+from meta.meta_state import get_current_meta_state
 
 class MetaAgent:
-    def __init__(self):
-        self.state = self.load_state()
-        self.ppo = PPOPolicy(input_size=5, output_size=3)  # You can adjust later
+    def __init__(self, model_path="meta/meta_agent_model.pkl"):
+        self.model_path = model_path
+        self.policy = self._load_or_initialize_policy()
 
-    def load_state(self):
-        if os.path.exists(META_STATE_PATH):
-            with open(META_STATE_PATH, 'r') as f:
-                return json.load(f)
+    def _load_or_initialize_policy(self):
+        policy = PPOPolicy(input_dim=5, output_dim=3)
+        if os.path.exists(self.model_path):
+            try:
+                policy.load(self.model_path)
+                print("[MetaAgent] Loaded existing meta-agent policy.")
+            except Exception as e:
+                print(f"[MetaAgent] Failed to load existing policy: {e}. Starting fresh.")
         else:
-            logger.warning("[MetaAgent] No meta_state.json found. Initializing new state.")
-            return {
-                "win_streak": 0,
-                "loss_streak": 0,
-                "last_action": None,
-                "history": []
-            }
+            print("[MetaAgent] No existing policy found. Initializing new one.")
+        return policy
 
-    def save_state(self):
-        with open(META_STATE_PATH, 'w') as f:
-            json.dump(self.state, f, indent=4)
-
-    def update_result(self, reward):
+    def select_action(self, state):
         """
-        Call this after each trade outcome.
-        reward: +1 for win, -1 for loss, 0 for neutral
+        Given a meta-state, return an action (as index).
         """
-        if reward > 0:
-            self.state["win_streak"] += 1
-            self.state["loss_streak"] = 0
-        elif reward < 0:
-            self.state["loss_streak"] += 1
-            self.state["win_streak"] = 0
+        state = np.array(state).reshape(1, -1)
+        return self.policy.select_action(state)
 
-        self.state["history"].append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "reward": reward,
-            "win_streak": self.state["win_streak"],
-            "loss_streak": self.state["loss_streak"]
-        })
-
-        if len(self.state["history"]) > 1000:
-            self.state["history"] = self.state["history"][-1000:]
-
-        self.save_state()
-
-    def decide(self, vix, time_of_day, trade_type, volatility):
+    def interpret_action(self, action_index):
         """
-        Converts input into a state vector and gets action from PPO.
-        Action space (example):
-            0 = No change
-            1 = Raise confidence threshold
-            2 = Reduce position size
+        Converts action index into a dictionary of strategy parameters.
         """
-        input_state = [
-            self.state["win_streak"] - self.state["loss_streak"],  # Net streak
-            vix,
-            time_of_day,    # e.g. 0.0–1.0 (normalized)
-            trade_type,     # 0 = day trade, 1 = swing
-            volatility      # e.g. ATR or intraday stddev
-        ]
+        actions = {
+            0: {"confidence_threshold": 0.65, "position_size": 0.05},  # Conservative
+            1: {"confidence_threshold": 0.55, "position_size": 0.10},  # Moderate
+            2: {"confidence_threshold": 0.45, "position_size": 0.15},  # Aggressive
+        }
+        return actions.get(action_index, actions[1])  # Default to moderate
 
-        action = self.ppo.select_action(input_state)
-        self.state["last_action"] = action
-        self.save_state()
-        return action
-
-# Example usage:
-# meta_agent = MetaAgent()
-# action = meta_agent.decide(vix=18, time_of_day=0.75, trade_type=0, volatility=0.015)
-# meta_agent.update_result(reward=1)
+    def save_policy(self):
+        """
+        Save the trained model.
+        """
+        self.policy.save(self.model_path)
+        print("[MetaAgent] Meta-agent policy saved.")
