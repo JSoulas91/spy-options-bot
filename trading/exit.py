@@ -4,7 +4,7 @@ import traceback
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
 from event_filter import is_blackout_time
-
+from utils.trade_tracker import close_trade  # 🔹 NEW
 
 def evaluate_exit_conditions(
     position,
@@ -13,10 +13,6 @@ def evaluate_exit_conditions(
     confidence_score,
     trailing_stop_enabled=True,
 ):
-    """
-    Determines whether to exit a position.
-    Returns True if exit is required, False otherwise.
-    """
     try:
         exit_signal = False
         reason = ""
@@ -26,28 +22,24 @@ def evaluate_exit_conditions(
         atr = indicators.get("atr")
         trailing_stop_hit = position.get("trailing_stop_hit", False)
 
-        # === EVENT-BASED FILTERING ===
         blackout, event_name = is_blackout_time()
         if blackout:
             logger.warning(f"🚫 Economic Event Blackout — Exiting due to {event_name}")
-            return True
+            exit_signal = True
+            reason = f"Economic Blackout: {event_name}"
 
-        # === EXTREME LOW CONFIDENCE ===
         if confidence_score < 0.3:
             exit_signal = True
             reason = "📉 Extremely low confidence score"
 
-        # === TRAILING STOP ===
         if trailing_stop_enabled and trailing_stop_hit:
             exit_signal = True
             reason = "🔻 Trailing stop triggered"
 
-        # === TECHNICAL REVERSAL SIGNAL ===
         if indicators.get("exit_signal", False):
             exit_signal = True
             reason = "⚠️ Technical exit signal"
 
-        # === ATR-BASED STOP ===
         if atr and price and entry_price:
             stop_loss_atr = entry_price - (atr * 1.5)
             if price < stop_loss_atr:
@@ -57,6 +49,12 @@ def evaluate_exit_conditions(
         if exit_signal:
             logger.info(f"🚪 Exit triggered — Reason: {reason}")
             send_telegram_message(f"🚪 *Exit Triggered*\nReason: {reason}")
+
+            # 🔹 LOG THE CLOSED TRADE
+            trade_id = position.get("id")
+            if trade_id:
+                close_trade(trade_id)
+
             return True
 
         return False
