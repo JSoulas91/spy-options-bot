@@ -45,8 +45,9 @@ def main():
     # Save to meta_agent_info.json
     save_meta_agent_dims(state_dim, action_dim)
 
-    # Initialize PPO agent
+    # Initialize PPO agent and load existing weights
     agent = PPOAgent(state_dim=state_dim, action_dim=action_dim, lr=LR, gamma=GAMMA)
+    agent.load_model()
 
     # Convert data to tensors
     states = [torch.tensor(d['state'], dtype=torch.float32) for d in data]
@@ -84,6 +85,8 @@ def main():
         avg_reward = np.mean(rewards)
         logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
 
+    # Save updated model
+    agent.save_model()
     logger.info("✅ PPO Meta-Agent retraining completed.")
 
 if __name__ == "__main__":
