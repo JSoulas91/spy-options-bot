@@ -14,7 +14,9 @@ from config import (
     ENABLE_EVENT_BLACKOUT,
     ENABLE_ADAPTIVE_CONFIDENCE,
     SWING_TRADE_THRESHOLD,
-    VIX_MAX_THRESHOLD
+    VIX_MAX_THRESHOLD,
+    ENFORCE_PDT_LIMITS,
+    MAX_DAY_TRADES
 )
 
 telegram = TelegramNotifier()
