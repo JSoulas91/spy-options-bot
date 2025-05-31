@@ -3,10 +3,11 @@
 import os
 import json
 import numpy as np
-from meta.ppo import PPO
-from meta.meta_agent_info import save_agent_info
+from meta.ppo import PPOAgent
+from meta.meta_agent_info import save_meta_agent_dims
 from config import META_LOG_PATH
 from utils.logger import bot_logger as logger
+import torch
 
 # === Hyperparameters ===
 GAMMA = 0.99
@@ -37,30 +38,49 @@ def main():
         logger.warning("❌ No data available for training. Aborting.")
         return
 
-    # Automatically determine dimensions
+    # Automatically determine state/action dimensions
     state_dim = len(data[0]['state'])
     action_dim = len(data[0]['action'])
 
-    # Save dimensions for future use
-    save_agent_info(state_dim, action_dim)
+    # Save to meta_agent_info.json
+    save_meta_agent_dims(state_dim, action_dim)
 
     # Initialize PPO agent
-    agent = PPO(state_dim=state_dim, action_dim=action_dim, lr=LR, gamma=GAMMA)
+    agent = PPOAgent(state_dim=state_dim, action_dim=action_dim, lr=LR, gamma=GAMMA)
 
-    # Prepare data
-    states = np.array([d['state'] for d in data])
-    actions = np.array([d['action'] for d in data])
-    rewards = np.array([d['reward'] for d in data])
-    next_states = np.array([d['next_state'] for d in data])
-    dones = np.array([d.get('done', False) for d in data])
+    # Convert data to tensors
+    states = [torch.tensor(d['state'], dtype=torch.float32) for d in data]
+    actions = [int(np.argmax(d['action'])) if isinstance(d['action'], list) else int(d['action']) for d in data]
+    rewards = [float(d['reward']) for d in data]
+    next_states = [torch.tensor(d['next_state'], dtype=torch.float32) for d in data]
+    dones = [bool(d.get('done', False)) for d in data]
 
-    # Load into buffer
-    for s, a, r, ns, d in zip(states, actions, rewards, next_states, dones):
-        agent.buffer.append((s, a, r, ns, d))
+    # Estimate values and next_value for return calculation
+    with torch.no_grad():
+        values = [agent.model.forward(s.unsqueeze(0))[1].item() for s in states]
+        next_value = agent.model.forward(next_states[-1].unsqueeze(0))[1].item()
 
-    # Train loop
+    # Build memory dict for PPOAgent.update()
+    memory = {
+        "states": states,
+        "actions": actions,
+        "rewards": rewards,
+        "dones": dones,
+        "log_probs": [],
+        "values": torch.tensor(values),
+        "next_value": torch.tensor(next_value)
+    }
+
+    # Precompute log_probs
+    for s, a in zip(states, actions):
+        probs, _ = agent.model.forward(s.unsqueeze(0))
+        dist = torch.distributions.Categorical(probs)
+        log_prob = dist.log_prob(torch.tensor(a))
+        memory["log_probs"].append(log_prob)
+
+    # Training loop
     for epoch in range(EPOCHS):
-        agent.train(batch_size=BATCH_SIZE)
+        agent.update(memory)
         avg_reward = np.mean(rewards)
         logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
 
