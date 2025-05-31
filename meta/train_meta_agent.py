@@ -4,6 +4,7 @@ import os
 import json
 import numpy as np
 from meta.ppo import PPO
+from meta.meta_agent_info import save_agent_info
 from config import META_LOG_PATH
 from utils.logger import bot_logger as logger
 
@@ -12,8 +13,6 @@ GAMMA = 0.99
 LR = 0.0003
 EPOCHS = 20
 BATCH_SIZE = 32
-
-META_AGENT_INFO_PATH = "meta/meta_agent_info.json"
 
 def load_logged_data():
     data = []
@@ -30,13 +29,6 @@ def load_logged_data():
                 logger.warning("⚠️ Skipped invalid JSON line in log.")
     return data
 
-def save_meta_agent_info(state_dim, action_dim):
-    meta_info = {"state_dim": state_dim, "action_dim": action_dim}
-    os.makedirs(os.path.dirname(META_AGENT_INFO_PATH), exist_ok=True)
-    with open(META_AGENT_INFO_PATH, "w") as f:
-        json.dump(meta_info, f)
-    logger.info(f"💾 Saved meta agent info: {meta_info}")
-
 def main():
     logger.info("🎯 Starting PPO Meta-Agent Retraining from Logs...")
 
@@ -45,32 +37,32 @@ def main():
         logger.warning("❌ No data available for training. Aborting.")
         return
 
-    # Auto-detect state and action dimensions from data
+    # Automatically determine dimensions
     state_dim = len(data[0]['state'])
     action_dim = len(data[0]['action'])
 
-    # Save dims metadata for future automatic loading
-    save_meta_agent_info(state_dim, action_dim)
+    # Save dimensions for future use
+    save_agent_info(state_dim, action_dim)
 
     # Initialize PPO agent
     agent = PPO(state_dim=state_dim, action_dim=action_dim, lr=LR, gamma=GAMMA)
 
-    # Convert data to training batches
+    # Prepare data
     states = np.array([d['state'] for d in data])
     actions = np.array([d['action'] for d in data])
     rewards = np.array([d['reward'] for d in data])
     next_states = np.array([d['next_state'] for d in data])
     dones = np.array([d.get('done', False) for d in data])
 
-    # Add to PPO buffer
+    # Load into buffer
     for s, a, r, ns, d in zip(states, actions, rewards, next_states, dones):
         agent.buffer.append((s, a, r, ns, d))
 
-    # Train for a few epochs
+    # Train loop
     for epoch in range(EPOCHS):
         agent.train(batch_size=BATCH_SIZE)
         avg_reward = np.mean(rewards)
-        logger.info(f"📈 Epoch {epoch+1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
+        logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
 
     logger.info("✅ PPO Meta-Agent retraining completed.")
 
