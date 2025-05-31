@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
-from meta.meta_agent_info import load_agent_info
+from meta.meta_agent_info import get_meta_agent_dims
 from utils.logger import bot_logger as logger
 
 
@@ -43,9 +43,7 @@ class PPOAgent:
     def __init__(self, state_dim=None, action_dim=None, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4):
         # Load from meta_agent_info.json if not provided
         if state_dim is None or action_dim is None:
-            info = load_agent_info()
-            state_dim = info["state_dim"]
-            action_dim = info["action_dim"]
+            state_dim, action_dim = get_meta_agent_dims()
             logger.info(f"📦 Loaded PPO state/action dims from file: {state_dim}, {action_dim}")
 
         self.model = PPOActorCritic(state_dim, action_dim)
