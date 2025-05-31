@@ -7,15 +7,7 @@ from utils.telegram_notifier import TelegramNotifier
 from utils.vix_utils import get_vix_level
 from utils.trade_tracker import TradeTracker
 from strategy.event_filter import is_blackout_day
-from config import (
-    MAX_RETRIES_PER_TRADE,
-    RETRY_DELAY_SECONDS,
-    USE_AGGRESSIVE_MODE,
-    ENABLE_VIX_THROTTLING,
-    ENABLE_EVENT_BLACKOUT,
-    ENABLE_ADAPTIVE_CONFIDENCE,
-    SWING_TRADE_THRESHOLD,
-)
+import config
 
 telegram = TelegramNotifier()
 tracker = TradeTracker()
@@ -23,15 +15,15 @@ tracker = TradeTracker()
 
 def execute_trade_with_retries(trade_function, contract):
     """Attempts trade with retries."""
-    for attempt in range(1, MAX_RETRIES_PER_TRADE + 1):
+    for attempt in range(1, config.MAX_RETRIES_PER_TRADE + 1):
         try:
             trade_function(contract)
             bot_logger.info(f"✅ Trade executed on attempt {attempt}")
             return True
         except Exception as e:
             bot_logger.warning(f"⚠️ Trade attempt {attempt} failed: {e}")
-            if attempt < MAX_RETRIES_PER_TRADE:
-                time.sleep(RETRY_DELAY_SECONDS)
+            if attempt < config.MAX_RETRIES_PER_TRADE:
+                time.sleep(config.RETRY_DELAY_SECONDS)
     bot_logger.error("❌ Trade failed after all retry attempts.")
     return False
 
@@ -46,17 +38,20 @@ def evaluate_weekend_swing_hold(contract):
             return False
 
         confidence = contract.get("confidence", 0)
-        if confidence < SWING_TRADE_THRESHOLD:
+        if confidence < config.SWING_TRADE_THRESHOLD:
             bot_logger.info("❌ Swing rejected: confidence too low.")
             return False
 
-        if ENABLE_VIX_THROTTLING:
+        if config.ENABLE_VIX_THROTTLING:
             vix = get_vix_level()
+            if vix is None:
+                bot_logger.warning("⚠️ Could not retrieve VIX — rejecting swing hold.")
+                return False
             if vix > config.VIX_MAX_THRESHOLD:
                 bot_logger.info(f"❌ Swing rejected: VIX too high ({vix}).")
                 return False
 
-        if ENABLE_EVENT_BLACKOUT:
+        if config.ENABLE_EVENT_BLACKOUT:
             monday = now + timedelta(days=3)
             if is_blackout_day(monday):
                 bot_logger.info("❌ Swing rejected: Monday has blackout event.")
@@ -85,10 +80,7 @@ def manage_trade_execution(trade_function, contract):
             tracker.increment_trade_count()
 
             # Evaluate for possible weekend swing
-            if evaluate_weekend_swing_hold(contract):
-                contract["swing_held"] = True
-            else:
-                contract["swing_held"] = False
+            contract["swing_held"] = evaluate_weekend_swing_hold(contract)
 
         return trade_success
 
