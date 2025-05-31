@@ -6,9 +6,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
 from meta.meta_agent_info import get_meta_agent_dims
+from config import META_MODEL_PATH
 from utils.logger import bot_logger as logger
 
-PPO_MODEL_PATH = "meta/ppo_weights.pth"
 
 class PPOActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=64):
@@ -52,6 +52,25 @@ class PPOAgent:
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.K_epochs = K_epochs
+
+        # Try loading model weights + optimizer state
+        self.load()
+
+    def save(self):
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict()
+        }, META_MODEL_PATH)
+        logger.info(f"💾 PPO model + optimizer saved to {META_MODEL_PATH}")
+
+    def load(self):
+        if os.path.exists(META_MODEL_PATH):
+            checkpoint = torch.load(META_MODEL_PATH)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            logger.info(f"📥 PPO model + optimizer loaded from {META_MODEL_PATH}")
+        else:
+            logger.warning(f"⚠️ No saved PPO model found at {META_MODEL_PATH}. Starting fresh.")
 
     def compute_returns(self, rewards, dones, values, next_value):
         returns = []
@@ -106,15 +125,3 @@ class PPOAgent:
             self.optimizer.step()
 
         logger.info("✅ PPO update complete.")
-
-    def save_model(self, path=PPO_MODEL_PATH):
-        torch.save(self.model.state_dict(), path)
-        logger.info(f"💾 PPO model saved to {path}")
-
-    def load_model(self, path=PPO_MODEL_PATH):
-        if os.path.exists(path):
-            self.model.load_state_dict(torch.load(path))
-            self.model.eval()
-            logger.info(f"📥 PPO model loaded from {path}")
-        else:
-            logger.warning(f"⚠️ PPO model file not found at {path}. Starting fresh.")
