@@ -23,6 +23,9 @@ from meta.meta_agent import MetaAgent
 meta_agent = MetaAgent()
 meta_agent.load_model()
 
+# === Optional future use ===
+RETURN_META_FEEDBACK = False
+
 def is_market_closing_soon(timestamp_str):
     try:
         current_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").time()
@@ -65,7 +68,7 @@ def evaluate_trade(position, market_data):
         if is_high_risk_event_active():
             logger.warning("🚨 Live economic event detected — exiting to reduce risk.")
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
-            return "exit"
+            return "exit" if not RETURN_META_FEEDBACK else ("exit", None)
 
         # === Build meta-state and apply PPO policy ===
         vix = get_current_vix()
@@ -76,19 +79,23 @@ def evaluate_trade(position, market_data):
         meta_state = [confidence, vix or 0, hour, 0 if trade_type == "day" else 1, volatility]
         meta_action = meta_agent.select_action(meta_state)
 
+        logger.info(f"🧠 Meta-State: {meta_state} | Meta-Action: {meta_action}")
+
+        meta_feedback = {"meta_state": meta_state, "meta_action": meta_action}
+
         if meta_action == 0:
             logger.info("🧠 Meta-Agent action: skip — confidence not met.")
-            return "exit"
+            return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
         elif meta_action == 1:
             logger.info("🧠 Meta-Agent action: hold — continue evaluation.")
         elif meta_action == 2:
             logger.info("🧠 Meta-Agent action: force exit — exiting position.")
-            return "exit"
+            return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         adaptive_threshold = get_adaptive_confidence_threshold(meta_state)
         if confidence < adaptive_threshold:
             logger.info(f"⚠️ Confidence {confidence:.2f} below adaptive threshold {adaptive_threshold:.2f} — exiting.")
-            return "exit"
+            return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         rsi = indicators.get('rsi')
         atr = indicators.get('atr')
@@ -111,38 +118,38 @@ def evaluate_trade(position, market_data):
 
             if is_market_closing_soon(timestamp):
                 logger.info("⏰ Market closing soon — exiting day trade.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT):
                 if price <= price * (1 - 0.10):
                     logger.info("📉 Trailing stop-loss hit after 10% gain.")
-                    return "exit"
+                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER):
                 logger.info("🛑 Day trade ATR stop-loss hit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if rsi and rsi > 70 and vwap and price < vwap:
                 logger.info("⚠️ RSI overbought + VWAP rejection — exit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
             elif rsi and rsi < 30 and vwap and price > vwap:
                 logger.info("⚠️ RSI oversold + VWAP reclaim — exit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if price > upper_band or price < lower_band:
                 logger.info("⚠️ Price outside Bollinger Bands — exit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if ema_50 and ema_200 and ema_50 < ema_200:
                 logger.info("⚠️ EMA50 below EMA200 — exit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if resistance and price > resistance * 0.995:
                 logger.info("⚠️ Near resistance — consider profit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
             if support and price < support * 1.005:
                 logger.info("⚠️ Near support — protect capital.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         # === SWING TRADE LOGIC ===
         elif is_swing_trade(position):
@@ -161,50 +168,50 @@ def evaluate_trade(position, market_data):
                             f"- Confidence: {confidence:.2f}\n"
                             f"- Monday Events: {has_event}"
                         )
-                        return "exit"
+                        return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
                 except Exception as e:
                     logger.error(f"[Weekend Swing Check Error] {str(e)}")
                     send_telegram_message(f"⚠️ Weekend hold check failed — Exiting to be safe.\nReason: `{str(e)}`")
-                    return "exit"
+                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT * 1.5):
                 if price <= price * (1 - 0.10):
                     logger.info("📉 Swing trailing stop-loss hit after strong gains.")
-                    return "exit"
+                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER * 1.2):
                 logger.info("🛑 Swing trade ATR stop-loss hit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if rsi and macd_hist:
                 if rsi > 70 and macd_hist < 0 and price < resistance:
                     logger.info("⚠️ RSI overbought + MACD reversal + resistance — exit.")
-                    return "exit"
+                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
                 elif rsi < 30 and macd_hist > 0 and price > support:
                     logger.info("⚠️ RSI oversold + MACD recovery + support — exit.")
-                    return "exit"
+                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if vwap and price < vwap and rsi and rsi > 65:
                 logger.info("⚠️ VWAP fade + elevated RSI — swing exit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if ema_50 and ema_200 and ema_50 < ema_200:
                 logger.info("⚠️ EMA50 crossed below EMA200 — exit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if price > upper_band or price < lower_band:
                 logger.info("⚠️ Bollinger Band extremes — swing exit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if resistance and price > resistance * 0.995:
                 logger.info("⚠️ Approaching resistance — take profit.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
             if support and price < support * 1.005:
                 logger.info("⚠️ Approaching support — risk manage.")
-                return "exit"
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         logger.debug(f"[Strategy] Final action: {action}")
-        return action
+        return action if not RETURN_META_FEEDBACK else (action, meta_feedback)
 
     except Exception as e:
         logger.error(f"[Strategy Error] {str(e)}")
@@ -214,4 +221,4 @@ def evaluate_trade(position, market_data):
             f"Could not evaluate trade.\n"
             f"Reason: `{str(e)}`"
         )
-        return "hold"
+        return "hold" if not RETURN_META_FEEDBACK else ("hold", None)
