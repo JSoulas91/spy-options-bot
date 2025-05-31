@@ -15,6 +15,7 @@ LR = 0.0003
 EPOCHS = 20
 BATCH_SIZE = 32
 
+
 def load_logged_data():
     data = []
     if not os.path.exists(META_LOG_PATH):
@@ -29,6 +30,7 @@ def load_logged_data():
             except json.JSONDecodeError:
                 logger.warning("⚠️ Skipped invalid JSON line in log.")
     return data
+
 
 def main():
     logger.info("🎯 Starting PPO Meta-Agent Retraining from Logs...")
@@ -45,9 +47,8 @@ def main():
     # Save to meta_agent_info.json
     save_meta_agent_dims(state_dim, action_dim)
 
-    # Initialize PPO agent and load existing weights
+    # Initialize PPO agent
     agent = PPOAgent(state_dim=state_dim, action_dim=action_dim, lr=LR, gamma=GAMMA)
-    agent.load_model()
 
     # Convert data to tensors
     states = [torch.tensor(d['state'], dtype=torch.float32) for d in data]
@@ -85,9 +86,10 @@ def main():
         avg_reward = np.mean(rewards)
         logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
 
-    # Save updated model
-    agent.save_model()
-    logger.info("✅ PPO Meta-Agent retraining completed.")
+    # ✅ Save model + optimizer
+    agent.save()
+
+    logger.info("✅ PPO Meta-Agent retraining completed and model saved.")
 
 if __name__ == "__main__":
     main()
