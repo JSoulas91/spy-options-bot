@@ -1,0 +1,12 @@
+mkdir -p meta
+echo '{
+  "current_streak": 0,
+  "last_outcome": "neutral",
+  "adjustments": {
+    "confidence_threshold": 0.75,
+    "position_size": 0.10
+  }
+}' > meta/meta_state.json
+
+git add meta/meta_state.json
+git commit -m "Add initial meta state JSON for PPO meta-agent"
