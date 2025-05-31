@@ -97,5 +97,6 @@ DEBUG_OPTION_FILTER = os.getenv("DEBUG_OPTION_FILTER", "false").lower() == "true
 # === META-AGENT SETTINGS ===
 META_STATE_LOOKBACK_MINUTES = int(os.getenv("META_STATE_LOOKBACK_MINUTES", 720))  # Lookback window in minutes for trade history (default 12 hours)
 META_AGENT_ENABLED = os.getenv("META_AGENT_ENABLED", "true").lower() == "true"
+META_LOG_PATH = os.getenv("META_LOG_PATH", "meta/meta_log.jsonl")
 
 bot_logger.info("✅ Configuration loaded successfully.")
