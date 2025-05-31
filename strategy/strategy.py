@@ -18,6 +18,10 @@ from telegram_bot import send_telegram_message
 from event_filter import is_high_risk_event_active, has_monday_event
 from utils.vix_utils import get_current_vix
 
+# === Load PPO Meta-Agent ===
+from meta.meta_agent import MetaAgent
+meta_agent = MetaAgent()
+meta_agent.load_model()
 
 def is_market_closing_soon(timestamp_str):
     try:
@@ -26,9 +30,9 @@ def is_market_closing_soon(timestamp_str):
     except Exception:
         return False
 
-
-def get_adaptive_confidence_threshold():
+def get_adaptive_confidence_threshold(meta_state=None):
     base_threshold = CONFIDENCE_THRESHOLD
+
     if ENABLE_VIX_THROTTLING or ENABLE_ADAPTIVE_CONFIDENCE:
         try:
             vix_value = get_current_vix()
@@ -45,7 +49,6 @@ def get_adaptive_confidence_threshold():
         except Exception as e:
             logger.error(f"[VIX Error] Failed to retrieve VIX: {str(e)}")
     return base_threshold
-
 
 def evaluate_trade(position, market_data):
     try:
@@ -64,9 +67,27 @@ def evaluate_trade(position, market_data):
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
             return "exit"
 
-        adaptive_threshold = get_adaptive_confidence_threshold()
+        # === Build meta-state and apply PPO policy ===
+        vix = get_current_vix()
+        trade_type = "day" if is_day_trade(position) else "swing"
+        hour = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").hour if timestamp else 12
+        volatility = indicators.get("atr", 0)
+
+        meta_state = [confidence, vix or 0, hour, 0 if trade_type == "day" else 1, volatility]
+        meta_action = meta_agent.select_action(meta_state)
+
+        if meta_action == 0:
+            logger.info("🧠 Meta-Agent action: skip — confidence not met.")
+            return "exit"
+        elif meta_action == 1:
+            logger.info("🧠 Meta-Agent action: hold — continue evaluation.")
+        elif meta_action == 2:
+            logger.info("🧠 Meta-Agent action: force exit — exiting position.")
+            return "exit"
+
+        adaptive_threshold = get_adaptive_confidence_threshold(meta_state)
         if confidence < adaptive_threshold:
-            logger.info(f"⚠️ Confidence {confidence:.2f} below adaptive threshold {adaptive_threshold:.2f} — skipping/exiting.")
+            logger.info(f"⚠️ Confidence {confidence:.2f} below adaptive threshold {adaptive_threshold:.2f} — exiting.")
             return "exit"
 
         rsi = indicators.get('rsi')
@@ -127,7 +148,6 @@ def evaluate_trade(position, market_data):
         elif is_swing_trade(position):
             logger.debug("[Strategy] Trade type: Swing Trade")
 
-            # === WEEKEND HOLD CHECK ===
             now = datetime.now()
             if now.weekday() == 4:  # Friday
                 try:
