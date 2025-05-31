@@ -11,7 +11,7 @@ from cleanup import cleanup_logs_and_backups
 from telegram_bot import send_telegram_message
 from utils.logger import bot_logger as logger
 
-# Timezone
+# Timezone for all scheduling
 eastern = pytz.timezone('US/Eastern')
 
 MAX_RETRIES = 3
@@ -65,13 +65,13 @@ def log_and_notify(task_name, func):
         )
 
 # ===========================
-# ✅ Scheduled Daily Tasks
+# Scheduled Daily Tasks
 # ===========================
 
 # Day trades at 9:30 AM ET
 schedule.every().day.at("09:30").do(lambda: log_and_notify("Day Trade Strategy", lambda: run_strategy(mode="day")))
 
-# Optional swing trades near close
+# Optional swing trades near close (3:55 PM ET)
 schedule.every().day.at("15:55").do(lambda: log_and_notify("Swing Trade Strategy", lambda: run_strategy(mode="swing")))
 
 # Daily summary report at 4:45 PM ET
@@ -83,7 +83,7 @@ schedule.every().day.at("16:50").do(lambda: log_and_notify("Model Retraining", r
 # Cleanup logs and backups at 5:00 PM ET
 schedule.every().day.at("17:00").do(lambda: log_and_notify("Log & Backup Cleanup", cleanup_logs_and_backups))
 
-# ✅ Meta-agent retraining from log at 7:00 PM ET
+# Meta-agent retraining from logs at 7:00 PM ET
 def retrain_meta_agent():
     try:
         subprocess.run(["python3", "meta/train_meta_agent.py"], check=True)
