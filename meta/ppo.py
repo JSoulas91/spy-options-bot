@@ -4,6 +4,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
+from meta.meta_agent_info import load_agent_info
+from utils.logger import bot_logger as logger
+
 
 class PPOActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=64):
@@ -29,13 +32,22 @@ class PPOActorCritic(nn.Module):
         return self.actor(shared_out), self.critic(shared_out)
 
     def get_action(self, state):
+        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
         probs, _ = self.forward(state)
         dist = Categorical(probs)
         action = dist.sample()
         return action.item(), dist.log_prob(action), dist.entropy()
 
+
 class PPOAgent:
-    def __init__(self, state_dim, action_dim, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4):
+    def __init__(self, state_dim=None, action_dim=None, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4):
+        # Load from meta_agent_info.json if not provided
+        if state_dim is None or action_dim is None:
+            info = load_agent_info()
+            state_dim = info["state_dim"]
+            action_dim = info["action_dim"]
+            logger.info(f"📦 Loaded PPO state/action dims from file: {state_dim}, {action_dim}")
+
         self.model = PPOActorCritic(state_dim, action_dim)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.gamma = gamma
@@ -48,22 +60,26 @@ class PPOAgent:
         for reward, done in zip(reversed(rewards), reversed(dones)):
             R = reward + self.gamma * R * (1 - int(done))
             returns.insert(0, R)
-        return torch.tensor(returns)
+        return torch.tensor(returns, dtype=torch.float32)
 
     def update(self, memory):
+        if not memory or len(memory['states']) == 0:
+            logger.warning("⚠️ PPO update skipped: empty memory buffer.")
+            return
+
         states = torch.stack(memory['states'])
         actions = torch.tensor(memory['actions'])
         old_log_probs = torch.stack(memory['log_probs'])
         returns = self.compute_returns(memory['rewards'], memory['dones'], memory['values'], memory['next_value'])
         returns = returns.detach()
-        
-        for _ in range(self.K_epochs):
+
+        for epoch in range(self.K_epochs):
             log_probs_list = []
             state_values_list = []
             dist_entropy_list = []
 
             for state in states:
-                probs, value = self.model(state)
+                probs, value = self.model(state.unsqueeze(0))
                 dist = Categorical(probs)
                 log_prob = dist.log_prob(actions)
                 entropy = dist.entropy()
@@ -89,3 +105,5 @@ class PPOAgent:
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+
+        logger.info("✅ PPO update complete.")
