@@ -13,6 +13,17 @@ telegram = TelegramNotifier()
 tracker = TradeTracker()
 
 
+def get_days_to_expiry(contract):
+    try:
+        expiry_str = contract.get("expiry")
+        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        return (expiry_date - today).days
+    except Exception as e:
+        bot_logger.warning(f"[Expiry Parse Error] {e}")
+        return 0  # Assume expired if invalid
+
+
 def execute_trade_with_retries(trade_function, contract):
     """Attempts trade with retries."""
     for attempt in range(1, config.MAX_RETRIES_PER_TRADE + 1):
@@ -67,11 +78,18 @@ def evaluate_weekend_swing_hold(contract):
 
 
 def manage_trade_execution(trade_function, contract):
-    """Handles trade execution and PDT/swing evaluation logic."""
+    """Handles trade execution, expiry checks, PDT limits, and swing evaluation."""
     try:
         # PDT restriction
         if not tracker.can_execute_trade():
             bot_logger.info("🚫 Trade blocked due to PDT day trade limit.")
+            return False
+
+        # Expiry protection
+        dte = get_days_to_expiry(contract)
+        if dte <= 0:
+            bot_logger.warning("⚠️ Trade skipped: Contract already expired or expires today.")
+            telegram.send_message(f"⛔ Trade skipped — contract expires too soon (DTE={dte}).")
             return False
 
         trade_success = execute_trade_with_retries(trade_function, contract)
