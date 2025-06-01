@@ -1,3 +1,5 @@
+# exit.py
+
 import pytz
 from datetime import datetime
 from utils.trade_tracker import trade_tracker
@@ -7,15 +9,25 @@ from trade_manager import close_trade
 from meta.meta_agent import evaluate_exit_decision
 from utils.telegram_notifier import TelegramNotifier
 
-# Eastern time zone
+# Timezone setup
 eastern = pytz.timezone('US/Eastern')
-notifier = TelegramNotifier()  # Initialize once
+notifier = TelegramNotifier()
+
+def get_days_to_expiry(contract):
+    try:
+        expiry_str = contract.get("expiry")
+        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").date()
+        today = datetime.now(eastern).date()
+        return (expiry_date - today).days
+    except Exception as e:
+        bot_logger.warning(f"[Expiry Parse Error] {e}")
+        return 0  # Default to expiring immediately if parsing fails
 
 def handle_exit():
     try:
         now = datetime.now(eastern)
 
-        # 🕒 Force close all open day trades at 3:55 PM ET
+        # 🕒 3:55 PM ET — Force exit all day trades
         if now.hour == 15 and now.minute >= 55:
             closed_ids = []
             for trade in trade_tracker.get_open_trades():
@@ -30,9 +42,9 @@ def handle_exit():
                 notifier.send_message(
                     f"📉 [Auto Exit @ 3:55 PM ET]\nClosed {len(closed_ids)} day trade(s): {', '.join(map(str, closed_ids))}"
                 )
-            return  # Skip rest if it's time-based closure
+            return
 
-        # 🤖 Smart exit logic for both day and swing trades
+        # 🤖 Smart + DTE exit logic for all trades
         for trade in trade_tracker.get_open_trades():
             exit_reason = should_exit_trade(trade)
             if exit_reason:
@@ -47,13 +59,22 @@ def handle_exit():
 
 def should_exit_trade(trade):
     """
-    Decide if the trade should be closed early (non-time-based exit).
+    Determines if a trade should be closed early.
+    Returns exit reason string if exit is triggered, else None.
     """
     try:
+        # 1️⃣ Meta-agent exit
         if evaluate_exit_decision(trade):
             return "Meta-agent signal"
-        # (Optional: Add more custom indicator logic here)
+
+        # 2️⃣ DTE-based exit (for swing trades only)
+        if trade.get("trade_type") == 1:  # 1 = swing trade
+            dte = get_days_to_expiry(trade)
+            if dte <= 1:
+                return f"Contract near expiry (DTE={dte})"
+
         return None
+
     except Exception as e:
         bot_logger.error(f"[Exit Evaluation Error] {str(e)}")
         return None
