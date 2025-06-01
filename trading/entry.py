@@ -3,6 +3,7 @@ from datetime import datetime
 from config import MAX_DAY_TRADES, ENFORCE_PDT_LIMITS
 from utils.logger import bot_logger
 from utils.trade_tracker import TradeTracker
+from utils.trade_logger import log_trade
 from meta.meta_agent import meta_agent
 from meta.meta_state import build_meta_state_for_entry
 from trade_manager import execute_trade_with_retries
@@ -13,8 +14,9 @@ trade_tracker = TradeTracker()
 def handle_entry(market_data):
     try:
         now = datetime.now()
+
         if now.hour == 15 and now.minute >= 30:
-            bot_logger.info("Entry blocked after 3:30 PM ET.")
+            bot_logger.info("[Entry] Blocked new entries after 3:30 PM ET.")
             return
 
         signal = evaluate_trade_signal(market_data)
@@ -26,10 +28,10 @@ def handle_entry(market_data):
 
         if trade_type == 0:
             if ENFORCE_PDT_LIMITS and not trade_tracker.can_place_day_trade():
-                bot_logger.info("Day trade entry blocked by PDT limits.")
+                bot_logger.info("[Entry] Blocked by PDT rules.")
                 return
             if trade_tracker.get_today_day_trade_count() >= MAX_DAY_TRADES:
-                bot_logger.info("Day trade entry blocked by max daily limit.")
+                bot_logger.info("[Entry] Blocked by max daily limit.")
                 return
 
         meta_state = build_meta_state_for_entry(
@@ -40,15 +42,29 @@ def handle_entry(market_data):
         action = meta_agent.select_action(meta_state)
 
         if action == 0:
-            bot_logger.info("Meta-agent declined entry signal.")
+            bot_logger.info("[Entry] Meta-agent rejected trade setup.")
             return
 
         order_details = execute_trade_with_retries(signal["trade_setup"])
         if order_details:
+            order_details["confidence"] = confidence
+            order_details["indicators"] = signal.get("indicators", {})
+            order_details["timestamp"] = now.isoformat()
+            order_details["trade_type"] = trade_type
+
             trade_tracker.log_trade(order_details, trade_type)
-            bot_logger.info(f"{'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
+            log_trade({
+                "timestamp": now.isoformat(),
+                "action": "buy",
+                "trade_type": trade_type,
+                "symbol": order_details["symbol"],
+                "confidence_score": confidence,
+                "indicators": str(order_details["indicators"])
+            })
+
+            bot_logger.info(f"[Entry] {'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
         else:
-            bot_logger.warning("Trade execution failed after retries.")
+            bot_logger.warning("[Entry] Trade execution failed after retries.")
 
     except Exception as e:
-        bot_logger.error(f"Entry error: {str(e)}")
+        bot_logger.error(f"[Entry] Error: {str(e)}")
