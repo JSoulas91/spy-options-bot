@@ -3,13 +3,17 @@ import time
 import pytz
 from datetime import datetime
 import subprocess
+
 from utils.logger import bot_logger
+from utils.logs import clean_old_logs, backup_logs
+from utils.telegram_notifier import TelegramNotifier
+from utils.trade_logger import get_daily_trade_summary
 from retrain import retrain_model
 from main import run_bot
-from utils.logs import clean_old_logs, backup_logs
 
 # Time zone setup
 eastern = pytz.timezone('US/Eastern')
+telegram = TelegramNotifier()
 
 def run_trading_bot_task():
     bot_logger.info("Running trading bot task.")
@@ -20,8 +24,12 @@ def retrain_model_task():
     retrain_model()
 
 def send_daily_summary_task():
-    bot_logger.info("Sending daily performance summary.")
-    # Placeholder: add actual summary logic if needed
+    try:
+        summary_text = get_daily_trade_summary()
+        telegram.send_message(f"📊 <b>Daily Performance Summary</b>\n\n{summary_text}")
+        bot_logger.info("Daily summary sent via Telegram.")
+    except Exception as e:
+        bot_logger.error(f"Failed to send daily summary: {str(e)}")
 
 def clean_logs_task():
     bot_logger.info("Cleaning up old logs.")
