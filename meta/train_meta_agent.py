@@ -21,16 +21,11 @@ def load_meta_data():
     if not os.path.exists(META_LOG_PATH):
         logger.warning(f"⚠️ No meta training data found at {META_LOG_PATH}")
         return []
-
     with open(META_LOG_PATH, "r") as f:
-        lines = f.readlines()
-
-    data = [json.loads(line.strip()) for line in lines if line.strip()]
-    return data
+        return [json.loads(line.strip()) for line in f if line.strip()]
 
 def preprocess_data(data):
     buffer = PrioritizedReplayBuffer(alpha=BUFFER_ALPHA)
-
     for i in range(len(data) - 1):
         current = data[i]
         next_item = data[i + 1]
@@ -53,6 +48,11 @@ def append_reward_to_csv(epoch, reward):
             writer.writerow(["epoch", "avg_reward"])
         writer.writerow([epoch, reward])
 
+def normalize_rewards(rewards):
+    mean = np.mean(rewards)
+    std = np.std(rewards) + 1e-8
+    return [(r - mean) / std for r in rewards]
+
 def train():
     logger.info("🚀 Starting PPO meta-agent training...")
     data = load_meta_data()
@@ -60,7 +60,7 @@ def train():
         logger.warning("❌ No data to train on.")
         return
 
-    save_meta_agent_dims(data[0])  # Persist dims for loading
+    save_meta_agent_dims(data[0])
     buffer = preprocess_data(data)
 
     agent = PPOAgent()
@@ -75,14 +75,16 @@ def train():
 
             states = torch.tensor([b[0] for b in batch], dtype=torch.float32)
             actions = [b[1] for b in batch]
-            rewards = [b[2] for b in batch]
+            raw_rewards = [b[2] for b in batch]
+            rewards = normalize_rewards(raw_rewards)
+
             next_states = torch.tensor([b[3] for b in batch], dtype=torch.float32)
             dones = [b[4] for b in batch]
             weights_tensor = torch.tensor(weights, dtype=torch.float32)
 
             td_errors = agent.train_step(states, actions, rewards, dones, next_states, weights_tensor)
 
-            epoch_rewards.extend(rewards)
+            epoch_rewards.extend(raw_rewards)
             buffer.update_priorities(indices, td_errors)
 
         avg_reward = np.mean(epoch_rewards)
