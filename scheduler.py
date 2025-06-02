@@ -1,3 +1,5 @@
+# scheduler.py
+
 import schedule
 import time
 import pytz
@@ -9,19 +11,11 @@ from utils.logs import clean_old_logs, backup_logs
 from utils.telegram_notifier import TelegramNotifier
 from utils.trade_logger import get_daily_trade_summary
 from retrain import retrain_model
-from main import run_bot
+from main import run_market_open_tasks
 
 # Time zone setup
 eastern = pytz.timezone('US/Eastern')
 telegram = TelegramNotifier()
-
-def run_trading_bot_task():
-    bot_logger.info("Running trading bot task.")
-    run_bot()
-
-def retrain_model_task():
-    bot_logger.info("Running model retraining task.")
-    retrain_model()
 
 def send_daily_summary_task():
     try:
@@ -30,6 +24,10 @@ def send_daily_summary_task():
         bot_logger.info("Daily summary sent via Telegram.")
     except Exception as e:
         bot_logger.error(f"Failed to send daily summary: {str(e)}")
+
+def retrain_model_task():
+    bot_logger.info("Running model retraining task.")
+    retrain_model()
 
 def clean_logs_task():
     bot_logger.info("Cleaning up old logs.")
@@ -50,17 +48,17 @@ def train_meta_agent_task():
     except Exception as e:
         bot_logger.error(f"PPO training failed: {str(e)}")
 
-# Scheduling tasks
-schedule.every().day.at("09:30").do(run_trading_bot_task)        # Market open
-schedule.every().day.at("16:45").do(send_daily_summary_task)     # Summary after market close
-schedule.every().day.at("17:00").do(retrain_model_task)          # Retrain ML model
-schedule.every().day.at("17:20").do(clean_logs_task)             # Clean up logs
-schedule.every().day.at("17:30").do(backup_logs_task)            # Backup logs
-schedule.every().day.at("17:50").do(train_meta_agent_task)       # Train PPO meta-agent
-
-# Main loop
-if __name__ == "__main__":
+def run_scheduler_loop():
     bot_logger.info("Scheduler started.")
+
+    # Scheduling tasks
+    schedule.every().day.at("09:30").do(run_market_open_tasks)        # Market open tasks
+    schedule.every().day.at("16:45").do(send_daily_summary_task)      # Summary after market close
+    schedule.every().day.at("17:00").do(retrain_model_task)           # Retrain ML model
+    schedule.every().day.at("17:20").do(clean_logs_task)              # Clean up logs
+    schedule.every().day.at("17:30").do(backup_logs_task)             # Backup logs
+    schedule.every().day.at("17:50").do(train_meta_agent_task)        # Train PPO meta-agent
+
     while True:
         schedule.run_pending()
         time.sleep(1)
