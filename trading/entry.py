@@ -19,17 +19,20 @@ def handle_entry(market_data):
     try:
         now = datetime.now()
 
+        # Prevent new trades after 3:30 PM ET
         if now.hour == 15 and now.minute >= 30:
             bot_logger.info("[Entry] Blocked new entries after 3:30 PM ET.")
             return
 
+        # Evaluate strategy-level signal
         signal = evaluate_trade_signal(market_data)
         if not signal["should_trade"]:
             return
 
         confidence = signal["confidence"]
-        trade_type = signal["trade_type"]
+        trade_type = signal["trade_type"]  # 0 = day, 1 = swing
 
+        # PDT / daily limit enforcement
         if trade_type == 0:
             if ENFORCE_PDT_LIMITS and not trade_tracker.can_place_day_trade():
                 bot_logger.info("[Entry] Blocked by PDT rules.")
@@ -38,6 +41,7 @@ def handle_entry(market_data):
                 bot_logger.info("[Entry] Blocked by max daily limit.")
                 return
 
+        # Build meta-agent state and get action
         meta_state = build_meta_state_for_entry(
             market_data,
             confidence_score=confidence,
@@ -49,6 +53,7 @@ def handle_entry(market_data):
             bot_logger.info("[Entry] Meta-agent rejected trade setup.")
             return
 
+        # Execute trade with retry logic
         order_details = execute_trade_with_retries(signal["trade_setup"])
         if order_details:
             order_details["confidence"] = confidence
@@ -58,8 +63,8 @@ def handle_entry(market_data):
             order_details["meta_state"] = meta_state
             order_details["meta_action"] = [1.0, 0.0] if action == 1 else [0.0, 1.0]
 
+            # Log trade
             trade_tracker.log_trade(order_details, trade_type)
-
             log_trade({
                 "timestamp": now.isoformat(),
                 "action": "buy",
@@ -70,7 +75,11 @@ def handle_entry(market_data):
                 "indicators": str(order_details["indicators"])
             })
 
-            notifier.send_message(f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order_details['symbol']} (Confidence: {confidence:.2f})")
+            # Notify
+            notifier.send_message(
+                f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order_details['symbol']} "
+                f"(Confidence: {confidence:.2f})"
+            )
 
             bot_logger.info(f"[Entry] {'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
         else:
