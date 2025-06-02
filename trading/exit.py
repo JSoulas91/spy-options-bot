@@ -1,5 +1,3 @@
-# exit.py
-
 import pytz
 import json
 from datetime import datetime
@@ -54,11 +52,9 @@ def handle_exit():
 
 def should_exit_trade(trade):
     try:
-        # Meta-agent evaluation
         if evaluate_exit_decision(trade):
             return "Meta-agent signal"
 
-        # Swing trades: close if contract is near expiry
         if trade.get("trade_type") == 1:
             dte = get_days_to_expiry(trade)
             if dte <= 1:
@@ -82,11 +78,11 @@ def close_and_log_trade(trade, reason="Manual exit"):
         bot_logger.info(f"[EXIT] Closed trade {trade.get('id')} — Reason: {reason} — Reward: {reward:.3f}")
         notifier.send_message(f"🚪 Exited trade {trade.get('id')}\nReason: {reason}\nReward: {reward:.3f}")
 
-        # Log to meta-agent training file
+        # Log experience to meta-agent buffer
         state = trade.get("meta_state")
         action = trade.get("meta_action")
         next_state = trade.get("meta_next_state")
-        if state and action and next_state:
+        if state and action is not None and next_state:
             with open(META_LOG_PATH, "a") as f:
                 f.write(json.dumps({
                     "state": state,
