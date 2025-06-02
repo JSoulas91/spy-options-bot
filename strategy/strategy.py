@@ -15,7 +15,7 @@ from config import (
 )
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
-from event_filter import is_high_risk_event_active, has_monday_event
+from event_filter import is_high_risk_event_active
 from utils.vix_utils import get_current_vix
 from meta.meta_agent import MetaAgent
 from data.multi_timeframe_fetcher import get_multi_timeframe_data
@@ -25,12 +25,14 @@ meta_agent.load_model()
 
 RETURN_META_FEEDBACK = False
 
+
 def is_market_closing_soon(timestamp_str):
     try:
         current_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").time()
         return current_time >= time(15, 55)
     except Exception:
         return False
+
 
 def get_adaptive_confidence_threshold(meta_state=None):
     base_threshold = CONFIDENCE_THRESHOLD
@@ -52,14 +54,30 @@ def get_adaptive_confidence_threshold(meta_state=None):
             logger.error(f"[VIX Error] Failed to retrieve VIX: {str(e)}")
     return base_threshold
 
+
+def merge_indicators(primary, fallback):
+    """Merge indicator dictionaries, preferring values from primary."""
+    return {key: primary.get(key, fallback.get(key)) for key in set(primary) | set(fallback)}
+
+
 def evaluate_trade(position, market_data):
     try:
         action = "hold"
-        entry_price = position.get('entry_price')
-        price = market_data.get('price')
+        symbol = position.get("symbol", "SPY")  # Default to SPY if symbol not set
+        entry_price = position.get("entry_price")
+        price = market_data.get("price")
+        timestamp = market_data.get("timestamp", "")
         indicators = market_data.get("indicators", {})
         confidence = market_data.get("confidence_score", 0)
-        timestamp = market_data.get("timestamp", "")
+
+        # Fetch and merge multi-timeframe indicators
+        try:
+            mtf_data = get_multi_timeframe_data(symbol)
+            mtf_indicators = mtf_data.get("merged", {})
+            indicators = merge_indicators(indicators, mtf_indicators)
+            logger.info(f"[MTF] Merged indicators from multi-timeframe for {symbol}")
+        except Exception as e:
+            logger.error(f"[MTF Error] Failed to retrieve multi-timeframe data for {symbol}: {e}")
 
         if entry_price is None or price is None:
             raise ValueError("Missing 'entry_price' or 'price'.")
@@ -78,14 +96,11 @@ def evaluate_trade(position, market_data):
         meta_action = meta_agent.select_action(meta_state)
 
         logger.info(f"🧠 Meta-State: {meta_state} | Meta-Action: {meta_action}")
-
         meta_feedback = {"meta_state": meta_state, "meta_action": meta_action}
 
         if meta_action == 0:
             logger.info("🧠 Meta-Agent action: skip — confidence not met.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-        elif meta_action == 1:
-            logger.info("🧠 Meta-Agent action: hold — continue evaluation.")
         elif meta_action == 2:
             logger.info("🧠 Meta-Agent action: force exit — exiting position.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
@@ -95,6 +110,7 @@ def evaluate_trade(position, market_data):
             logger.info(f"⚠️ Confidence {confidence:.2f} below adaptive threshold {adaptive_threshold:.2f} — exiting.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
+        # Extract indicators
         rsi = indicators.get('rsi')
         atr = indicators.get('atr')
         vwap = indicators.get('vwap')
@@ -108,7 +124,7 @@ def evaluate_trade(position, market_data):
         support = indicators.get('support')
         resistance = indicators.get('resistance')
 
-        logger.debug(f"[Strategy] Evaluating trade — Entry: {entry_price}, Current: {price}, Confidence: {confidence}")
+        logger.debug(f"[Strategy] Evaluating trade — Entry: {entry_price}, Current: {price}, Confidence: {confidence:.2f}")
 
         if is_day_trade(position):
             logger.debug("[Strategy] Trade type: Day Trade")
@@ -123,4 +139,19 @@ def evaluate_trade(position, market_data):
                     return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER):
-                logger.info("🛑 Day trade ATR stop 
+                logger.info("🛑 Day trade ATR stop-loss hit.")
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
+
+        elif is_swing_trade(position):
+            logger.debug("[Strategy] Trade type: Swing Trade")
+
+            if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER * 1.5):
+                logger.info("🛑 Swing trade ATR stop-loss hit.")
+                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
+
+        return action if not RETURN_META_FEEDBACK else (action, meta_feedback)
+
+    except Exception as e:
+        logger.error(f"[Strategy Error] {e}")
+        logger.debug(traceback.format_exc())
+        return "exit" if not RETURN_META_FEEDBACK else ("exit", None)
