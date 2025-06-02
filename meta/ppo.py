@@ -40,7 +40,7 @@ class PPOActorCritic(nn.Module):
         return action.item(), dist.log_prob(action), dist.entropy()
 
 class PPOAgent:
-    def __init__(self, state_dim=None, action_dim=None, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4):
+    def __init__(self, state_dim=None, action_dim=None, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4, entropy_coef=0.01):
         if state_dim is None or action_dim is None:
             state_dim, action_dim = get_meta_agent_dims()
             logger.info(f"📦 Loaded PPO state/action dims from file: {state_dim}, {action_dim}")
@@ -50,6 +50,8 @@ class PPOAgent:
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.K_epochs = K_epochs
+        self.entropy_coef = entropy_coef
+        self.base_lr = lr
         self.load()
 
     def save(self):
@@ -120,7 +122,7 @@ class PPOAgent:
             actor_loss = -torch.min(surr1, surr2).mean()
             critic_loss = nn.MSELoss()(state_values, returns)
 
-            loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
+            loss = actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -128,38 +130,50 @@ class PPOAgent:
 
         logger.info("✅ PPO update complete.")
 
-    def train_step(self, memory):
-        """Update using a single batch and return TD errors for PER"""
-        if not memory or len(memory['states']) == 0:
-            logger.warning("⚠️ PPO train_step skipped: empty memory buffer.")
-            return []
+    def train_step(self, states, actions, rewards, dones, next_states, weights=None):
+        values = []
+        next_values = []
+        for s, ns in zip(states, next_states):
+            _, v = self.model(s.unsqueeze(0))
+            _, nv = self.model(ns.unsqueeze(0))
+            values.append(v.squeeze())
+            next_values.append(nv.squeeze())
 
-        states = torch.stack(memory['states'])
-        actions = memory['actions']
-        rewards = memory['rewards']
-        dones = memory['dones']
-        values = torch.stack(memory['values'])
-        next_values = torch.stack(memory['next_value'])
+        values = torch.stack(values)
+        next_values = torch.stack(next_values)
 
-        returns = self.compute_returns(rewards, dones, values.squeeze(), next_values.squeeze())
+        returns = self.compute_returns(rewards, dones, values, next_values)
 
         for _ in range(self.K_epochs):
             log_probs, state_values, entropy = self.evaluate_actions(states, actions)
-
             advantages = returns - state_values.detach()
-            ratios = torch.exp(log_probs - torch.stack(memory['log_probs']).detach())
+
+            ratios = torch.exp(log_probs - log_probs.detach())
 
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+
             actor_loss = -torch.min(surr1, surr2).mean()
             critic_loss = nn.MSELoss()(state_values, returns)
 
-            loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
+            if weights is not None:
+                loss = (actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy) * weights.mean()
+            else:
+                loss = actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-        # Compute TD errors for each sample
-        td_errors = (returns - values.squeeze()).detach().cpu().numpy().tolist()
+        td_errors = (returns - values).detach().cpu().numpy().tolist()
         return td_errors
+
+    def adjust_entropy(self, decay_rate=0.95):
+        self.entropy_coef *= decay_rate
+        self.entropy_coef = max(self.entropy_coef, 0.001)  # Prevent zero entropy
+        logger.info(f"🔧 Updated entropy coefficient: {self.entropy_coef:.5f}")
+
+    def adjust_learning_rate(self, optimizer, factor=0.9):
+        for param_group in optimizer.param_groups:
+            param_group['lr'] *= factor
+        logger.info(f"🧠 Adjusted learning rate: {optimizer.param_groups[0]['lr']:.6f}")
