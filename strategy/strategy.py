@@ -49,6 +49,9 @@ def evaluate_trade(position, market_data):
         indicators = market_data.get("indicators", {})
         confidence = market_data.get("confidence_score", 0)
 
+        if entry_price is None or price is None:
+            raise ValueError("Missing 'entry_price' or 'price'.")
+
         # Fetch and merge multi-timeframe indicators
         try:
             mtf_data = get_multi_timeframe_data(symbol)
@@ -58,20 +61,17 @@ def evaluate_trade(position, market_data):
         except Exception as e:
             logger.error(f"[MTF Error] Failed to retrieve multi-timeframe data for {symbol}: {e}")
 
-        if entry_price is None or price is None:
-            raise ValueError("Missing 'entry_price' or 'price'.")
-
         if is_high_risk_event_active():
             logger.warning("🚨 Live economic event detected — exiting to reduce risk.")
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", None)
 
+        # Prepare state for meta-agent
         vix = get_current_vix()
         trade_type = "day" if is_day_trade(position) else "swing"
         hour = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").hour if timestamp else 12
         volatility = indicators.get("atr", 0)
 
-        # --- Meta state + action ---
         meta_state = [confidence, vix or 0, hour, 0 if trade_type == "day" else 1, volatility]
         meta_action = meta_agent.select_action(meta_state)
         meta_params = meta_agent.interpret_action(meta_action)
@@ -83,18 +83,19 @@ def evaluate_trade(position, market_data):
 
         logger.info(f"🧠 Meta-State: {meta_state} | Meta-Action: {meta_action} | Meta-Params: {meta_params}")
 
-        # --- Meta-action overrides ---
+        # Meta-agent directive: skip
         if meta_action == 0:
-            logger.info("🧠 Meta-Agent action: skip — confidence not met.")
-            return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-        elif meta_action == 2:
-            logger.info("🧠 Meta-Agent action: force exit — exiting position.")
+            logger.info("🧠 Meta-agent recommends skipping this trade.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-        # --- Dynamic confidence threshold via meta-agent ---
+        # Meta-agent directive: force exit
+        if meta_action == 2:
+            logger.info("🧠 Meta-agent enforces exit — overriding strategy.")
+            return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
+
+        # Use meta confidence threshold override
         adaptive_threshold = meta_params.get("confidence_threshold", CONFIDENCE_THRESHOLD)
 
-        # Optional VIX adjustment (on top of meta threshold)
         if ENABLE_VIX_THROTTLING or ENABLE_ADAPTIVE_CONFIDENCE:
             try:
                 if vix is not None:
@@ -103,15 +104,15 @@ def evaluate_trade(position, market_data):
                         return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
                     elif vix >= VIX_MODERATE_THRESHOLD:
                         adaptive_threshold += CONFIDENCE_STEP_UP
-                        logger.info(f"⚠️ Elevated VIX — raising threshold to {adaptive_threshold:.2f}")
+                        logger.info(f"⚠️ Elevated VIX — raising confidence threshold to {adaptive_threshold:.2f}")
             except Exception as e:
-                logger.error(f"[VIX Error] Could not adjust confidence threshold: {str(e)}")
+                logger.error(f"[VIX Error] Confidence threshold VIX adjustment failed: {e}")
 
         if confidence < adaptive_threshold:
-            logger.info(f"⚠️ Confidence {confidence:.2f} below threshold {adaptive_threshold:.2f} — exiting.")
+            logger.info(f"⚠️ Confidence {confidence:.2f} below required {adaptive_threshold:.2f} — exiting.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-        # Extract indicators
+        # Unpack indicators
         rsi = indicators.get('rsi')
         atr = indicators.get('atr')
         vwap = indicators.get('vwap')
@@ -125,29 +126,31 @@ def evaluate_trade(position, market_data):
         support = indicators.get('support')
         resistance = indicators.get('resistance')
 
-        logger.debug(f"[Strategy] Evaluating trade — Entry: {entry_price}, Current: {price}, Confidence: {confidence:.2f}")
+        logger.debug(f"[Strategy] Evaluating {trade_type} trade — Entry: {entry_price}, Price: {price}, Confidence: {confidence:.2f}")
 
         if is_day_trade(position):
             logger.debug("[Strategy] Trade type: Day Trade")
 
             if is_market_closing_soon(timestamp):
-                logger.info("⏰ Market closing soon — exiting day trade.")
+                logger.info("⏰ Market is closing soon — exiting day trade.")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
+            # Smart trailing logic
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT):
                 if price <= price * (1 - 0.10):
-                    logger.info("📉 Trailing stop-loss hit after 10% gain.")
+                    logger.info("📉 Trailing stop-loss triggered after gain.")
                     return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
+            # ATR stop-loss for day trades
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER):
-                logger.info("🛑 Day trade ATR stop-loss hit.")
+                logger.info("🛑 ATR stop-loss hit (day trade).")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         elif is_swing_trade(position):
             logger.debug("[Strategy] Trade type: Swing Trade")
 
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER * 1.5):
-                logger.info("🛑 Swing trade ATR stop-loss hit.")
+                logger.info("🛑 ATR stop-loss hit (swing trade).")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         return action if not RETURN_META_FEEDBACK else (action, meta_feedback)
