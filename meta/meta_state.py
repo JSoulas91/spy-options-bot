@@ -20,19 +20,13 @@ def get_minutes_since_open():
 
 # --- Confluence score computation ---
 def compute_multi_timeframe_confluence(*data_frames):
-    """Simple indicator-based confluence scoring."""
     score = 0
     total = 0
-
     for data in data_frames:
-        if data.get("rsi", 50) > 50:
-            score += 1
-        if data.get("macd", 0) > 0:
-            score += 1
-        if data.get("price", 0) > data.get("ema_20", 0):
-            score += 1
+        if data.get("rsi", 50) > 50: score += 1
+        if data.get("macd", 0) > 0: score += 1
+        if data.get("price", 0) > data.get("ema_20", 0): score += 1
         total += 3
-
     return score / total if total > 0 else 0.0
 
 # --- Feature extraction ---
@@ -51,8 +45,24 @@ def extract_binary_trend(data):
         1.0 if data.get("price", 0) > data.get("ema_20", 0) else 0.0
     ]
 
+# --- Temporal memory summary ---
+def summarize_past_trades(past_trades: list):
+    """
+    past_trades: List of last N (3-5) trade dicts with 'profit' and 'duration' keys.
+    """
+    if not past_trades:
+        return [0.5, 0.5]  # neutral defaults
+
+    avg_profit = np.mean([t.get("profit", 0) for t in past_trades])
+    avg_duration = np.mean([t.get("duration", 0) for t in past_trades])
+
+    return [
+        normalize(avg_profit, -1.0, 1.0),
+        normalize(avg_duration, 0, 390),
+    ]
+
 # --- Entry Meta State Builder ---
-def build_meta_state_for_entry(data_1m, data_5m, data_15m, data_1h, data_1d, confidence_score, trade_type):
+def build_meta_state_for_entry(data_1m, data_5m, data_15m, data_1h, data_1d, confidence_score, trade_type, past_trades=[]):
     try:
         state = []
 
@@ -64,6 +74,9 @@ def build_meta_state_for_entry(data_1m, data_5m, data_15m, data_1h, data_1d, con
         # VIX
         vix = get_vix_level()
         state.append(normalize(vix, 10, 40))
+
+        # Temporal memory
+        state += summarize_past_trades(past_trades)
 
         # Timeframe Features
         state += extract_features(data_1m)
@@ -80,10 +93,10 @@ def build_meta_state_for_entry(data_1m, data_5m, data_15m, data_1h, data_1d, con
 
     except Exception as e:
         logger.error(f"❌ Error in build_meta_state_for_entry: {e}")
-        return np.zeros(22, dtype=np.float32)
+        return np.zeros(24, dtype=np.float32)
 
 # --- Exit Meta State Builder ---
-def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, confidence_score, trade_type, trade_duration_minutes, current_profit):
+def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, confidence_score, trade_type, trade_duration_minutes, current_profit, past_trades=[]):
     try:
         state = []
 
@@ -97,6 +110,9 @@ def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, conf
         # VIX
         vix = get_vix_level()
         state.append(normalize(vix, 10, 40))
+
+        # Temporal memory
+        state += summarize_past_trades(past_trades)
 
         # Timeframe Features
         state += extract_features(data_1m)
@@ -113,4 +129,4 @@ def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, conf
 
     except Exception as e:
         logger.error(f"❌ Error in build_meta_state_for_exit: {e}")
-        return np.zeros(25, dtype=np.float32)
+        return np.zeros(27, dtype=np.float32)
