@@ -1,12 +1,26 @@
+# meta/meta_state.py
+
 import numpy as np
+from datetime import datetime
 from utils.vix_utils import get_vix_level
 from utils.logger import bot_logger as logger
+import pytz
 
+eastern = pytz.timezone("US/Eastern")
+
+# --- Normalization helper ---
 def normalize(value, min_val, max_val):
     return (value - min_val) / (max_val - min_val + 1e-9)
 
+# --- Time-of-day helper ---
+def get_minutes_since_open():
+    now = datetime.now(eastern)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    return max(0, (now - open_time).seconds // 60)
+
+# --- Confluence score computation ---
 def compute_multi_timeframe_confluence(*data_frames):
-    """Score confluence across multiple timeframe data dictionaries."""
+    """Simple indicator-based confluence scoring."""
     score = 0
     total = 0
 
@@ -21,21 +35,23 @@ def compute_multi_timeframe_confluence(*data_frames):
 
     return score / total if total > 0 else 0.0
 
+# --- Feature extraction ---
 def extract_features(data):
     return [
         normalize(data.get("rsi", 50), 0, 100),
-        normalize(data.get("macd", 0), -5, 5),
-        normalize(data.get("price", 0) - data.get("ema_20", 0), -10, 10),
-        normalize(data.get("volume", 1e5), 1e4, 1e7)
+        normalize(data.get("macd", 0), -10, 10),
+        normalize(data.get("price", 0) - data.get("ema_20", 0), -20, 20),
+        normalize(data.get("volume", 1e5), 1e3, 2e7),
     ]
 
 def extract_binary_trend(data):
     return [
         normalize(data.get("rsi", 50), 0, 100),
-        normalize(data.get("macd", 0), -5, 5),
+        normalize(data.get("macd", 0), -10, 10),
         1.0 if data.get("price", 0) > data.get("ema_20", 0) else 0.0
     ]
 
+# --- Entry Meta State Builder ---
 def build_meta_state_for_entry(data_1m, data_5m, data_15m, data_1h, data_1d, confidence_score, trade_type):
     try:
         state = []
@@ -43,27 +59,20 @@ def build_meta_state_for_entry(data_1m, data_5m, data_15m, data_1h, data_1d, con
         # Contextual
         state.append(confidence_score)
         state.append(1.0 if trade_type == 1 else 0.0)
+        state.append(normalize(get_minutes_since_open(), 0, 390))
 
         # VIX
         vix = get_vix_level()
         state.append(normalize(vix, 10, 40))
 
-        # 1m
+        # Timeframe Features
         state += extract_features(data_1m)
-
-        # 5m
         state += extract_binary_trend(data_5m)
-
-        # 15m
         state += extract_binary_trend(data_15m)
-
-        # 1h
         state += extract_binary_trend(data_1h)
-
-        # 1d
         state += extract_binary_trend(data_1d)
 
-        # Confluence Score
+        # Confluence
         confluence = compute_multi_timeframe_confluence(data_1m, data_5m, data_15m, data_1h, data_1d)
         state.append(confluence)
 
@@ -73,6 +82,7 @@ def build_meta_state_for_entry(data_1m, data_5m, data_15m, data_1h, data_1d, con
         logger.error(f"❌ Error in build_meta_state_for_entry: {e}")
         return np.zeros(22, dtype=np.float32)
 
+# --- Exit Meta State Builder ---
 def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, confidence_score, trade_type, trade_duration_minutes, current_profit):
     try:
         state = []
@@ -80,6 +90,7 @@ def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, conf
         # Contextual
         state.append(confidence_score)
         state.append(1.0 if trade_type == 1 else 0.0)
+        state.append(normalize(get_minutes_since_open(), 0, 390))
         state.append(normalize(trade_duration_minutes, 0, 390))
         state.append(normalize(current_profit, -1.0, 1.0))
 
@@ -87,22 +98,14 @@ def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, conf
         vix = get_vix_level()
         state.append(normalize(vix, 10, 40))
 
-        # 1m
+        # Timeframe Features
         state += extract_features(data_1m)
-
-        # 5m
         state += extract_binary_trend(data_5m)
-
-        # 15m
         state += extract_binary_trend(data_15m)
-
-        # 1h
         state += extract_binary_trend(data_1h)
-
-        # 1d
         state += extract_binary_trend(data_1d)
 
-        # Confluence Score
+        # Confluence
         confluence = compute_multi_timeframe_confluence(data_1m, data_5m, data_15m, data_1h, data_1d)
         state.append(confluence)
 
@@ -110,4 +113,4 @@ def build_meta_state_for_exit(data_1m, data_5m, data_15m, data_1h, data_1d, conf
 
     except Exception as e:
         logger.error(f"❌ Error in build_meta_state_for_exit: {e}")
-        return np.zeros(24, dtype=np.float32)
+        return np.zeros(25, dtype=np.float32)
