@@ -1,6 +1,7 @@
 # exit.py
 
 import pytz
+import json
 from datetime import datetime
 from utils.trade_tracker import trade_tracker
 from utils.trade_logger import log_trade_exit
@@ -9,7 +10,7 @@ from trade_manager import close_trade
 from meta.meta_agent import evaluate_exit_decision
 from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_notifier import TelegramNotifier
-import json
+from config import META_LOG_PATH
 
 eastern = pytz.timezone('US/Eastern')
 notifier = TelegramNotifier()
@@ -28,7 +29,7 @@ def handle_exit():
     try:
         now = datetime.now(eastern)
 
-        # 🕒 Force close all day trades at 3:55 PM
+        # 🕒 Force-close all day trades at 3:55 PM ET
         if now.hour == 15 and now.minute >= 55:
             closed_ids = []
             for trade in trade_tracker.get_open_trades():
@@ -42,7 +43,7 @@ def handle_exit():
                 )
             return
 
-        # 🔍 Evaluate exits for all trades
+        # 🔍 Evaluate exit logic for all open trades
         for trade in trade_tracker.get_open_trades():
             exit_reason = should_exit_trade(trade)
             if exit_reason:
@@ -53,9 +54,11 @@ def handle_exit():
 
 def should_exit_trade(trade):
     try:
+        # Meta-agent evaluation
         if evaluate_exit_decision(trade):
             return "Meta-agent signal"
 
+        # Swing trades: close if contract is near expiry
         if trade.get("trade_type") == 1:
             dte = get_days_to_expiry(trade)
             if dte <= 1:
@@ -79,8 +82,7 @@ def close_and_log_trade(trade, reason="Manual exit"):
         bot_logger.info(f"[EXIT] Closed trade {trade.get('id')} — Reason: {reason} — Reward: {reward:.3f}")
         notifier.send_message(f"🚪 Exited trade {trade.get('id')}\nReason: {reason}\nReward: {reward:.3f}")
 
-        # Append to meta-agent log
-        from config import META_LOG_PATH
+        # Log to meta-agent training file
         state = trade.get("meta_state")
         action = trade.get("meta_action")
         next_state = trade.get("meta_next_state")
