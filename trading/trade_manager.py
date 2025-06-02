@@ -1,107 +1,97 @@
 # trade_manager.py
 
 import time
-from datetime import datetime, timedelta
-from utils.logger import bot_logger
-from utils.telegram_notifier import TelegramNotifier
-from utils.vix_utils import get_vix_level
+import traceback
+from config import (
+    MAX_RETRIES,
+    RETRY_DELAY_SECONDS,
+    ENFORCE_PDT_LIMITS,
+)
+from utils.logger import bot_logger as logger
+from utils.telegram import send_telegram_message
 from utils.trade_tracker import TradeTracker
-from strategy.event_filter import is_blackout_day
-import config
+from utils.vix_utils import get_current_vix
+from utils.economic_calendar import has_monday_macro_event
+from meta.meta_agent import should_retry_trade  # Meta-agent veto logic
 
-telegram = TelegramNotifier()
-tracker = TradeTracker()
+def should_hold_swing_trade(confidence: float, vix: float, is_monday_risk: bool) -> bool:
+    """
+    Determines if it's safe to hold a swing trade over the weekend.
+    """
+    if confidence < 0.7:
+        return False
+    if vix > 20:
+        return False
+    if is_monday_risk:
+        return False
+    return True
 
+def execute_trade_with_retries(trade_function, contract, tracker: TradeTracker):
+    retries = 0
+    contract["retries_used"] = 0
 
-def get_days_to_expiry(contract):
-    try:
-        expiry_str = contract.get("expiry")
-        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").date()
-        today = datetime.now().date()
-        return (expiry_date - today).days
-    except Exception as e:
-        bot_logger.warning(f"[Expiry Parse Error] {e}")
-        return 0  # Assume expired if invalid
-
-
-def execute_trade_with_retries(trade_function, contract):
-    """Attempts trade with retries."""
-    for attempt in range(1, config.MAX_RETRIES_PER_TRADE + 1):
+    while retries < MAX_RETRIES:
         try:
-            trade_function(contract)
-            bot_logger.info(f"✅ Trade executed on attempt {attempt}")
-            return True
+            # Prevent trading expired contracts
+            if contract.get("dte", 1) <= 0:
+                logger.warning("⛔ Contract is expiring today. Trade skipped.")
+                send_telegram_message("⛔ Trade blocked: Contract is expiring today.")
+                return False
+
+            # Enforce PDT if enabled
+            if ENFORCE_PDT_LIMITS and not tracker.can_place_trade():
+                logger.warning("🚫 PDT rule triggered. Trade skipped.")
+                send_telegram_message("🚫 PDT rule triggered. Trade skipped.")
+                return False
+
+            # Meta-agent veto on retry
+            if retries > 0:
+                should_retry = should_retry_trade(contract)
+                if not should_retry:
+                    logger.warning("🧠 Meta-agent vetoed further retries.")
+                    send_telegram_message("🧠 Meta-agent vetoed retry for this trade.")
+                    return False
+
+            # Time the trade for latency awareness
+            start_time = time.time()
+            success = trade_function(contract)
+            latency = round(time.time() - start_time, 2)
+            logger.info(f"⏱️ Trade execution latency: {latency}s")
+
+            if success:
+                contract["retries_used"] = retries
+                return True
+            else:
+                raise Exception("Trade function returned False")
+
         except Exception as e:
-            bot_logger.warning(f"⚠️ Trade attempt {attempt} failed: {e}")
-            if attempt < config.MAX_RETRIES_PER_TRADE:
-                time.sleep(config.RETRY_DELAY_SECONDS)
-    bot_logger.error("❌ Trade failed after all retry attempts.")
+            logger.error(f"⚠️ Trade attempt {retries + 1} failed: {e}")
+            logger.debug(traceback.format_exc())
+            retries += 1
+            contract["retries_used"] = retries
+
+            if retries < MAX_RETRIES:
+                delay = RETRY_DELAY_SECONDS * (2 ** (retries - 1))  # exponential backoff
+                logger.info(f"🔁 Retrying in {delay} seconds... (Attempt {retries}/{MAX_RETRIES})")
+                time.sleep(delay)
+
+    logger.error("❌ All trade attempts failed.")
+    send_telegram_message("❌ All trade attempts failed after retries.")
     return False
 
+def evaluate_swing_hold(contract: dict, confidence: float) -> bool:
+    """
+    Determines if this trade should be held as a swing over the weekend.
+    """
+    vix = get_current_vix()
+    is_monday_risk = has_monday_macro_event()
+    decision = should_hold_swing_trade(confidence, vix, is_monday_risk)
 
-def evaluate_weekend_swing_hold(contract):
-    """Determines if a Friday trade should be held as a weekend swing."""
-    try:
-        now = datetime.now()
-        is_friday = now.weekday() == 4
+    if decision:
+        logger.info("📊 Swing hold conditions met.")
+        send_telegram_message(f"📊 Holding swing trade over weekend. VIX: {vix}, Confidence: {confidence}")
+    else:
+        logger.info("❌ Not holding swing trade: Failed safety criteria.")
+        send_telegram_message(f"❌ Swing hold blocked. VIX: {vix}, Confidence: {confidence}, Monday risk: {is_monday_risk}")
 
-        if not is_friday:
-            return False
-
-        confidence = contract.get("confidence", 0)
-        if confidence < config.SWING_TRADE_THRESHOLD:
-            bot_logger.info("❌ Swing rejected: confidence too low.")
-            return False
-
-        if config.ENABLE_VIX_THROTTLING:
-            vix = get_vix_level()
-            if vix is None:
-                bot_logger.warning("⚠️ Could not retrieve VIX — rejecting swing hold.")
-                return False
-            if vix > config.VIX_MAX_THRESHOLD:
-                bot_logger.info(f"❌ Swing rejected: VIX too high ({vix}).")
-                return False
-
-        if config.ENABLE_EVENT_BLACKOUT:
-            monday = now + timedelta(days=3)
-            if is_blackout_day(monday):
-                bot_logger.info("❌ Swing rejected: Monday has blackout event.")
-                return False
-
-        telegram.send_swing_hold_alert(contract, reason="High confidence + low VIX + no Monday risk")
-        bot_logger.info("✅ Holding position over weekend as swing.")
-        return True
-
-    except Exception as e:
-        bot_logger.warning(f"[Swing Evaluation Error] {e}")
-        return False
-
-
-def manage_trade_execution(trade_function, contract):
-    """Handles trade execution, expiry checks, PDT limits, and swing evaluation."""
-    try:
-        # PDT restriction
-        if not tracker.can_execute_trade():
-            bot_logger.info("🚫 Trade blocked due to PDT day trade limit.")
-            return False
-
-        # Expiry protection
-        dte = get_days_to_expiry(contract)
-        if dte <= 0:
-            bot_logger.warning("⚠️ Trade skipped: Contract already expired or expires today.")
-            telegram.send_message(f"⛔ Trade skipped — contract expires too soon (DTE={dte}).")
-            return False
-
-        trade_success = execute_trade_with_retries(trade_function, contract)
-
-        if trade_success:
-            tracker.increment_trade_count()
-
-            # Evaluate for possible weekend swing
-            contract["swing_held"] = evaluate_weekend_swing_hold(contract)
-
-        return trade_success
-
-    except Exception as e:
-        bot_logger.error(f"[Trade Manager Error] {e}")
-        return False
+    return decision
