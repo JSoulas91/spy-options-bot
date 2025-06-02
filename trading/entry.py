@@ -1,3 +1,5 @@
+# entry.py
+
 import time
 from datetime import datetime
 from config import MAX_DAY_TRADES, ENFORCE_PDT_LIMITS
@@ -53,6 +55,8 @@ def handle_entry(market_data):
             order_details["indicators"] = signal.get("indicators", {})
             order_details["timestamp"] = now.isoformat()
             order_details["trade_type"] = trade_type
+            order_details["meta_state"] = meta_state
+            order_details["meta_action"] = [1.0, 0.0] if action == 1 else [0.0, 1.0]
 
             trade_tracker.log_trade(order_details, trade_type)
 
