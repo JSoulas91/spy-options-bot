@@ -11,7 +11,7 @@ import requests
 
 # === Hyperparameters ===
 GAMMA = 0.99
-LR = 0.0003
+LR = 3e-4
 EPOCHS = 20
 BATCH_SIZE = 32
 CHECKPOINT_DIR = "meta/checkpoints"
@@ -24,10 +24,7 @@ def notify_telegram(message):
     try:
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            payload = {
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": message
-            }
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
             requests.post(url, json=payload)
     except Exception as e:
         logger.warning(f"Telegram notification failed: {e}")
@@ -46,16 +43,14 @@ def cleanup_old_logs():
     if not os.path.exists(logs_path): return
     for f in os.listdir(logs_path):
         fp = os.path.join(logs_path, f)
-        if os.path.isfile(fp):
-            if (now - datetime.fromtimestamp(os.path.getmtime(fp))).days > KEEP_LAST_N_DAYS_LOGS:
-                os.remove(fp)
+        if os.path.isfile(fp) and (now - datetime.fromtimestamp(os.path.getmtime(fp))).days > KEEP_LAST_N_DAYS_LOGS:
+            os.remove(fp)
 
 def load_logged_data():
     data = []
     if not os.path.exists(META_LOG_PATH):
         logger.warning(f"⚠️ No meta log found at {META_LOG_PATH}")
         return data
-
     with open(META_LOG_PATH, 'r') as f:
         for line in f:
             try:
@@ -110,7 +105,6 @@ def main():
             avg_reward = np.mean(rewards)
             logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
 
-        # Save latest + checkpoint
         agent.save()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint_path = os.path.join(CHECKPOINT_DIR, f"ppo_checkpoint_epoch_{timestamp}.pt")
@@ -120,8 +114,7 @@ def main():
         cleanup_checkpoints()
         cleanup_old_logs()
 
-        msg = f"✅ Meta-Agent training complete — Avg Reward: {avg_reward:.4f}"
-        notify_telegram(msg)
+        notify_telegram(f"✅ Meta-Agent training complete — Avg Reward: {avg_reward:.4f}")
 
     except Exception as e:
         logger.error(f"❌ PPO training failed: {e}")
