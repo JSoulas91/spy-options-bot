@@ -112,31 +112,20 @@ def main():
                 if not samples:
                     continue
 
-                memory = {
-                    "states": [s['state'] for s in samples],
-                    "actions": [s['action'] for s in samples],
-                    "rewards": [s['reward'] for s in samples],
-                    "dones": [s['done'] for s in samples],
-                    "log_probs": [],
-                    "values": [],
-                    "next_value": []
-                }
+                states = torch.stack([s['state'] for s in samples])
+                actions = torch.tensor([s['action'] for s in samples])
+                rewards = torch.tensor([s['reward'] for s in samples], dtype=torch.float32)
+                dones = torch.tensor([s['done'] for s in samples], dtype=torch.float32)
+                next_states = torch.stack([s['next_state'] for s in samples])
+                weights_tensor = torch.tensor(weights, dtype=torch.float32)
 
-                for s, a, ns, d in zip(memory['states'], memory['actions'], 
-                                       [s['next_state'] for s in samples], memory['dones']):
-                    probs, value = agent.model(s.unsqueeze(0))
-                    dist = torch.distributions.Categorical(probs)
-                    memory["log_probs"].append(dist.log_prob(torch.tensor(a)))
-                    memory["values"].append(value.squeeze())
-                    with torch.no_grad():
-                        _, next_value = agent.model(ns.unsqueeze(0))
-                        memory["next_value"].append(next_value.squeeze())
+                # 🚀 Train step that returns TD errors for priority update
+                td_errors = agent.train_step(states, actions, rewards, dones, next_states, weights_tensor)
 
-                memory["values"] = torch.stack(memory["values"])
-                memory["next_value"] = torch.stack(memory["next_value"])
-                agent.update(memory)
+                for i, td in zip(indices, td_errors):
+                    buffer.update(i, abs(td.item()))
 
-                epoch_rewards.extend(memory['rewards'])
+                epoch_rewards.extend(rewards.numpy())
 
             avg_reward = np.mean(epoch_rewards)
             logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
