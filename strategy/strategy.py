@@ -154,4 +154,4 @@ def evaluate_trade(position, market_data):
     except Exception as e:
         logger.error(f"[Strategy Error] {e}")
         logger.debug(traceback.format_exc())
-        return "exit" if not RETURN_META_FEEDBACK else ("exit", None)
+        return "exit" if not RETURN_META_FEEDBACK else ("exit", None) 
