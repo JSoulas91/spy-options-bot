@@ -8,8 +8,10 @@ from meta.meta_agent import meta_agent
 from meta.meta_state import build_meta_state_for_entry
 from trade_manager import execute_trade_with_retries
 from strategy import evaluate_trade_signal
+from utils.telegram_notifier import TelegramNotifier
 
 trade_tracker = TradeTracker()
+notifier = TelegramNotifier()
 
 def handle_entry(market_data):
     try:
@@ -24,7 +26,7 @@ def handle_entry(market_data):
             return
 
         confidence = signal["confidence"]
-        trade_type = signal["trade_type"]  # 0 = day, 1 = swing
+        trade_type = signal["trade_type"]
 
         if trade_type == 0:
             if ENFORCE_PDT_LIMITS and not trade_tracker.can_place_day_trade():
@@ -53,14 +55,18 @@ def handle_entry(market_data):
             order_details["trade_type"] = trade_type
 
             trade_tracker.log_trade(order_details, trade_type)
+
             log_trade({
                 "timestamp": now.isoformat(),
                 "action": "buy",
                 "trade_type": trade_type,
                 "symbol": order_details["symbol"],
                 "confidence_score": confidence,
+                "trade_id": order_details.get("id"),
                 "indicators": str(order_details["indicators"])
             })
+
+            notifier.send_message(f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order_details['symbol']} (Confidence: {confidence:.2f})")
 
             bot_logger.info(f"[Entry] {'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
         else:
