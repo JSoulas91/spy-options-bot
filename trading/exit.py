@@ -7,7 +7,9 @@ from utils.trade_logger import log_trade_exit
 from utils.logger import bot_logger
 from trade_manager import close_trade
 from meta.meta_agent import evaluate_exit_decision
+from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_notifier import TelegramNotifier
+import json
 
 eastern = pytz.timezone('US/Eastern')
 notifier = TelegramNotifier()
@@ -31,11 +33,8 @@ def handle_exit():
             closed_ids = []
             for trade in trade_tracker.get_open_trades():
                 if trade.get("trade_type") == 0:
-                    close_trade(trade)
-                    trade_tracker.mark_trade_closed(trade.get("id"))
-                    log_trade_exit(trade)
+                    close_and_log_trade(trade, reason="Time-based exit (3:55 PM)")
                     closed_ids.append(str(trade.get("id", '?')))
-                    bot_logger.info(f"[TIME EXIT] Closed day trade {trade.get('id')} at 3:55 PM ET")
 
             if closed_ids:
                 notifier.send_message(
@@ -47,11 +46,7 @@ def handle_exit():
         for trade in trade_tracker.get_open_trades():
             exit_reason = should_exit_trade(trade)
             if exit_reason:
-                close_trade(trade)
-                trade_tracker.mark_trade_closed(trade.get("id"))
-                log_trade_exit(trade)
-                bot_logger.info(f"[EXIT] Closed trade {trade.get('id')} due to: {exit_reason}")
-                notifier.send_message(f"🚪 Exited trade {trade.get('id')} due to: {exit_reason}")
+                close_and_log_trade(trade, reason=exit_reason)
 
     except Exception as e:
         bot_logger.error(f"[EXIT ERROR] Failed to handle exits: {str(e)}")
@@ -67,7 +62,37 @@ def should_exit_trade(trade):
                 return f"Contract near expiry (DTE={dte})"
 
         return None
-
     except Exception as e:
         bot_logger.error(f"[Exit Evaluation Error] {str(e)}")
         return None
+
+def close_and_log_trade(trade, reason="Manual exit"):
+    try:
+        reward = compute_shaped_reward(trade)
+        trade["shaped_reward"] = reward
+        trade["exit_reason"] = reason
+
+        close_trade(trade)
+        trade_tracker.mark_trade_closed(trade.get("id"))
+        log_trade_exit(trade)
+
+        bot_logger.info(f"[EXIT] Closed trade {trade.get('id')} — Reason: {reason} — Reward: {reward:.3f}")
+        notifier.send_message(f"🚪 Exited trade {trade.get('id')}\nReason: {reason}\nReward: {reward:.3f}")
+
+        # Append to meta-agent log
+        from config import META_LOG_PATH
+        state = trade.get("meta_state")
+        action = trade.get("meta_action")
+        next_state = trade.get("meta_next_state")
+        if state and action and next_state:
+            with open(META_LOG_PATH, "a") as f:
+                f.write(json.dumps({
+                    "state": state,
+                    "action": action,
+                    "reward": reward,
+                    "next_state": next_state,
+                    "done": True
+                }) + "\n")
+
+    except Exception as e:
+        bot_logger.error(f"[Trade Close Error] {e}")
