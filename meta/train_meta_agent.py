@@ -81,7 +81,6 @@ def main():
         agent = PPOAgent(state_dim=state_dim, action_dim=action_dim, lr=LR, gamma=GAMMA)
         buffer = PrioritizedReplayBuffer(capacity=len(data), alpha=BUFFER_ALPHA)
 
-        # Populate the prioritized buffer
         for d in data:
             state = torch.tensor(d['state'], dtype=torch.float32)
             next_state = torch.tensor(d['next_state'], dtype=torch.float32)
@@ -119,7 +118,6 @@ def main():
                 next_states = torch.stack([s['next_state'] for s in samples])
                 weights_tensor = torch.tensor(weights, dtype=torch.float32)
 
-                # 🚀 Train step that returns TD errors for priority update
                 td_errors = agent.train_step(states, actions, rewards, dones, next_states, weights_tensor)
 
                 for i, td in zip(indices, td_errors):
@@ -131,7 +129,6 @@ def main():
             logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
             beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
 
-        # Save latest checkpoint
         agent.save()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint_path = os.path.join(CHECKPOINT_DIR, f"ppo_checkpoint_epoch_{timestamp}.pt")
