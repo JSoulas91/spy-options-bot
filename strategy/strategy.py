@@ -17,13 +17,12 @@ from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
 from event_filter import is_high_risk_event_active, has_monday_event
 from utils.vix_utils import get_current_vix
-
-# === Load PPO Meta-Agent ===
 from meta.meta_agent import MetaAgent
+from data.multi_timeframe_fetcher import get_multi_timeframe_data
+
 meta_agent = MetaAgent()
 meta_agent.load_model()
 
-# === Optional future use ===
 RETURN_META_FEEDBACK = False
 
 def is_market_closing_soon(timestamp_str):
@@ -70,7 +69,6 @@ def evaluate_trade(position, market_data):
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", None)
 
-        # === Build meta-state and apply PPO policy ===
         vix = get_current_vix()
         trade_type = "day" if is_day_trade(position) else "swing"
         hour = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").hour if timestamp else 12
@@ -112,7 +110,6 @@ def evaluate_trade(position, market_data):
 
         logger.debug(f"[Strategy] Evaluating trade — Entry: {entry_price}, Current: {price}, Confidence: {confidence}")
 
-        # === DAY TRADE LOGIC ===
         if is_day_trade(position):
             logger.debug("[Strategy] Trade type: Day Trade")
 
@@ -126,99 +123,4 @@ def evaluate_trade(position, market_data):
                     return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER):
-                logger.info("🛑 Day trade ATR stop-loss hit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if rsi and rsi > 70 and vwap and price < vwap:
-                logger.info("⚠️ RSI overbought + VWAP rejection — exit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-            elif rsi and rsi < 30 and vwap and price > vwap:
-                logger.info("⚠️ RSI oversold + VWAP reclaim — exit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if price > upper_band or price < lower_band:
-                logger.info("⚠️ Price outside Bollinger Bands — exit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if ema_50 and ema_200 and ema_50 < ema_200:
-                logger.info("⚠️ EMA50 below EMA200 — exit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if resistance and price > resistance * 0.995:
-                logger.info("⚠️ Near resistance — consider profit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-            if support and price < support * 1.005:
-                logger.info("⚠️ Near support — protect capital.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-        # === SWING TRADE LOGIC ===
-        elif is_swing_trade(position):
-            logger.debug("[Strategy] Trade type: Swing Trade")
-
-            now = datetime.now()
-            if now.weekday() == 4:  # Friday
-                try:
-                    vix = get_current_vix()
-                    has_event = has_monday_event()
-                    if vix is None or vix > 18 or confidence < 0.8 or has_event:
-                        logger.info("🚪 Unsafe to hold over the weekend — exiting swing.")
-                        send_telegram_message(
-                            f"🚪 *Forced Swing Exit — Unsafe Weekend Hold*\n"
-                            f"- VIX: {vix}\n"
-                            f"- Confidence: {confidence:.2f}\n"
-                            f"- Monday Events: {has_event}"
-                        )
-                        return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-                except Exception as e:
-                    logger.error(f"[Weekend Swing Check Error] {str(e)}")
-                    send_telegram_message(f"⚠️ Weekend hold check failed — Exiting to be safe.\nReason: `{str(e)}`")
-                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if price >= entry_price * (1 + TRAILING_STOP_PERCENT * 1.5):
-                if price <= price * (1 - 0.10):
-                    logger.info("📉 Swing trailing stop-loss hit after strong gains.")
-                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER * 1.2):
-                logger.info("🛑 Swing trade ATR stop-loss hit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if rsi and macd_hist:
-                if rsi > 70 and macd_hist < 0 and price < resistance:
-                    logger.info("⚠️ RSI overbought + MACD reversal + resistance — exit.")
-                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-                elif rsi < 30 and macd_hist > 0 and price > support:
-                    logger.info("⚠️ RSI oversold + MACD recovery + support — exit.")
-                    return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if vwap and price < vwap and rsi and rsi > 65:
-                logger.info("⚠️ VWAP fade + elevated RSI — swing exit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if ema_50 and ema_200 and ema_50 < ema_200:
-                logger.info("⚠️ EMA50 crossed below EMA200 — exit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if price > upper_band or price < lower_band:
-                logger.info("⚠️ Bollinger Band extremes — swing exit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-            if resistance and price > resistance * 0.995:
-                logger.info("⚠️ Approaching resistance — take profit.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-            if support and price < support * 1.005:
-                logger.info("⚠️ Approaching support — risk manage.")
-                return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-        logger.debug(f"[Strategy] Final action: {action}")
-        return action if not RETURN_META_FEEDBACK else (action, meta_feedback)
-
-    except Exception as e:
-        logger.error(f"[Strategy Error] {str(e)}")
-        logger.debug(traceback.format_exc())
-        send_telegram_message(
-            f"⚠️ *Strategy Module Error*\n"
-            f"Could not evaluate trade.\n"
-            f"Reason: `{str(e)}`"
-        )
-        return "hold" if not RETURN_META_FEEDBACK else ("hold", None)
+                logger.info("🛑 Day trade ATR stop 
