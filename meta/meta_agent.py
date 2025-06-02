@@ -38,26 +38,25 @@ class MetaAgent:
         }
         return actions.get(action_index, actions[1])  # Default to moderate
 
-    def save_policy(self):
+    def should_retry_trade(self, contract=None):
         """
-        Save the trained model.
-        """
-        self.policy.save(self.model_path)
-        print("[MetaAgent] Meta-agent policy saved.")
-
-    def should_retry_trade(self, contract):
-        """
-        Meta-agent evaluates current meta-state and decides whether to retry the trade.
-        Returns True if retry is allowed, False if it should be skipped.
+        Decide whether a failed trade should be retried based on current meta-state.
+        Returns False if the meta-agent suggests avoiding further risk.
         """
         try:
             state = get_current_meta_state()
             action_index = self.select_action(state)
-            # Logic: If agent chooses the most conservative action (0), veto the retry
             if action_index == 0:
                 print("[MetaAgent] Retry vetoed by meta-agent (conservative mode).")
                 return False
             return True
         except Exception as e:
             print(f"[MetaAgent] Failed to evaluate retry decision: {e}")
-            return True  # Fallback: allow retry
+            return True  # fallback to allow retry
+
+    def save_policy(self):
+        """
+        Save the trained model.
+        """
+        self.policy.save(self.model_path)
+        print("[MetaAgent] Meta-agent policy saved.")
