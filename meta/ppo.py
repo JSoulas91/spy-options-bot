@@ -68,13 +68,34 @@ class PPOAgent:
         else:
             logger.warning(f"⚠️ No saved PPO model found at {META_MODEL_PATH}. Starting fresh.")
 
-    def compute_returns(self, rewards, dones, values, next_value):
+    def compute_returns(self, rewards, dones, values, next_values):
         returns = []
-        R = next_value
+        R = next_values
         for reward, done in zip(reversed(rewards), reversed(dones)):
             R = reward + self.gamma * R * (1 - int(done))
             returns.insert(0, R)
         return torch.tensor(returns, dtype=torch.float32)
+
+    def evaluate_actions(self, states, actions):
+        log_probs = []
+        state_values = []
+        entropy_terms = []
+
+        for state, action in zip(states, actions):
+            probs, value = self.model(state.unsqueeze(0))
+            dist = Categorical(probs)
+            log_prob = dist.log_prob(torch.tensor(action))
+            entropy = dist.entropy()
+
+            log_probs.append(log_prob)
+            state_values.append(value)
+            entropy_terms.append(entropy)
+
+        log_probs = torch.stack(log_probs)
+        state_values = torch.cat(state_values).squeeze()
+        entropy = torch.stack(entropy_terms).mean()
+
+        return log_probs, state_values, entropy
 
     def update(self, memory):
         if not memory or len(memory['states']) == 0:
@@ -82,36 +103,22 @@ class PPOAgent:
             return
 
         states = torch.stack(memory['states'])
-        actions = torch.tensor(memory['actions'])
+        actions = memory['actions']
         old_log_probs = torch.stack(memory['log_probs'])
-        returns = self.compute_returns(memory['rewards'], memory['dones'], memory['values'], memory['next_value'])
+        returns = self.compute_returns(
+            memory['rewards'], memory['dones'], memory['values'], memory['next_value']
+        )
 
         for _ in range(self.K_epochs):
-            log_probs = []
-            state_values = []
-            entropy_terms = []
+            log_probs, state_values, entropy = self.evaluate_actions(states, actions)
 
-            for state in states:
-                probs, value = self.model(state.unsqueeze(0))
-                dist = Categorical(probs)
-                log_prob = dist.log_prob(actions)
-                entropy = dist.entropy()
-
-                log_probs.append(log_prob)
-                state_values.append(value)
-                entropy_terms.append(entropy)
-
-            log_probs = torch.stack(log_probs)
-            values = torch.cat(state_values).squeeze()
-            entropy = torch.stack(entropy_terms).mean()
-
-            advantages = returns - values.detach()
+            advantages = returns - state_values.detach()
             ratios = torch.exp(log_probs - old_log_probs.detach())
 
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
             actor_loss = -torch.min(surr1, surr2).mean()
-            critic_loss = nn.MSELoss()(values, returns)
+            critic_loss = nn.MSELoss()(state_values, returns)
 
             loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
 
@@ -120,3 +127,39 @@ class PPOAgent:
             self.optimizer.step()
 
         logger.info("✅ PPO update complete.")
+
+    def train_step(self, memory):
+        """Update using a single batch and return TD errors for PER"""
+        if not memory or len(memory['states']) == 0:
+            logger.warning("⚠️ PPO train_step skipped: empty memory buffer.")
+            return []
+
+        states = torch.stack(memory['states'])
+        actions = memory['actions']
+        rewards = memory['rewards']
+        dones = memory['dones']
+        values = torch.stack(memory['values'])
+        next_values = torch.stack(memory['next_value'])
+
+        returns = self.compute_returns(rewards, dones, values.squeeze(), next_values.squeeze())
+
+        for _ in range(self.K_epochs):
+            log_probs, state_values, entropy = self.evaluate_actions(states, actions)
+
+            advantages = returns - state_values.detach()
+            ratios = torch.exp(log_probs - torch.stack(memory['log_probs']).detach())
+
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+            actor_loss = -torch.min(surr1, surr2).mean()
+            critic_loss = nn.MSELoss()(state_values, returns)
+
+            loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+        # Compute TD errors for each sample
+        td_errors = (returns - values.squeeze()).detach().cpu().numpy().tolist()
+        return td_errors
