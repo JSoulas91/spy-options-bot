@@ -20,13 +20,18 @@ def compute_reward(trade, market_data, exit_reason=None):
 
     reward = pnl
 
+    # Adaptive reward coefficients
+    confidence_weight = 0.5 if confidence >= 0.7 else 0.2
+    vix = float(market_data.get("vix", 15))
+    vix_penalty = 0.2 if vix > 20 else 0.1
+
     # 📈 Bonus for confidence-aligned wins
-    if pnl > 0 and confidence >= 0.7:
-        reward += 0.5
+    if pnl > 0:
+        reward += confidence_weight
 
     # 📉 Penalty for high-confidence losses
-    if pnl < 0 and confidence >= 0.7:
-        reward -= 1.0
+    if pnl < 0:
+        reward -= confidence_weight
 
     # ⏰ Penalty for late exits in day trades
     if trade_type == 0:
@@ -39,9 +44,7 @@ def compute_reward(trade, market_data, exit_reason=None):
         reward *= 0.25
 
     # ❗ Penalty for risky market context (high VIX)
-    vix = float(market_data.get("vix", 15))
-    if vix > 20:
-        reward -= 0.2
+    reward -= vix_penalty
 
     # 🧠 Penalty for override exits
     if exit_reason == "Contract near expiry":
@@ -50,6 +53,4 @@ def compute_reward(trade, market_data, exit_reason=None):
         reward += 0.1  # Optional: reward if agent initiated exit
 
     # 🔁 Normalize reward
-    reward = np.clip(reward, -2.0, 2.0)
-
-    return reward
+    reward = np.clip(re 
