@@ -1,10 +1,13 @@
 # main.py
+
 import time
 import traceback
+import threading
 from scheduler import run_scheduler_loop
 from utils.logger import bot_logger as logger
 from telegram_bot import send_telegram_message
-from utils.trade_tracker import purge_old_trades  # 🔹 NEW IMPORT
+from utils.trade_tracker import purge_old_trades
+from data.websocket_client import start_websocket
 
 def run_market_open_tasks():
     logger.info("🕘 Running market open housekeeping...")
@@ -13,8 +16,12 @@ def run_market_open_tasks():
 def main():
     logger.info("🚀 SPY Options Trading Bot is launching...")
     send_telegram_message("🚀 *Bot Online*\nMain loop is starting and will self-heal on failure.")
-    
-    run_market_open_tasks()  # 🔹 PURGE OLD TRADES ON START
+
+    run_market_open_tasks()
+
+    # Start the WebSocket client in a separate thread
+    ws_thread = threading.Thread(target=start_websocket, daemon=True)
+    ws_thread.start()
 
     while True:
         try:
