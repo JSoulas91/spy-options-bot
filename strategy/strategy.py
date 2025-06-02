@@ -34,27 +34,6 @@ def is_market_closing_soon(timestamp_str):
         return False
 
 
-def get_adaptive_confidence_threshold(meta_state=None):
-    base_threshold = CONFIDENCE_THRESHOLD
-
-    if ENABLE_VIX_THROTTLING or ENABLE_ADAPTIVE_CONFIDENCE:
-        try:
-            vix_value = get_current_vix()
-            logger.info(f"📈 VIX value: {vix_value}")
-            if vix_value is None:
-                return base_threshold
-            if vix_value >= VIX_MAX_THRESHOLD:
-                logger.warning("❌ VIX above max threshold — skipping trade.")
-                return float("inf")
-            elif vix_value >= VIX_MODERATE_THRESHOLD:
-                adjusted_threshold = base_threshold + CONFIDENCE_STEP_UP
-                logger.info(f"⚠️ Elevated VIX — adjusting confidence threshold to {adjusted_threshold}")
-                return adjusted_threshold
-        except Exception as e:
-            logger.error(f"[VIX Error] Failed to retrieve VIX: {str(e)}")
-    return base_threshold
-
-
 def merge_indicators(primary, fallback):
     """Merge indicator dictionaries, preferring values from primary."""
     return {key: primary.get(key, fallback.get(key)) for key in set(primary) | set(fallback)}
@@ -63,7 +42,7 @@ def merge_indicators(primary, fallback):
 def evaluate_trade(position, market_data):
     try:
         action = "hold"
-        symbol = position.get("symbol", "SPY")  # Default to SPY if symbol not set
+        symbol = position.get("symbol", "SPY")
         entry_price = position.get("entry_price")
         price = market_data.get("price")
         timestamp = market_data.get("timestamp", "")
@@ -92,12 +71,19 @@ def evaluate_trade(position, market_data):
         hour = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").hour if timestamp else 12
         volatility = indicators.get("atr", 0)
 
+        # --- Meta state + action ---
         meta_state = [confidence, vix or 0, hour, 0 if trade_type == "day" else 1, volatility]
         meta_action = meta_agent.select_action(meta_state)
+        meta_params = meta_agent.interpret_action(meta_action)
+        meta_feedback = {
+            "meta_state": meta_state,
+            "meta_action": meta_action,
+            "meta_params": meta_params
+        }
 
-        logger.info(f"🧠 Meta-State: {meta_state} | Meta-Action: {meta_action}")
-        meta_feedback = {"meta_state": meta_state, "meta_action": meta_action}
+        logger.info(f"🧠 Meta-State: {meta_state} | Meta-Action: {meta_action} | Meta-Params: {meta_params}")
 
+        # --- Meta-action overrides ---
         if meta_action == 0:
             logger.info("🧠 Meta-Agent action: skip — confidence not met.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
@@ -105,9 +91,24 @@ def evaluate_trade(position, market_data):
             logger.info("🧠 Meta-Agent action: force exit — exiting position.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-        adaptive_threshold = get_adaptive_confidence_threshold(meta_state)
+        # --- Dynamic confidence threshold via meta-agent ---
+        adaptive_threshold = meta_params.get("confidence_threshold", CONFIDENCE_THRESHOLD)
+
+        # Optional VIX adjustment (on top of meta threshold)
+        if ENABLE_VIX_THROTTLING or ENABLE_ADAPTIVE_CONFIDENCE:
+            try:
+                if vix is not None:
+                    if vix >= VIX_MAX_THRESHOLD:
+                        logger.warning("❌ VIX above max threshold — skipping trade.")
+                        return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
+                    elif vix >= VIX_MODERATE_THRESHOLD:
+                        adaptive_threshold += CONFIDENCE_STEP_UP
+                        logger.info(f"⚠️ Elevated VIX — raising threshold to {adaptive_threshold:.2f}")
+            except Exception as e:
+                logger.error(f"[VIX Error] Could not adjust confidence threshold: {str(e)}")
+
         if confidence < adaptive_threshold:
-            logger.info(f"⚠️ Confidence {confidence:.2f} below adaptive threshold {adaptive_threshold:.2f} — exiting.")
+            logger.info(f"⚠️ Confidence {confidence:.2f} below threshold {adaptive_threshold:.2f} — exiting.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         # Extract indicators
@@ -154,4 +155,4 @@ def evaluate_trade(position, market_data):
     except Exception as e:
         logger.error(f"[Strategy Error] {e}")
         logger.debug(traceback.format_exc())
-        return "exit" if not RETURN_META_FEEDBACK else ("exit", None) 
+        return "exit" if not RETURN_META_FEEDBACK else ("exit", None)
