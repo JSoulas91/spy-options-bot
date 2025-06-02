@@ -39,7 +39,7 @@ def get_meta_agent_dims():
         logger.error(f"❌ Failed to load meta agent dims from {META_INFO_PATH}: {e}")
         raise
 
-def meta_agent_dims_exist():
+def meta_agent_dims_exist() -> bool:
     """Check whether META_INFO_PATH exists and contains valid dims."""
     if not os.path.exists(META_INFO_PATH):
         return False
