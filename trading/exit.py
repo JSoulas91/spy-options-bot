@@ -1,5 +1,3 @@
-# exit.py
-
 import pytz
 import json
 from datetime import datetime
@@ -23,7 +21,7 @@ def get_days_to_expiry(contract):
         today = datetime.now(eastern).date()
         return (expiry_date - today).days
     except Exception as e:
-        bot_logger.warning(f"[Expiry Parse Error] {e}")
+        bot_logger.warning(f"[Expiry Parse Error] Failed to parse expiry for contract={contract.get('symbol', '?')}: {e}")
         return 0
 
 def handle_exit():
@@ -42,6 +40,7 @@ def handle_exit():
                 notifier.send_message(
                     f"📉 [Auto Exit @ 3:55 PM ET]\nClosed {len(closed_ids)} day trade(s): {', '.join(closed_ids)}"
                 )
+                bot_logger.info(f"[EXIT] Auto exit triggered at 3:55 PM — Closed trades: {closed_ids}")
             return
 
         # 📈 Dynamic exit evaluation
@@ -51,25 +50,33 @@ def handle_exit():
                 close_and_log_trade(trade, reason=exit_reason)
 
     except Exception as e:
-        bot_logger.error(f"[EXIT ERROR] Failed to handle exits: {str(e)}")
+        bot_logger.exception(f"[EXIT ERROR] Failed to handle exits: {e}")
 
 def should_exit_trade(trade):
     try:
+        trade_id = trade.get("id", "?")
+        symbol = trade.get("symbol", "?")
+
         if evaluate_exit_decision(trade):
+            bot_logger.info(f"[Exit Eval] Meta-agent signaled exit for trade_id={trade_id}, symbol={symbol}")
             return "Meta-agent signal"
 
         if trade.get("trade_type") == 1:
             dte = get_days_to_expiry(trade)
             if dte <= 1:
+                bot_logger.info(f"[Exit Eval] Swing trade near expiry (DTE={dte}) — trade_id={trade_id}")
                 return f"Contract near expiry (DTE={dte})"
 
         return None
     except Exception as e:
-        bot_logger.error(f"[Exit Evaluation Error] {str(e)}")
+        bot_logger.exception(f"[Exit Evaluation Error] trade_id={trade.get('id', '?')}, symbol={trade.get('symbol', '?')} — {e}")
         return None
 
 def close_and_log_trade(trade, reason="Manual exit"):
     try:
+        trade_id = trade.get("id", "?")
+        symbol = trade.get("symbol", "?")
+
         # 🧠 Compute reward and new state
         reward = compute_shaped_reward(trade)
         next_state = build_meta_state_for_exit(trade)
@@ -81,25 +88,27 @@ def close_and_log_trade(trade, reason="Manual exit"):
         })
 
         close_trade(trade)
-        trade_tracker.mark_trade_closed(trade.get("id"))
+        trade_tracker.mark_trade_closed(trade_id)
         log_trade_exit(trade)
 
         # 📢 Notify
-        bot_logger.info(f"[EXIT] Closed trade {trade.get('id')} — Reason: {reason} — Reward: {reward:.3f}")
-        notifier.send_message(f"🚪 Exited trade {trade.get('id')}\nReason: {reason}\nReward: {reward:.3f}")
+        bot_logger.info(f"[EXIT] Closed trade {trade_id} ({symbol}) — Reason: {reason} — Reward: {reward:.3f}")
+        notifier.send_message(f"🚪 Exited trade {trade_id} ({symbol})\nReason: {reason}\nReward: {reward:.3f}")
 
         # 🧠 Store experience for meta-agent training
         state = trade.get("meta_state")
         action = trade.get("meta_action")
         if state and action is not None and next_state:
+            experience = {
+                "state": state,
+                "action": action,
+                "reward": reward,
+                "next_state": next_state,
+                "done": True
+            }
             with open(META_LOG_PATH, "a") as f:
-                f.write(json.dumps({
-                    "state": state,
-                    "action": action,
-                    "reward": reward,
-                    "next_state": next_state,
-                    "done": True
-                }) + "\n")
+                f.write(json.dumps(experience) + "\n")
+            bot_logger.debug(f"[EXIT] Logged meta-agent experience for trade_id={trade_id}")
 
     except Exception as e:
-        bot_logger.error(f"[Trade Close Error] {e}")
+        bot_logger.exception(f"[Trade Close Error] trade_id={trade.get('id', '?')} — {e}")
