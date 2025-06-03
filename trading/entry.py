@@ -11,7 +11,6 @@ from meta.meta_state import build_meta_state_for_entry
 from trade_manager import execute_trade_with_retries
 from strategy import evaluate_trade_signal
 from utils.telegram_notifier import TelegramNotifier
-from data.multi_timeframe_fetcher import fetch_long_term_features
 
 trade_tracker = TradeTracker()
 notifier = TelegramNotifier()
@@ -20,12 +19,12 @@ def handle_entry(market_data):
     try:
         now = datetime.now()
 
-        # Prevent new trades after 3:30 PM ET
+        # 🚫 Block entries after 3:30 PM ET
         if now.hour == 15 and now.minute >= 30:
             bot_logger.info("[Entry] Blocked new entries after 3:30 PM ET.")
             return
 
-        # Evaluate strategy-level signal
+        # 🔍 Evaluate trade signal
         signal = evaluate_trade_signal(market_data)
         if not signal["should_trade"]:
             return
@@ -33,7 +32,7 @@ def handle_entry(market_data):
         confidence = signal["confidence"]
         trade_type = signal["trade_type"]  # 0 = day, 1 = swing
 
-        # PDT / daily limit enforcement
+        # 🛡️ PDT / Max trades enforcement
         if trade_type == 0:
             if ENFORCE_PDT_LIMITS and not trade_tracker.can_place_day_trade():
                 bot_logger.info("[Entry] Blocked by PDT rules.")
@@ -42,15 +41,11 @@ def handle_entry(market_data):
                 bot_logger.info("[Entry] Blocked by max daily limit.")
                 return
 
-        # ⏳ Fetch long-term indicator data
-        long_term_data = fetch_long_term_features("SPY")
-
-        # Build meta-agent state and get action
+        # 🧠 Meta-agent decision
         meta_state = build_meta_state_for_entry(
             market_data,
             confidence_score=confidence,
-            trade_type=trade_type,
-            long_term_data=long_term_data
+            trade_type=trade_type
         )
         action = meta_agent.select_action(meta_state)
 
@@ -58,17 +53,19 @@ def handle_entry(market_data):
             bot_logger.info("[Entry] Meta-agent rejected trade setup.")
             return
 
-        # Execute trade with retry logic
+        # ✅ Execute trade with retries
         order_details = execute_trade_with_retries(signal["trade_setup"])
         if order_details:
-            order_details["confidence"] = confidence
-            order_details["indicators"] = signal.get("indicators", {})
-            order_details["timestamp"] = now.isoformat()
-            order_details["trade_type"] = trade_type
-            order_details["meta_state"] = meta_state
-            order_details["meta_action"] = [1.0, 0.0] if action == 1 else [0.0, 1.0]
+            order_details.update({
+                "confidence": confidence,
+                "indicators": signal.get("indicators", {}),
+                "timestamp": now.isoformat(),
+                "trade_type": trade_type,
+                "meta_state": meta_state,
+                "meta_action": [1.0, 0.0] if action == 1 else [0.0, 1.0]
+            })
 
-            # Log trade
+            # 📦 Log trade
             trade_tracker.log_trade(order_details, trade_type)
             log_trade({
                 "timestamp": now.isoformat(),
@@ -80,12 +77,11 @@ def handle_entry(market_data):
                 "indicators": str(order_details["indicators"])
             })
 
-            # Notify
+            # 📢 Notify
             notifier.send_message(
                 f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order_details['symbol']} "
                 f"(Confidence: {confidence:.2f})"
             )
-
             bot_logger.info(f"[Entry] {'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
         else:
             bot_logger.warning("[Entry] Trade execution failed after retries.")
