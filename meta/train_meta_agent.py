@@ -32,12 +32,16 @@ def preprocess_data(data):
 
         state = build_meta_state_from_log(current)
         next_state = build_meta_state_from_log(next_item)
-        action = current.get("meta_action", 0)
+
+        action_raw = current.get("meta_action", 0)
+        action = int(np.argmax(action_raw)) if isinstance(action_raw, list) else int(action_raw)
+
         reward = compute_shaped_reward(current)
         done = current.get("done", False)
 
         buffer.add(state, action, reward, next_state, done)
 
+    logger.info(f"[Meta Training] Loaded {len(buffer)} experiences into prioritized replay buffer.")
     return buffer
 
 def append_reward_to_csv(epoch, reward):
