@@ -62,7 +62,7 @@ def handle_entry(market_data):
                 "timestamp": now.isoformat(),
                 "trade_type": trade_type,
                 "meta_state": meta_state,
-                "meta_action": [1.0, 0.0] if action == 1 else [0.0, 1.0]
+                meta_action = 1 if decision == 'accept' else 0
             })
 
             # 📦 Log trade
