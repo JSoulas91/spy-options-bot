@@ -1,5 +1,3 @@
-# entry.py
-
 import time
 from datetime import datetime
 from config import MAX_DAY_TRADES, ENFORCE_PDT_LIMITS
@@ -47,6 +45,7 @@ def handle_entry(market_data):
             confidence_score=confidence,
             trade_type=trade_type
         )
+        meta_agent.eval_mode()
         action = meta_agent.select_action(meta_state)
 
         if action == 0:
@@ -55,36 +54,39 @@ def handle_entry(market_data):
 
         # ✅ Execute trade with retries
         order_details = execute_trade_with_retries(signal["trade_setup"])
-        if order_details:
-            order_details.update({
-                "confidence": confidence,
-                "indicators": signal.get("indicators", {}),
-                "timestamp": now.isoformat(),
-                "trade_type": trade_type,
-                "meta_state": meta_state,
-                meta_action = 1 if decision == 'accept' else 0
-            })
 
-            # 📦 Log trade
-            trade_tracker.log_trade(order_details, trade_type)
-            log_trade({
-                "timestamp": now.isoformat(),
-                "action": "buy",
-                "trade_type": trade_type,
-                "symbol": order_details["symbol"],
-                "confidence_score": confidence,
-                "trade_id": order_details.get("id"),
-                "indicators": str(order_details["indicators"])
-            })
-
-            # 📢 Notify
-            notifier.send_message(
-                f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order_details['symbol']} "
-                f"(Confidence: {confidence:.2f})"
-            )
-            bot_logger.info(f"[Entry] {'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
-        else:
+        if order_details is None:
             bot_logger.warning("[Entry] Trade execution failed after retries.")
+            return
+
+        # 📦 Append enriched metadata to order
+        order_details.update({
+            "confidence": confidence,
+            "indicators": signal.get("indicators", {}),
+            "timestamp": now.isoformat(),
+            "trade_type": trade_type,
+            "meta_state": meta_state,
+            "meta_action": action
+        })
+
+        # 🧾 Log trade
+        trade_tracker.log_trade(order_details, trade_type)
+        log_trade({
+            "timestamp": now.isoformat(),
+            "action": "buy",
+            "trade_type": trade_type,
+            "symbol": order_details.get("symbol", "UNKNOWN"),
+            "confidence_score": confidence,
+            "trade_id": order_details.get("id", "N/A"),
+            "indicators": str(order_details.get("indicators", {}))
+        })
+
+        # 📢 Notify
+        notifier.send_message(
+            f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order_details.get('symbol', 'UNKNOWN')} "
+            f"(Confidence: {confidence:.2f})"
+        )
+        bot_logger.info(f"[Entry] {'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
 
     except Exception as e:
         bot_logger.error(f"[Entry] Error: {str(e)}")
