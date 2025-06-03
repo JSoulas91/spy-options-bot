@@ -1,17 +1,21 @@
-# train_meta_agent.py
-
 import os
 import json
 import numpy as np
 import torch
-import random
 import csv
 from meta.ppo import PPOAgent
 from meta.meta_state import build_meta_state_from_log
 from meta.reward_shaper import compute_shaped_reward
 from meta.meta_agent_info import save_meta_agent_dims
 from meta.prioritized_buffer import PrioritizedReplayBuffer
-from config import META_LOG_PATH, EPOCHS, BATCH_SIZE, BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
+from config import (
+    META_LOG_PATH,
+    EPOCHS,
+    BATCH_SIZE,
+    BUFFER_ALPHA,
+    BUFFER_BETA_START,
+    BUFFER_BETA_INCREMENT
+)
 from utils.logger import bot_logger as logger
 from utils.telegram import send_telegram_message
 
@@ -64,11 +68,11 @@ def train():
         logger.warning("❌ No data to train on.")
         return
 
-    save_meta_agent_dims(data[0])
+    save_meta_agent_dims(data[0])  # ✅ Save state/action dimensions
     buffer = preprocess_data(data)
 
     agent = PPOAgent()
-    agent.train_mode()  # ✅ Ensure model is in training mode
+    agent.train_mode()
     beta = BUFFER_BETA_START
     prev_avg_reward = float("-inf")
 
@@ -98,6 +102,7 @@ def train():
         append_reward_to_csv(epoch + 1, avg_reward)
         agent.adjust_entropy()
 
+        # 🔁 Adaptive learning rate scheduling
         if epoch > 0 and avg_reward < prev_avg_reward:
             agent.adjust_learning_rate(agent.optimizer, factor=0.9)
 
