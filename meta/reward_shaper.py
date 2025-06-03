@@ -1,10 +1,14 @@
 # meta/reward_shaper.py
 
 import numpy as np
+from collections import deque
+
+# Rolling window for Sharpe-style reward shaping
+reward_window = deque(maxlen=20)
 
 def compute_reward(trade, market_data, exit_reason=None):
     """
-    Compute shaped reward for the PPO meta-agent based on trade outcome and context.
+    Compute base shaped reward for the PPO meta-agent based on trade outcome and context.
 
     Args:
         trade (dict): Trade details (entry, exit, pnl, confidence, trade_type, etc.)
@@ -12,7 +16,7 @@ def compute_reward(trade, market_data, exit_reason=None):
         exit_reason (str, optional): Reason for trade exit.
 
     Returns:
-        float: Reward value (clipped and shaped).
+        float: Raw shaped reward (before Sharpe normalization).
     """
     pnl = float(trade.get("pnl", 0))
     confidence = float(trade.get("confidence", 0))
@@ -59,6 +63,26 @@ def compute_reward(trade, market_data, exit_reason=None):
     elif exit_reason == "Time-based exit":
         reward -= 0.1
 
-    # 🔁 Normalize/clamp reward
-    reward = np.clip(reward, -1.0, 1.0)
     return reward
+
+
+def compute_shaped_reward(log_entry):
+    """
+    Compute final risk-adjusted reward using Sharpe-style normalization.
+    """
+    trade = log_entry.get("trade", {})
+    market_data = log_entry.get("market", {})
+    exit_reason = log_entry.get("exit_reason")
+
+    raw_reward = compute_reward(trade, market_data, exit_reason)
+
+    # Sharpe-style normalization using rolling window
+    reward_window.append(raw_reward)
+    if len(reward_window) < reward_window.maxlen:
+        return np.clip(raw_reward, -1.0, 1.0)  # not enough history yet
+
+    mean = np.mean(reward_window)
+    std = np.std(reward_window) + 1e-6
+    sharpe_reward = (raw_reward - mean) / std
+
+    return float(np.clip(sharpe_reward, -1.0, 1.0))
