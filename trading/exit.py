@@ -87,6 +87,7 @@ def close_and_log_trade(trade, reason="Manual exit"):
             "meta_next_state": next_state
         })
 
+        # 🧨 Execute close (Tradier-based)
         close_trade(trade)
         trade_tracker.mark_trade_closed(trade_id)
         log_trade_exit(trade)
@@ -95,7 +96,7 @@ def close_and_log_trade(trade, reason="Manual exit"):
         bot_logger.info(f"[EXIT] Closed trade {trade_id} ({symbol}) — Reason: {reason} — Reward: {reward:.3f}")
         notifier.send_message(f"🚪 Exited trade {trade_id} ({symbol})\nReason: {reason}\nReward: {reward:.3f}")
 
-        # 🧠 Store experience for meta-agent training
+        # 🧠 Log for meta-agent training
         state = trade.get("meta_state")
         action = trade.get("meta_action")
         if state and action is not None and next_state:
