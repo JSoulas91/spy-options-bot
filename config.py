@@ -17,10 +17,10 @@ def get_env_var(name, required=True, default=None):
 # === BASE PATH ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# === ALPACA PAPER TRADING CONFIGURATION ===
-ALPACA_API_KEY = get_env_var('ALPACA_API_KEY')
-ALPACA_SECRET_KEY = get_env_var('ALPACA_SECRET_KEY')
-ALPACA_BASE_URL = get_env_var('ALPACA_BASE_URL')
+# === TRADIER CONFIGURATION ===
+TRADIER_API_TOKEN = get_env_var('TRADIER_API_TOKEN')
+USE_TRADIER_SANDBOX = os.getenv('USE_TRADIER_SANDBOX', 'true').lower() == 'true'
+TRADIER_BASE_URL = "https://sandbox.tradier.com/v1" if USE_TRADIER_SANDBOX else "https://api.tradier.com/v1"
 
 # === TELEGRAM NOTIFICATIONS ===
 TELEGRAM_BOT_TOKEN = get_env_var('TELEGRAM_BOT_TOKEN')
@@ -96,6 +96,6 @@ DEBUG_OPTION_FILTER = os.getenv("DEBUG_OPTION_FILTER", "false").lower() == "true
 META_STATE_LOOKBACK_MINUTES = int(os.getenv("META_STATE_LOOKBACK_MINUTES", 720))
 META_AGENT_ENABLED = os.getenv("META_AGENT_ENABLED", "true").lower() == "true"
 META_LOG_PATH = os.path.join(BASE_DIR, "meta", "meta_log.jsonl")
-META_INFO_PATH = os.path.join(BASE_DIR, "meta", "meta_agent_info.json")  # <-- ✅ Added
+META_INFO_PATH = os.path.join(BASE_DIR, "meta", "meta_agent_info.json")
 
 bot_logger.info("✅ Configuration loaded successfully.")
