@@ -68,6 +68,7 @@ def train():
     buffer = preprocess_data(data)
 
     agent = PPOAgent()
+    agent.train_mode()  # ✅ Ensure model is in training mode
     beta = BUFFER_BETA_START
     prev_avg_reward = float("-inf")
 
