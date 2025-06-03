@@ -11,6 +11,7 @@ from meta.meta_state import build_meta_state_for_entry
 from trade_manager import execute_trade_with_retries
 from strategy import evaluate_trade_signal
 from utils.telegram_notifier import TelegramNotifier
+from data.multi_timeframe_fetcher import fetch_long_term_features
 
 trade_tracker = TradeTracker()
 notifier = TelegramNotifier()
@@ -41,11 +42,15 @@ def handle_entry(market_data):
                 bot_logger.info("[Entry] Blocked by max daily limit.")
                 return
 
+        # ⏳ Fetch long-term indicator data
+        long_term_data = fetch_long_term_features("SPY")
+
         # Build meta-agent state and get action
         meta_state = build_meta_state_for_entry(
             market_data,
             confidence_score=confidence,
-            trade_type=trade_type
+            trade_type=trade_type,
+            long_term_data=long_term_data
         )
         action = meta_agent.select_action(meta_state)
 
