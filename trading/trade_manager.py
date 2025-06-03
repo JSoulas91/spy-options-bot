@@ -1,5 +1,3 @@
-# trade_manager.py
-
 import time
 import traceback
 from config import (
