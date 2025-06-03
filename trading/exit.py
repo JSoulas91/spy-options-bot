@@ -1,3 +1,5 @@
+# exit.py
+
 import pytz
 import json
 from datetime import datetime
@@ -9,6 +11,8 @@ from meta.meta_agent import evaluate_exit_decision
 from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_notifier import TelegramNotifier
 from config import META_LOG_PATH
+from meta.meta_state import build_meta_state_for_entry
+from data.multi_timeframe_fetcher import fetch_long_term_features
 
 eastern = pytz.timezone('US/Eastern')
 notifier = TelegramNotifier()
@@ -67,6 +71,16 @@ def should_exit_trade(trade):
 
 def close_and_log_trade(trade, reason="Manual exit"):
     try:
+        # 🧠 Compute next meta-state for experience logging
+        long_term_data = fetch_long_term_features("SPY")
+        next_state = build_meta_state_for_entry(
+            market_data=None,  # You may optionally pass updated intraday data
+            confidence_score=trade.get("confidence", 0),
+            trade_type=trade.get("trade_type", 0),
+            long_term_data=long_term_data
+        )
+        trade["meta_next_state"] = next_state
+
         reward = compute_shaped_reward(trade)
         trade["shaped_reward"] = reward
         trade["exit_reason"] = reason
@@ -81,7 +95,6 @@ def close_and_log_trade(trade, reason="Manual exit"):
         # Log experience to meta-agent buffer
         state = trade.get("meta_state")
         action = trade.get("meta_action")
-        next_state = trade.get("meta_next_state")
         if state and action is not None and next_state:
             with open(META_LOG_PATH, "a") as f:
                 f.write(json.dumps({
