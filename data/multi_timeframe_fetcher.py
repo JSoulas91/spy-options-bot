@@ -1,12 +1,16 @@
-# data/multi_timeframe_fetcher.py
-
-from alpaca_trade_api.rest import REST, TimeFrame
+import os
+import requests
 from datetime import datetime, timedelta
-from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
 import pandas as pd
 import numpy as np
+from utils.logger import bot_logger
 
-api = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, base_url=ALPACA_BASE_URL)
+TRADIER_API_KEY = os.getenv("TRADIER_API_KEY")
+TRADIER_BASE_URL = "https://api.tradier.com/v1"
+HEADERS = {
+    "Authorization": f"Bearer {TRADIER_API_KEY}",
+    "Accept": "application/json"
+}
 
 def compute_indicators(df: pd.DataFrame):
     if df is None or df.empty:
@@ -39,30 +43,60 @@ def compute_macd(series, fast=12, slow=26, signal=9):
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     return macd, signal_line
 
+def fetch_tradier_history(symbol, start_date, end_date):
+    """
+    Fetch historical daily OHLC data from Tradier.
+    """
+    url = f"{TRADIER_BASE_URL}/markets/history"
+    params = {
+        "symbol": symbol,
+        "start": start_date.strftime("%Y-%m-%d"),
+        "end": end_date.strftime("%Y-%m-%d"),
+        "interval": "daily"
+    }
+    response = requests.get(url, headers=HEADERS, params=params)
+    if response.status_code != 200:
+        bot_logger.warning(f"[Tradier Fetch] Failed for {symbol}: {response.status_code}")
+        return None
+
+    data = response.json()
+    if "history" not in data or data["history"] is None:
+        bot_logger.warning(f"[Tradier Fetch] No history returned for {symbol}")
+        return None
+
+    quotes = data["history"].get("day", [])
+    if not quotes:
+        return None
+
+    df = pd.DataFrame(quotes)
+    df["date"] = pd.to_datetime(df["date"])
+    df.set_index("date", inplace=True)
+    df = df[["open", "high", "low", "close", "volume"]]
+    return df
+
 def fetch_long_term_features(symbol="SPY"):
-    now = datetime.utcnow()
+    now = datetime.utcnow().date()
 
     timeframes = {
-        "5d": (TimeFrame(5), now - timedelta(days=5)),
-        "10d": (TimeFrame(15), now - timedelta(days=10)),
-        "15d": (TimeFrame.Hour, now - timedelta(days=15)),
-        "1mo": (TimeFrame.Day, now - timedelta(days=30)),
-        "3mo": (TimeFrame.Day, now - timedelta(days=90)),
-        "6mo": (TimeFrame.Day, now - timedelta(days=180)),
+        "5d": now - timedelta(days=5),
+        "10d": now - timedelta(days=10),
+        "15d": now - timedelta(days=15),
+        "1mo": now - timedelta(days=30),
+        "3mo": now - timedelta(days=90),
+        "6mo": now - timedelta(days=180),
     }
 
     results = {}
-    for label, (tf, start) in timeframes.items():
+    for label, start_date in timeframes.items():
         try:
-            bars = api.get_bars(symbol, tf, start=start, end=now).df
-            if not bars.empty:
-                bars = bars[bars.index >= start]
-                features = compute_indicators(bars)
+            df = fetch_tradier_history(symbol, start_date, now)
+            if df is not None and not df.empty:
+                features = compute_indicators(df)
                 results[label] = features if features else {}
             else:
                 results[label] = {}
         except Exception as e:
-            print(f"Error fetching {label}: {e}")
+            bot_logger.exception(f"[Tradier Fetch Error] {label}: {e}")
             results[label] = {}
 
     return results
