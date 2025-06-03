@@ -29,6 +29,7 @@ def handle_entry(market_data):
 
         confidence = signal["confidence"]
         trade_type = signal["trade_type"]  # 0 = day, 1 = swing
+        trade_setup = signal["trade_setup"]
 
         # 🛡️ PDT / Max trades enforcement
         if trade_type == 0:
@@ -52,8 +53,8 @@ def handle_entry(market_data):
             bot_logger.info("[Entry] Meta-agent rejected trade setup.")
             return
 
-        # ✅ Execute trade with retries
-        order_details = execute_trade_with_retries(signal["trade_setup"])
+        # ✅ Execute trade with retries (via Tradier)
+        order_details = execute_trade_with_retries(trade_setup)
 
         if order_details is None:
             bot_logger.warning("[Entry] Trade execution failed after retries.")
