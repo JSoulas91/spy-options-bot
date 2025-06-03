@@ -1,5 +1,3 @@
-# strategy.py
-
 import traceback
 from datetime import datetime, time
 from helpers import is_day_trade, is_swing_trade
@@ -61,12 +59,13 @@ def evaluate_trade(position, market_data):
         except Exception as e:
             logger.error(f"[MTF Error] Failed to retrieve multi-timeframe data for {symbol}: {e}")
 
+        # 🚨 Economic event risk off
         if is_high_risk_event_active():
             logger.warning("🚨 Live economic event detected — exiting to reduce risk.")
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", None)
 
-        # Prepare state for meta-agent
+        # Build meta-agent state
         vix = get_current_vix()
         trade_type = "day" if is_day_trade(position) else "swing"
         hour = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").hour if timestamp else 12
@@ -83,17 +82,15 @@ def evaluate_trade(position, market_data):
 
         logger.info(f"🧠 Meta-State: {meta_state} | Meta-Action: {meta_action} | Meta-Params: {meta_params}")
 
-        # Meta-agent directive: skip
+        # Meta-agent override actions
         if meta_action == 0:
             logger.info("🧠 Meta-agent recommends skipping this trade.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
-
-        # Meta-agent directive: force exit
         if meta_action == 2:
             logger.info("🧠 Meta-agent enforces exit — overriding strategy.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-        # Use meta confidence threshold override
+        # Use adaptive threshold if specified
         adaptive_threshold = meta_params.get("confidence_threshold", CONFIDENCE_THRESHOLD)
 
         if ENABLE_VIX_THROTTLING or ENABLE_ADAPTIVE_CONFIDENCE:
@@ -112,7 +109,7 @@ def evaluate_trade(position, market_data):
             logger.info(f"⚠️ Confidence {confidence:.2f} below required {adaptive_threshold:.2f} — exiting.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-        # Unpack indicators
+        # ⛓ Technical signal-based exit logic
         rsi = indicators.get('rsi')
         atr = indicators.get('atr')
         vwap = indicators.get('vwap')
@@ -135,13 +132,13 @@ def evaluate_trade(position, market_data):
                 logger.info("⏰ Market is closing soon — exiting day trade.")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-            # Smart trailing logic
+            # 📉 Smart trailing logic
             if price >= entry_price * (1 + TRAILING_STOP_PERCENT):
                 if price <= price * (1 - 0.10):
                     logger.info("📉 Trailing stop-loss triggered after gain.")
                     return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-            # ATR stop-loss for day trades
+            # 🛑 ATR-based stop for day trades
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER):
                 logger.info("🛑 ATR stop-loss hit (day trade).")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
@@ -149,6 +146,7 @@ def evaluate_trade(position, market_data):
         elif is_swing_trade(position):
             logger.debug("[Strategy] Trade type: Swing Trade")
 
+            # 🛑 ATR-based stop for swing trades
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER * 1.5):
                 logger.info("🛑 ATR stop-loss hit (swing trade).")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
