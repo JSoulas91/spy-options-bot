@@ -9,10 +9,9 @@ from utils.logger import bot_logger
 from trade_manager import close_trade
 from meta.meta_agent import evaluate_exit_decision
 from meta.reward_shaper import compute_shaped_reward
+from meta.meta_state import build_meta_state_for_exit
 from utils.telegram_notifier import TelegramNotifier
 from config import META_LOG_PATH
-from meta.meta_state import build_meta_state_for_entry
-from data.multi_timeframe_fetcher import fetch_long_term_features
 
 eastern = pytz.timezone('US/Eastern')
 notifier = TelegramNotifier()
@@ -31,7 +30,7 @@ def handle_exit():
     try:
         now = datetime.now(eastern)
 
-        # 🕒 Force-close all day trades at 3:55 PM ET
+        # ⏳ Force close day trades at 3:55 PM ET
         if now.hour == 15 and now.minute >= 55:
             closed_ids = []
             for trade in trade_tracker.get_open_trades():
@@ -45,7 +44,7 @@ def handle_exit():
                 )
             return
 
-        # 🔍 Evaluate exit logic for all open trades
+        # 📈 Dynamic exit evaluation
         for trade in trade_tracker.get_open_trades():
             exit_reason = should_exit_trade(trade)
             if exit_reason:
@@ -71,28 +70,25 @@ def should_exit_trade(trade):
 
 def close_and_log_trade(trade, reason="Manual exit"):
     try:
-        # 🧠 Compute next meta-state for experience logging
-        long_term_data = fetch_long_term_features("SPY")
-        next_state = build_meta_state_for_entry(
-            market_data=None,  # You may optionally pass updated intraday data
-            confidence_score=trade.get("confidence", 0),
-            trade_type=trade.get("trade_type", 0),
-            long_term_data=long_term_data
-        )
-        trade["meta_next_state"] = next_state
-
+        # 🧠 Compute reward and new state
         reward = compute_shaped_reward(trade)
-        trade["shaped_reward"] = reward
-        trade["exit_reason"] = reason
+        next_state = build_meta_state_for_exit(trade)
+
+        trade.update({
+            "shaped_reward": reward,
+            "exit_reason": reason,
+            "meta_next_state": next_state
+        })
 
         close_trade(trade)
         trade_tracker.mark_trade_closed(trade.get("id"))
         log_trade_exit(trade)
 
+        # 📢 Notify
         bot_logger.info(f"[EXIT] Closed trade {trade.get('id')} — Reason: {reason} — Reward: {reward:.3f}")
         notifier.send_message(f"🚪 Exited trade {trade.get('id')}\nReason: {reason}\nReward: {reward:.3f}")
 
-        # Log experience to meta-agent buffer
+        # 🧠 Store experience for meta-agent training
         state = trade.get("meta_state")
         action = trade.get("meta_action")
         if state and action is not None and next_state:
