@@ -112,4 +112,4 @@ def close_and_log_trade(trade, reason="Manual exit"):
             bot_logger.debug(f"[EXIT] Logged meta-agent experience for trade_id={trade_id}")
 
     except Exception as e:
-        bot_logger.exception(f"[Trade Close Error] trade_id={trade.get('id', '?')} — {e}")
+        bot_logger.exception(f"[Trade Close Error] trade_id={trade.get('id', '?')} — {e}") 
