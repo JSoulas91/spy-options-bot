@@ -1,22 +1,24 @@
-# Core trading and data handling
-alpaca-trade-api==3.1.0
-pandas
-numpy
-scikit-learn
-ta
-matplotlib
-yfinance
-requests
-beautifulsoup4
-schedule
-pytz
-python-dotenv
+# Core Trading, Data Handling, and Web Scraping
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.4.2
+ta==0.10.2
+matplotlib==3.8.4
+yfinance==0.2.37
+requests==2.31.0
+beautifulsoup4==4.12.3
+schedule==1.2.1
+pytz==2024.1
+python-dotenv==1.0.1
 
-# PPO Meta-Agent & RL Training
-torch                # PPO neural network model (CPU version is fine for Oracle VPS)
-gym==0.26.2          # PPO environment compatibility
-tensorboard          # Optional: visualize PPO training and logs
-joblib               # Model persistence
+# PPO Meta-Agent & Reinforcement Learning
+torch==2.3.0                   # CPU-compatible; keep this unpinned if using GPU elsewhere
+gym==0.26.2                    # PPO-compatible with custom env
+tensorboard==2.16.2            # PPO training logs and visualization
+joblib==1.4.2                  # For model persistence and checkpointing
 
-# Logging and system automation
-loguru               # Advanced logging (optional, if used)
+# Logging and Automation
+loguru==0.7.2                  # Advanced logging with structured formatting
+
+# Optional: Legacy or fallback usage
+# alpaca-trade-api==3.1.0      # Commented out; not needed for Tradier-only setup
