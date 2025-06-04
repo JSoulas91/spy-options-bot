@@ -16,7 +16,8 @@ from telegram_bot import send_telegram_message
 from event_filter import is_high_risk_event_active
 from utils.vix_utils import get_current_vix
 from meta.meta_agent import MetaAgent
-from meta.reward_shaper import compute_shaped_reward, compute_sharpe_style_reward
+from meta.reward_shaper import compute_shaped_reward, compute_sharpe_style_reward, log_reward_trend
+from meta.meta_state import normalize_meta_state
 from data.multi_timeframe_fetcher import get_multi_timeframe_data
 from data.options_fetcher import get_option_metrics
 
@@ -35,6 +36,26 @@ def is_market_closing_soon(timestamp_str):
 def merge_indicators(primary, fallback):
     return {key: primary.get(key, fallback.get(key)) for key in set(primary) | set(fallback)}
 
+def extract_indicators(indicators):
+    return {
+        "rsi": indicators.get("rsi"),
+        "atr": indicators.get("atr"),
+        "vwap": indicators.get("vwap"),
+        "bb_upper": indicators.get("bb_upper"),
+        "bb_lower": indicators.get("bb_lower"),
+        "ema_50": indicators.get("ema_50"),
+        "ema_200": indicators.get("ema_200"),
+        "macd": indicators.get("macd"),
+        "macd_signal": indicators.get("macd_signal"),
+        "support": indicators.get("support"),
+        "resistance": indicators.get("resistance"),
+        "iv": indicators.get("implied_volatility"),
+        "delta": indicators.get("delta"),
+        "gamma": indicators.get("gamma"),
+        "theta": indicators.get("theta"),
+        "vega": indicators.get("vega")
+    }
+
 def evaluate_trade(position, market_data):
     try:
         action = "hold"
@@ -48,7 +69,6 @@ def evaluate_trade(position, market_data):
         if entry_price is None or price is None:
             raise ValueError("Missing 'entry_price' or 'price'.")
 
-        # Multi-timeframe indicators
         try:
             mtf_data = get_multi_timeframe_data(symbol)
             mtf_indicators = mtf_data.get("merged", {})
@@ -57,7 +77,6 @@ def evaluate_trade(position, market_data):
         except Exception as e:
             logger.error(f"[MTF Error] Failed to retrieve MTF data for {symbol}: {e}")
 
-        # Option Greeks / IV
         try:
             option_metrics = get_option_metrics(symbol)
             if option_metrics:
@@ -66,7 +85,6 @@ def evaluate_trade(position, market_data):
         except Exception as e:
             logger.error(f"[Greeks Error] Failed to fetch option metrics: {e}")
 
-        # 🚨 Economic Event Risk
         if is_high_risk_event_active():
             logger.warning("🚨 Live economic event detected — exiting to reduce risk.")
             send_telegram_message("🚨 *Live Economic Event Detected*\nAuto-exiting position to reduce risk exposure.")
@@ -77,12 +95,18 @@ def evaluate_trade(position, market_data):
         hour = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").hour if timestamp else 12
         volatility = indicators.get("atr", 0)
 
-        # === Meta-agent state and decision ===
-        meta_state = [confidence, vix or 0, hour, 0 if trade_type == "day" else 1, volatility]
+        meta_input = {
+            "confidence": confidence,
+            "vix": vix,
+            "hour": hour,
+            "is_swing": 1 if trade_type == "swing" else 0,
+            "atr": volatility
+        }
+        meta_state = normalize_meta_state(meta_input)
+
         meta_action = meta_agent.select_action(meta_state)
         meta_params = meta_agent.interpret_action(meta_action)
 
-        # === Reward Shaping Feedback ===
         shaped_reward = compute_shaped_reward(position, indicators, market_data)
         sharpe_reward = compute_sharpe_style_reward(entry_price, price, volatility)
 
@@ -93,6 +117,7 @@ def evaluate_trade(position, market_data):
             "shaped_reward": shaped_reward,
             "sharpe_reward": sharpe_reward
         }
+        log_reward_trend(meta_feedback)
 
         logger.info(f"🧠 Meta-State: {meta_state} | Action: {meta_action} | Params: {meta_params}")
         logger.info(f"🎯 Rewards — Shaped: {shaped_reward:.4f} | Sharpe-style: {sharpe_reward:.4f}")
@@ -122,31 +147,15 @@ def evaluate_trade(position, market_data):
             logger.info(f"⚠️ Confidence {confidence:.2f} below threshold {adaptive_threshold:.2f} — exiting.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-        # === Technical + Option-Based Exit Logic ===
-        rsi = indicators.get('rsi')
-        atr = indicators.get('atr')
-        vwap = indicators.get('vwap')
-        upper_band = indicators.get('bb_upper')
-        lower_band = indicators.get('bb_lower')
-        ema_50 = indicators.get('ema_50')
-        ema_200 = indicators.get('ema_200')
-        macd = indicators.get('macd')
-        macd_signal = indicators.get('macd_signal')
-        macd_hist = macd - macd_signal if macd and macd_signal else None
-        support = indicators.get('support')
-        resistance = indicators.get('resistance')
+        extracted = extract_indicators(indicators)
+        atr = extracted["atr"]
+        iv = extracted["iv"]
 
-        iv = indicators.get("implied_volatility")
-        delta = indicators.get("delta")
-        gamma = indicators.get("gamma")
-        theta = indicators.get("theta")
-        vega = indicators.get("vega")
-
-        logger.debug(f"[Strategy] {trade_type.capitalize()} Trade — Entry: {entry_price}, Price: {price}, Confidence: {confidence:.2f}")
+        if vix and iv and vix > 22 and iv > 0.5:
+            logger.warning(f"🚨 Elevated VIX ({vix:.2f}) + High IV ({iv:.2f}) — risk too high.")
+            return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         if is_day_trade(position):
-            logger.debug("[Strategy] Trade type: Day Trade")
-
             if is_market_closing_soon(timestamp):
                 logger.info("⏰ Market is closing soon — exiting day trade.")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
@@ -161,8 +170,6 @@ def evaluate_trade(position, market_data):
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
         elif is_swing_trade(position):
-            logger.debug("[Strategy] Trade type: Swing Trade")
-
             if atr and price <= entry_price - (atr * STOP_LOSS_ATR_MULTIPLIER * 1.5):
                 logger.info("🛑 ATR stop-loss hit (swing trade).")
                 return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
