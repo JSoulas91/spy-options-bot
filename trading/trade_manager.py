@@ -13,9 +13,6 @@ from utils.economic_calendar import has_monday_macro_event
 from meta.meta_agent import should_retry_trade  # Meta-agent veto logic
 
 def should_hold_swing_trade(confidence: float, vix: float, is_monday_risk: bool) -> bool:
-    """
-    Determines if it's safe to hold a swing trade over the weekend.
-    """
     if confidence < 0.7:
         return False
     if vix > 20:
@@ -24,43 +21,37 @@ def should_hold_swing_trade(confidence: float, vix: float, is_monday_risk: bool)
         return False
     return True
 
-def execute_trade_with_retries(trade_function, contract, tracker: TradeTracker):
+def execute_trade_with_retries(contract: dict) -> dict:
+    tracker = TradeTracker()
     retries = 0
     contract["retries_used"] = 0
 
     while retries < MAX_RETRIES:
         try:
-            # Prevent trading expired contracts
             if contract.get("dte", 1) <= 0:
                 logger.warning("⛔ Contract is expiring today. Trade skipped.")
                 send_telegram_message("⛔ Trade blocked: Contract is expiring today.")
-                return False
+                return None
 
-            # Enforce PDT if enabled
             if ENFORCE_PDT_LIMITS and not tracker.can_place_trade():
                 logger.warning("🚫 PDT rule triggered. Trade skipped.")
                 send_telegram_message("🚫 PDT rule triggered. Trade skipped.")
-                return False
+                return None
 
-            # Meta-agent veto on retry
-            if retries > 0:
-                should_retry = should_retry_trade(contract)
-                if not should_retry:
-                    logger.warning("🧠 Meta-agent vetoed further retries.")
-                    send_telegram_message("🧠 Meta-agent vetoed retry for this trade.")
-                    return False
+            if retries > 0 and not should_retry_trade(contract):
+                logger.warning("🧠 Meta-agent vetoed further retries.")
+                send_telegram_message("🧠 Meta-agent vetoed retry for this trade.")
+                return None
 
-            # Time the trade for latency awareness
-            start_time = time.time()
-            success = trade_function(contract)
-            latency = round(time.time() - start_time, 2)
-            logger.info(f"⏱️ Trade execution latency: {latency}s")
+            # 👇 Replace this with your actual Tradier order placement logic
+            from broker.tradier_client import place_option_order
+            order = place_option_order(contract)
 
-            if success:
+            if order:
                 contract["retries_used"] = retries
-                return True
+                return order
             else:
-                raise Exception("Trade function returned False")
+                raise Exception("Tradier order returned None")
 
         except Exception as e:
             logger.error(f"⚠️ Trade attempt {retries + 1} failed: {e}")
@@ -69,18 +60,15 @@ def execute_trade_with_retries(trade_function, contract, tracker: TradeTracker):
             contract["retries_used"] = retries
 
             if retries < MAX_RETRIES:
-                delay = RETRY_DELAY_SECONDS * (2 ** (retries - 1))  # exponential backoff
+                delay = RETRY_DELAY_SECONDS * (2 ** (retries - 1))
                 logger.info(f"🔁 Retrying in {delay} seconds... (Attempt {retries}/{MAX_RETRIES})")
                 time.sleep(delay)
 
     logger.error("❌ All trade attempts failed.")
     send_telegram_message("❌ All trade attempts failed after retries.")
-    return False
+    return None
 
 def evaluate_swing_hold(contract: dict, confidence: float) -> bool:
-    """
-    Determines if this trade should be held as a swing over the weekend.
-    """
     vix = get_current_vix()
     is_monday_risk = has_monday_macro_event()
     decision = should_hold_swing_trade(confidence, vix, is_monday_risk)
