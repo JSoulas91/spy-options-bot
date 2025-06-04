@@ -4,16 +4,17 @@ from utils.logger import bot_logger
 
 def score_option(opt, underlying_price=None):
     """Score options based on greeks, liquidity, spread, and proximity to ATM."""
+    quote = opt.get("quote", {})
     score = 0
 
-    delta = abs(opt.get('delta', 0))
-    theta = opt.get('theta', 0)
-    vega = opt.get('vega', 0)
-    gamma = opt.get('gamma', 0)
-    volume = opt.get('volume', 0)
-    open_interest = opt.get('open_interest', 0)
-    bid = opt.get('bid', 0)
-    ask = opt.get('ask', 0)
+    delta = abs(quote.get('delta', 0))
+    theta = quote.get('theta', 0)
+    vega = quote.get('vega', 0)
+    gamma = quote.get('gamma', 0)
+    volume = quote.get('volume', 0)
+    open_interest = quote.get('open_interest', 0)
+    bid = quote.get('bid', 0)
+    ask = quote.get('ask', 0)
     strike = opt.get('strike', 0)
 
     if bid <= 0 or ask <= 0:
@@ -25,7 +26,7 @@ def score_option(opt, underlying_price=None):
     # Moneyness proximity scoring
     if underlying_price and strike:
         moneyness = abs(strike - underlying_price)
-        score -= moneyness * 2  # penalize OTM/ITM
+        score -= moneyness * 2  # penalize OTM/ITM distance
 
     score += delta * 5
     score += -vega * 2
@@ -42,23 +43,22 @@ def filter_options(options, underlying_price=None, vix=None, top_n=10, direction
     """
     Filters and scores options based on greeks, liquidity, expiry, moneyness, spread, VIX, and directional skew.
     """
-
     filtered = []
     today = datetime.utcnow().date()
-    reasons_logged = 0
 
     for opt in options:
-        delta = abs(opt.get('delta', 0))
-        theta = opt.get('theta', 0)
-        vega = opt.get('vega', 0)
-        gamma = opt.get('gamma', 0)
-        volume = opt.get('volume', 0)
-        open_interest = opt.get('open_interest', 0)
-        bid = opt.get('bid', 0)
-        ask = opt.get('ask', 0)
+        quote = opt.get("quote", {})
+        delta = abs(quote.get('delta', 0))
+        theta = quote.get('theta', 0)
+        vega = quote.get('vega', 0)
+        gamma = quote.get('gamma', 0)
+        volume = quote.get('volume', 0)
+        open_interest = quote.get('open_interest', 0)
+        bid = quote.get('bid', 0)
+        ask = quote.get('ask', 0)
         strike = opt.get('strike', 0)
-        expiry = opt.get('expiry_date')
-        otype = opt.get('type', '').lower()
+        expiry = opt.get('expiry')
+        otype = opt.get('option_type', '').lower()
 
         # --- Expiry Filter ---
         if expiry is None:
