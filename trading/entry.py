@@ -53,15 +53,15 @@ def handle_entry(market_data):
             bot_logger.info("[Entry] Meta-agent rejected trade setup.")
             return
 
-        # ✅ Execute trade with retries (via Tradier)
-        order_details = execute_trade_with_retries(trade_setup)
+        # ✅ Execute trade via Tradier with retries
+        order = execute_trade_with_retries(trade_setup)
 
-        if order_details is None:
+        if not order:
             bot_logger.warning("[Entry] Trade execution failed after retries.")
             return
 
-        # 📦 Append enriched metadata to order
-        order_details.update({
+        # 📦 Enrich metadata
+        order.update({
             "confidence": confidence,
             "indicators": signal.get("indicators", {}),
             "timestamp": now.isoformat(),
@@ -70,21 +70,21 @@ def handle_entry(market_data):
             "meta_action": action
         })
 
-        # 🧾 Log trade
-        trade_tracker.log_trade(order_details, trade_type)
+        # 🧾 Log and track trade
+        trade_tracker.log_trade(order, trade_type)
         log_trade({
             "timestamp": now.isoformat(),
             "action": "buy",
             "trade_type": trade_type,
-            "symbol": order_details.get("symbol", "UNKNOWN"),
+            "symbol": order.get("symbol", "UNKNOWN"),
             "confidence_score": confidence,
-            "trade_id": order_details.get("id", "N/A"),
-            "indicators": str(order_details.get("indicators", {}))
+            "trade_id": order.get("id", "N/A"),
+            "indicators": str(order.get("indicators", {}))
         })
 
         # 📢 Notify
         notifier.send_message(
-            f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order_details.get('symbol', 'UNKNOWN')} "
+            f"🟢 New {'Day' if trade_type == 0 else 'Swing'} Trade Executed: {order.get('symbol', 'UNKNOWN')} "
             f"(Confidence: {confidence:.2f})"
         )
         bot_logger.info(f"[Entry] {'Day' if trade_type == 0 else 'Swing'} trade executed and logged.")
