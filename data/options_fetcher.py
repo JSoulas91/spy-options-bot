@@ -27,6 +27,9 @@ def get_upcoming_fridays(count=3, min_dte=2):
 
 
 def get_option_chain(symbol="SPY", expiry=None, option_type="call"):
+    """
+    Fetch the option chain for a given symbol and expiration.
+    """
     url = f"{TRADIER_BASE_URL}/markets/options/chains"
     params = {
         "symbol": symbol,
@@ -34,27 +37,63 @@ def get_option_chain(symbol="SPY", expiry=None, option_type="call"):
         "type": option_type,
         "greeks": "false"
     }
-    response = requests.get(url, headers=HEADERS, params=params)
-    data = response.json()
+    try:
+        response = requests.get(url, headers=HEADERS, params=params)
+        data = response.json()
 
-    if "options" not in data or data["options"] is None:
-        bot_logger.warning(f"[Options Fetch] No contracts returned for {symbol} @ {expiry}")
+        if "options" not in data or data["options"] is None:
+            bot_logger.warning(f"[Options Fetch] No contracts returned for {symbol} @ {expiry}")
+            return []
+
+        contracts = data["options"].get("option", [])
+        return contracts if isinstance(contracts, list) else [contracts]
+
+    except Exception as e:
+        bot_logger.exception(f"[Option Chain Error] {e}")
         return []
-
-    contracts = data["options"].get("option", [])
-    return contracts if isinstance(contracts, list) else [contracts]
 
 
 def get_quote(symbol):
+    """
+    Fetch a quote for a given OCC-formatted option symbol or equity symbol.
+    Includes Greeks.
+    """
     url = f"{TRADIER_BASE_URL}/markets/quotes"
     params = {"symbols": symbol, "greeks": "true"}
-    response = requests.get(url, headers=HEADERS, params=params)
-    data = response.json()
-    quote = data.get("quotes", {}).get("quote")
-    return quote if isinstance(quote, dict) else None
+    try:
+        response = requests.get(url, headers=HEADERS, params=params)
+        data = response.json()
+        quote = data.get("quotes", {}).get("quote")
+        return quote if isinstance(quote, dict) else None
+    except Exception as e:
+        bot_logger.exception(f"[Quote Fetch Error] {e}")
+        return None
+
+
+def get_expiration_dates(symbol="SPY"):
+    """
+    Fetch all available expiration dates using includeAllRoots=true.
+    """
+    url = f"{TRADIER_BASE_URL}/markets/options/expirations"
+    params = {
+        "symbol": symbol,
+        "includeAllRoots": "true",
+        "strikes": "true"
+    }
+    try:
+        response = requests.get(url, headers=HEADERS, params=params)
+        data = response.json()
+        dates = data.get("expirations", {}).get("date", [])
+        return dates if isinstance(dates, list) else [dates]
+    except Exception as e:
+        bot_logger.exception(f"[Expirations Fetch Error] {e}")
+        return []
 
 
 def select_moneyness_contracts(contracts, underlying_price, count_per_type=2):
+    """
+    Select ATM, OTM, and ITM contracts closest to the underlying price.
+    """
     sorted_contracts = sorted(contracts, key=lambda c: abs(c["strike"] - underlying_price))
     atm_contracts = sorted_contracts[:count_per_type]
 
@@ -69,8 +108,8 @@ def select_moneyness_contracts(contracts, underlying_price, count_per_type=2):
 
 def fetch_options_bundle(symbol="SPY", expiries=3, per_moneyness=2):
     """
-    Fetch contracts across the next `expiries` Friday expirations.
-    Includes ITM, ATM, OTM calls and puts with Greeks and IV.
+    Fetch ITM, ATM, OTM contracts for the next `expiries` Fridays.
+    Includes Greeks and IV for each option.
     """
     try:
         expiry_dates = get_upcoming_fridays(count=expiries, min_dte=2)
@@ -90,12 +129,13 @@ def fetch_options_bundle(symbol="SPY", expiries=3, per_moneyness=2):
                 for contract in selected:
                     option_quote = get_quote(contract["symbol"])
                     if option_quote:
+                        bot_logger.info(f"[Greeks] Note: Greeks/IV are updated hourly by ORATS and may be up to 60 minutes stale.")
                         contract["quote"] = option_quote
                         contract["option_type"] = opt_type
                         contract["expiry"] = expiry
                         contracts.append(contract)
 
-        bot_logger.info(f"[Options Fetch] Retrieved {len(contracts)} total contracts across {len(expiry_dates)} expiries for {symbol}")
+        bot_logger.info(f"[Options Fetch] Retrieved {len(contracts)} contracts across {len(expiry_dates)} expiries for {symbol}")
         return contracts
 
     except Exception as e:
@@ -105,7 +145,7 @@ def fetch_options_bundle(symbol="SPY", expiries=3, per_moneyness=2):
 
 def get_option_metrics(symbol="SPY"):
     """
-    Pulls Greeks and IV from ATM/OTM call and put options (top 5 by proximity).
+    Pulls Greeks and IV from top 5 ATM/OTM call and put options.
     """
     try:
         expiry = get_upcoming_fridays(count=1, min_dte=2)[0]
@@ -118,20 +158,17 @@ def get_option_metrics(symbol="SPY"):
 
         for opt_type in ["call", "put"]:
             chain = get_option_chain(symbol=symbol, expiry=expiry, option_type=opt_type)
-
             if not chain:
                 continue
 
-            filtered = sorted(
-                chain,
-                key=lambda c: abs(c["strike"] - price)
-            )[:5]
+            filtered = sorted(chain, key=lambda c: abs(c["strike"] - price))[:5]
 
             for contract in filtered:
                 opt_sym = contract["symbol"]
                 opt_quote = get_quote(opt_sym)
 
                 if opt_quote and all(k in opt_quote for k in ["delta", "gamma", "theta", "vega", "rho", "iv"]):
+                    bot_logger.info(f"[Greeks] Note: Greeks/IV are updated hourly by ORATS and may be stale.")
                     metrics[opt_type] = {
                         "symbol": opt_sym,
                         "strike": contract["strike"],
