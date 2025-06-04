@@ -77,7 +77,6 @@ def close_and_log_trade(trade, reason="Manual exit"):
         trade_id = trade.get("id", "?")
         symbol = trade.get("symbol", "?")
 
-        # 🧠 Compute reward and new state
         reward = compute_shaped_reward(trade)
         next_state = build_meta_state_for_exit(trade)
 
@@ -87,16 +86,15 @@ def close_and_log_trade(trade, reason="Manual exit"):
             "meta_next_state": next_state
         })
 
-        # 🧨 Execute close (Tradier-based)
+        # 🧨 Close via Tradier
         close_trade(trade)
         trade_tracker.mark_trade_closed(trade_id)
         log_trade_exit(trade)
 
-        # 📢 Notify
-        bot_logger.info(f"[EXIT] Closed trade {trade_id} ({symbol}) — Reason: {reason} — Reward: {reward:.3f}")
         notifier.send_message(f"🚪 Exited trade {trade_id} ({symbol})\nReason: {reason}\nReward: {reward:.3f}")
+        bot_logger.info(f"[EXIT] Closed trade {trade_id} ({symbol}) — Reason: {reason} — Reward: {reward:.3f}")
 
-        # 🧠 Log for meta-agent training
+        # 🎓 Meta-agent experience logging
         state = trade.get("meta_state")
         action = trade.get("meta_action")
         if state and action is not None and next_state:
@@ -112,4 +110,4 @@ def close_and_log_trade(trade, reason="Manual exit"):
             bot_logger.debug(f"[EXIT] Logged meta-agent experience for trade_id={trade_id}")
 
     except Exception as e:
-        bot_logger.exception(f"[Trade Close Error] trade_id={trade.get('id', '?')} — {e}") 
+        bot_logger.exception(f"[Trade Close Error] trade_id={trade.get('id', '?')} — {e}")
