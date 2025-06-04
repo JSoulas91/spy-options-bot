@@ -3,11 +3,13 @@ import json
 import numpy as np
 import torch
 import csv
+
 from meta.ppo import PPOAgent
 from meta.meta_state import build_meta_state_from_log
 from meta.reward_shaper import compute_shaped_reward
 from meta.meta_agent_info import save_meta_agent_dims
 from meta.prioritized_buffer import PrioritizedReplayBuffer
+
 from config import (
     META_LOG_PATH,
     EPOCHS,
@@ -63,16 +65,18 @@ def normalize_rewards(rewards):
 
 def train():
     logger.info("🚀 Starting PPO meta-agent training...")
+
     data = load_meta_data()
     if not data:
         logger.warning("❌ No data to train on.")
         return
 
-    save_meta_agent_dims(data[0])  # ✅ Save state/action dimensions
+    save_meta_agent_dims(data[0])  # Save state/action dimensions
     buffer = preprocess_data(data)
 
     agent = PPOAgent()
     agent.train_mode()
+
     beta = BUFFER_BETA_START
     prev_avg_reward = float("-inf")
 
@@ -97,12 +101,12 @@ def train():
             buffer.update_priorities(indices, td_errors)
 
         avg_reward = np.mean(epoch_rewards)
-        logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
-
         append_reward_to_csv(epoch + 1, avg_reward)
+
+        logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
         agent.adjust_entropy()
 
-        # 🔁 Adaptive learning rate scheduling
+        # Adaptive LR if performance degrades
         if epoch > 0 and avg_reward < prev_avg_reward:
             agent.adjust_learning_rate(agent.optimizer, factor=0.9)
 
