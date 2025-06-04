@@ -11,22 +11,22 @@ HEADERS = {
 }
 
 
-def get_next_expiry(min_dte=2):
+def get_upcoming_fridays(count=3, min_dte=2):
     """
-    Returns the next Friday expiry with at least `min_dte` days to expiration.
+    Returns the next `count` Friday expiries with at least `min_dte` days until expiration.
     """
     today = datetime.now().date()
-    for i in range(1, 30):
+    fridays = []
+    for i in range(1, 45):  # look up to 45 days out
         day = today + timedelta(days=i)
         if day.weekday() == 4 and (day - today).days >= min_dte:
-            return day.strftime("%Y-%m-%d")
-    raise ValueError("No valid Friday expiry found in next 30 days")
+            fridays.append(day.strftime("%Y-%m-%d"))
+        if len(fridays) >= count:
+            break
+    return fridays
 
 
 def get_option_chain(symbol="SPY", expiry=None, option_type="call"):
-    """
-    Fetch full options chain for a given symbol and expiry.
-    """
     url = f"{TRADIER_BASE_URL}/markets/options/chains"
     params = {
         "symbol": symbol,
@@ -46,22 +46,15 @@ def get_option_chain(symbol="SPY", expiry=None, option_type="call"):
 
 
 def get_quote(symbol):
-    """
-    Fetch real-time quote for a single option contract.
-    """
     url = f"{TRADIER_BASE_URL}/markets/quotes"
-    params = {"symbols": symbol}
+    params = {"symbols": symbol, "greeks": "true"}
     response = requests.get(url, headers=HEADERS, params=params)
     data = response.json()
-
     quote = data.get("quotes", {}).get("quote")
     return quote if isinstance(quote, dict) else None
 
 
 def select_moneyness_contracts(contracts, underlying_price, count_per_type=2):
-    """
-    Selects a mix of ITM, ATM, and OTM contracts closest to the underlying price.
-    """
     sorted_contracts = sorted(contracts, key=lambda c: abs(c["strike"] - underlying_price))
     atm_contracts = sorted_contracts[:count_per_type]
 
@@ -74,38 +67,87 @@ def select_moneyness_contracts(contracts, underlying_price, count_per_type=2):
     return atm_contracts + otm_contracts + itm_contracts
 
 
-def fetch_options_bundle(symbol="SPY", min_dte=2, per_moneyness=2):
+def fetch_options_bundle(symbol="SPY", expiries=3, per_moneyness=2):
     """
-    High-level fetcher: Gets combined call and put contracts for next expiry with quotes.
+    Fetch contracts across the next `expiries` Friday expirations.
+    Includes ITM, ATM, OTM calls and puts with Greeks and IV.
     """
     try:
-        expiry = get_next_expiry(min_dte=min_dte)
-
-        # Get current underlying price
+        expiry_dates = get_upcoming_fridays(count=expiries, min_dte=2)
         quote = get_quote(symbol)
         if not quote:
             bot_logger.warning("[Options Fetch] Failed to get underlying quote")
             return []
 
         underlying_price = float(quote.get("last", 0))
-
         contracts = []
-        for opt_type in ["call", "put"]:
-            chain = get_option_chain(symbol=symbol, expiry=expiry, option_type=opt_type)
-            selected = select_moneyness_contracts(chain, underlying_price, count_per_type=per_moneyness)
 
-            # Enrich with quote
-            for contract in selected:
-                option_quote = get_quote(contract["symbol"])
-                if option_quote:
-                    contract["quote"] = option_quote
-                    contract["option_type"] = opt_type
-                    contract["expiry"] = expiry
-                    contracts.append(contract)
+        for expiry in expiry_dates:
+            for opt_type in ["call", "put"]:
+                chain = get_option_chain(symbol=symbol, expiry=expiry, option_type=opt_type)
+                selected = select_moneyness_contracts(chain, underlying_price, count_per_type=per_moneyness)
 
-        bot_logger.info(f"[Options Fetch] Retrieved {len(contracts)} total contracts for {symbol}")
+                for contract in selected:
+                    option_quote = get_quote(contract["symbol"])
+                    if option_quote:
+                        contract["quote"] = option_quote
+                        contract["option_type"] = opt_type
+                        contract["expiry"] = expiry
+                        contracts.append(contract)
+
+        bot_logger.info(f"[Options Fetch] Retrieved {len(contracts)} total contracts across {len(expiry_dates)} expiries for {symbol}")
         return contracts
 
     except Exception as e:
         bot_logger.exception(f"[Options Fetch Error] {e}")
         return []
+
+
+def get_option_metrics(symbol="SPY"):
+    """
+    Pulls Greeks and IV from ATM/OTM call and put options (top 5 by proximity).
+    """
+    try:
+        expiry = get_upcoming_fridays(count=1, min_dte=2)[0]
+        quote = get_quote(symbol)
+        if not quote:
+            return {}
+
+        price = float(quote.get("last", 0))
+        metrics = {}
+
+        for opt_type in ["call", "put"]:
+            chain = get_option_chain(symbol=symbol, expiry=expiry, option_type=opt_type)
+
+            if not chain:
+                continue
+
+            filtered = sorted(
+                chain,
+                key=lambda c: abs(c["strike"] - price)
+            )[:5]
+
+            for contract in filtered:
+                opt_sym = contract["symbol"]
+                opt_quote = get_quote(opt_sym)
+
+                if opt_quote and all(k in opt_quote for k in ["delta", "gamma", "theta", "vega", "rho", "iv"]):
+                    metrics[opt_type] = {
+                        "symbol": opt_sym,
+                        "strike": contract["strike"],
+                        "delta": opt_quote["delta"],
+                        "gamma": opt_quote["gamma"],
+                        "theta": opt_quote["theta"],
+                        "vega": opt_quote["vega"],
+                        "rho": opt_quote["rho"],
+                        "iv": opt_quote["iv"],
+                        "price": opt_quote.get("last"),
+                        "expiry": expiry
+                    }
+                    break
+
+        return metrics
+
+    except Exception as e:
+        bot_logger.exception(f"[Option Metrics Fetch Error] {e}")
+        return {}
