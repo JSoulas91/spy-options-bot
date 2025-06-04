@@ -16,6 +16,7 @@ from telegram_bot import send_telegram_message
 from event_filter import is_high_risk_event_active
 from utils.vix_utils import get_current_vix
 from meta.meta_agent import MetaAgent
+from meta.reward_shaper import compute_shaped_reward, compute_sharpe_style_reward
 from data.multi_timeframe_fetcher import get_multi_timeframe_data
 from data.options_fetcher import get_option_metrics
 
@@ -24,7 +25,6 @@ meta_agent.load_model()
 
 RETURN_META_FEEDBACK = False
 
-
 def is_market_closing_soon(timestamp_str):
     try:
         current_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").time()
@@ -32,10 +32,8 @@ def is_market_closing_soon(timestamp_str):
     except Exception:
         return False
 
-
 def merge_indicators(primary, fallback):
     return {key: primary.get(key, fallback.get(key)) for key in set(primary) | set(fallback)}
-
 
 def evaluate_trade(position, market_data):
     try:
@@ -79,16 +77,25 @@ def evaluate_trade(position, market_data):
         hour = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").hour if timestamp else 12
         volatility = indicators.get("atr", 0)
 
+        # === Meta-agent state and decision ===
         meta_state = [confidence, vix or 0, hour, 0 if trade_type == "day" else 1, volatility]
         meta_action = meta_agent.select_action(meta_state)
         meta_params = meta_agent.interpret_action(meta_action)
+
+        # === Reward Shaping Feedback ===
+        shaped_reward = compute_shaped_reward(position, indicators, market_data)
+        sharpe_reward = compute_sharpe_style_reward(entry_price, price, volatility)
+
         meta_feedback = {
             "meta_state": meta_state,
             "meta_action": meta_action,
-            "meta_params": meta_params
+            "meta_params": meta_params,
+            "shaped_reward": shaped_reward,
+            "sharpe_reward": sharpe_reward
         }
 
-        logger.info(f"🧠 Meta-State: {meta_state} | Meta-Action: {meta_action} | Meta-Params: {meta_params}")
+        logger.info(f"🧠 Meta-State: {meta_state} | Action: {meta_action} | Params: {meta_params}")
+        logger.info(f"🎯 Rewards — Shaped: {shaped_reward:.4f} | Sharpe-style: {sharpe_reward:.4f}")
 
         if meta_action == 0:
             logger.info("🧠 Meta-agent recommends skipping this trade.")
@@ -115,7 +122,7 @@ def evaluate_trade(position, market_data):
             logger.info(f"⚠️ Confidence {confidence:.2f} below threshold {adaptive_threshold:.2f} — exiting.")
             return "exit" if not RETURN_META_FEEDBACK else ("exit", meta_feedback)
 
-        # Technical & Options-based exit logic
+        # === Technical + Option-Based Exit Logic ===
         rsi = indicators.get('rsi')
         atr = indicators.get('atr')
         vwap = indicators.get('vwap')
@@ -129,7 +136,6 @@ def evaluate_trade(position, market_data):
         support = indicators.get('support')
         resistance = indicators.get('resistance')
 
-        # Option metrics (IV / Greeks)
         iv = indicators.get("implied_volatility")
         delta = indicators.get("delta")
         gamma = indicators.get("gamma")
