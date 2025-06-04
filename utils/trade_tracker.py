@@ -14,21 +14,32 @@ class TradeTracker:
         self.load_log()
 
     def load_log(self):
-        if os.path.exists(TRADE_LOG_FILE):
-            with open(TRADE_LOG_FILE, "r") as f:
-                self.trade_log = json.load(f)
-        else:
+        try:
+            if os.path.exists(TRADE_LOG_FILE):
+                with open(TRADE_LOG_FILE, "r") as f:
+                    self.trade_log = json.load(f)
+            else:
+                self.trade_log = []
+        except Exception as e:
+            bot_logger.error(f"❌ Failed to load trade log: {e}")
             self.trade_log = []
 
     def save_log(self):
-        with open(TRADE_LOG_FILE, "w") as f:
-            json.dump(self.trade_log, f, indent=2)
+        try:
+            with open(TRADE_LOG_FILE, "w") as f:
+                json.dump(self.trade_log, f, indent=2)
+        except Exception as e:
+            bot_logger.error(f"❌ Failed to save trade log: {e}")
 
     def _now(self):
         return datetime.now()
 
     def _parse_timestamp(self, ts):
-        return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+        try:
+            # Handle ISO8601 and possible UTC suffix
+            return datetime.strptime(ts.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return self._now()  # Fallback if malformed
 
     def _new_trade_id(self):
         return self._now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -60,7 +71,7 @@ class TradeTracker:
 
     def get_recent_day_trades(self):
         now = self._now()
-        cutoff = now - timedelta(days=7)  # buffer for 5 business days
+        cutoff = now - timedelta(days=7)  # 5 business days buffer
         return [
             t for t in self.trade_log
             if t["type"] == "day" and self._parse_timestamp(t["timestamp"]) >= cutoff
