@@ -1,5 +1,3 @@
-# meta/ppo.py
-
 import os
 import torch
 import torch.nn as nn
@@ -8,6 +6,7 @@ from torch.distributions import Categorical
 from meta.meta_agent_info import get_meta_agent_dims
 from config import META_MODEL_PATH
 from utils.logger import bot_logger as logger
+
 
 class PPOActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=64):
@@ -39,25 +38,32 @@ class PPOActorCritic(nn.Module):
         action = dist.sample()
         return action.item(), dist.log_prob(action), dist.entropy()
 
+
 class PPOAgent:
-    def __init__(self, state_dim=None, action_dim=None, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4, entropy_coef=0.01):
+    def __init__(self, state_dim=None, action_dim=None, lr=3e-4, gamma=0.99, eps_clip=0.2, K_epochs=4,
+                 initial_entropy_coef=0.01, target_entropy=None):
         if state_dim is None or action_dim is None:
             state_dim, action_dim = get_meta_agent_dims()
             logger.info(f"📦 Loaded PPO state/action dims from file: {state_dim}, {action_dim}")
 
         self.model = PPOActorCritic(state_dim, action_dim)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        self.entropy_coef = torch.tensor(initial_entropy_coef, requires_grad=True)
+        self.entropy_coef_optimizer = optim.Adam([self.entropy_coef], lr=1e-3)
+
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.K_epochs = K_epochs
-        self.entropy_coef = entropy_coef
         self.base_lr = lr
+        self.target_entropy = target_entropy or -1.0 * action_dim  # encourage diversity early
         self.load()
 
     def save(self):
         torch.save({
             'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict()
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'entropy_coef': self.entropy_coef.item(),
+            'entropy_coef_optimizer_state': self.entropy_coef_optimizer.state_dict()
         }, META_MODEL_PATH)
         logger.info(f"💾 PPO model + optimizer saved to {META_MODEL_PATH}")
 
@@ -66,6 +72,12 @@ class PPOAgent:
             checkpoint = torch.load(META_MODEL_PATH)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+            self.entropy_coef = torch.tensor(checkpoint.get('entropy_coef', 0.01), requires_grad=True)
+            self.entropy_coef_optimizer = optim.Adam([self.entropy_coef], lr=1e-3)
+            if 'entropy_coef_optimizer_state' in checkpoint:
+                self.entropy_coef_optimizer.load_state_dict(checkpoint['entropy_coef_optimizer_state'])
+
             logger.info(f"📥 PPO model + optimizer loaded from {META_MODEL_PATH}")
         else:
             logger.warning(f"⚠️ No saved PPO model found at {META_MODEL_PATH}. Starting fresh.")
@@ -99,6 +111,13 @@ class PPOAgent:
 
         return log_probs, state_values, entropy
 
+    def update_entropy_coef(self, entropy):
+        # Encourage policy entropy to match target_entropy
+        entropy_loss = -(self.entropy_coef * (entropy - self.target_entropy).detach())
+        self.entropy_coef_optimizer.zero_grad()
+        entropy_loss.backward()
+        self.entropy_coef_optimizer.step()
+
     def update(self, memory):
         if not memory or len(memory['states']) == 0:
             logger.warning("⚠️ PPO update skipped: empty memory buffer.")
@@ -113,7 +132,6 @@ class PPOAgent:
 
         for _ in range(self.K_epochs):
             log_probs, state_values, entropy = self.evaluate_actions(states, actions)
-
             advantages = returns - state_values.detach()
             ratios = torch.exp(log_probs - old_log_probs.detach())
 
@@ -128,7 +146,9 @@ class PPOAgent:
             loss.backward()
             self.optimizer.step()
 
-        logger.info("✅ PPO update complete.")
+            self.update_entropy_coef(entropy)
+
+        logger.info(f"✅ PPO update complete. Entropy coef: {self.entropy_coef.item():.5f}")
 
     def train_step(self, states, actions, rewards, dones, next_states, weights=None):
         values = []
@@ -147,7 +167,6 @@ class PPOAgent:
         for _ in range(self.K_epochs):
             log_probs, state_values, entropy = self.evaluate_actions(states, actions)
             advantages = returns - state_values.detach()
-
             ratios = torch.exp(log_probs - log_probs.detach())
 
             surr1 = ratios * advantages
@@ -156,22 +175,18 @@ class PPOAgent:
             actor_loss = -torch.min(surr1, surr2).mean()
             critic_loss = nn.MSELoss()(state_values, returns)
 
+            loss = actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy
             if weights is not None:
-                loss = (actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy) * weights.mean()
-            else:
-                loss = actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy
+                loss *= weights.mean()
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
+            self.update_entropy_coef(entropy)
+
         td_errors = (returns - values).detach().cpu().numpy().tolist()
         return td_errors
-
-    def adjust_entropy(self, decay_rate=0.95):
-        self.entropy_coef *= decay_rate
-        self.entropy_coef = max(self.entropy_coef, 0.001)  # Prevent zero entropy
-        logger.info(f"🔧 Updated entropy coefficient: {self.entropy_coef:.5f}")
 
     def adjust_learning_rate(self, optimizer, factor=0.9):
         for param_group in optimizer.param_groups:
