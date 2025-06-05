@@ -1,10 +1,10 @@
-# data/multi_timeframe_fetcher.py
 import os
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
-import numpy as np
 from typing import Dict, Any
+import time
+import threading
 
 from utils.logger import bot_logger
 
@@ -21,12 +21,16 @@ HEADERS = {
 _INTRADAY_CACHE: Dict[str, Dict[str, Any]] = {}
 _HISTORY_CACHE: Dict[str, Dict[str, Any]] = {}
 
-INTRADAY_TTL_SEC = 60          # refresh 1‑min, 5‑min … once per minute
-HISTORY_TTL_HRS  = 12          # refresh 5d‑6mo daily history twice per day
+# Throttle intervals to respect Tradier limits and 10 calls per minute (every 6 seconds)
+INTRADAY_TTL_SEC = 6         # refresh intraday every 6 seconds (10x/min)
+HISTORY_TTL_HRS = 12         # refresh daily history twice per day
+
+# Threading lock for cache safety if used multi-threaded
+_CACHE_LOCK = threading.Lock()
 
 
 # ────────────────────────────────────────────────────────────
-# 📈  INDICATOR HELPERS
+# 📈  INDICATOR HELPERS (unchanged)
 # ────────────────────────────────────────────────────────────
 def compute_indicators(df: pd.DataFrame):
     if df is None or df.empty:
@@ -34,29 +38,22 @@ def compute_indicators(df: pd.DataFrame):
 
     df = df.copy()
 
-    # EMA 20, 50, 200
     df["ema_20"] = df["close"].ewm(span=20,  adjust=False).mean()
     df["ema_50"] = df["close"].ewm(span=50,  adjust=False).mean()
     df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
 
-    # RSI (14)
     df["rsi"] = compute_rsi(df["close"], period=14)
 
-    # MACD & Signal
     df["macd"], df["macd_signal"] = compute_macd(df["close"])
 
-    # ATR (14)
     df["atr"] = compute_atr(df, period=14)
 
-    # VWAP
     df["vwap"] = compute_vwap(df)
 
-    # Bollinger Bands (20, 2 std)
     ma20 = df["close"].rolling(window=20)
     df["bb_upper"] = ma20.mean() + 2 * ma20.std()
     df["bb_lower"] = ma20.mean() - 2 * ma20.std()
 
-    # Support / Resistance (14‑bar pivot high/low)
     support, resistance = compute_support_resistance(df)
 
     last = df.iloc[-1]
@@ -109,7 +106,7 @@ def compute_support_resistance(df):
 
 
 # ────────────────────────────────────────────────────────────
-# 🌐  RAW DATA FETCHERS  (wrapped with cache)
+# 🌐  RAW DATA FETCHERS (wrapped with cache)
 # ────────────────────────────────────────────────────────────
 def _cached_fetch(
     cache: dict,
@@ -119,13 +116,15 @@ def _cached_fetch(
     *args, **kwargs
 ):
     now = datetime.utcnow()
-    entry = cache.get(key, {})
-    if entry and now < entry["expires"]:
-        return entry["data"]
+    with _CACHE_LOCK:
+        entry = cache.get(key, {})
+        if entry and now < entry["expires"]:
+            return entry["data"]
 
     data = fetch_fn(*args, **kwargs)
     if data is not None:
-        cache[key] = {"data": data, "expires": now + timedelta(seconds=ttl_seconds)}
+        with _CACHE_LOCK:
+            cache[key] = {"data": data, "expires": now + timedelta(seconds=ttl_seconds)}
     return data
 
 def _fetch_timesales(symbol, start_dt, end_dt, interval):
@@ -137,18 +136,22 @@ def _fetch_timesales(symbol, start_dt, end_dt, interval):
         "end":   end_dt.strftime("%Y-%m-%dT%H:%M"),
         "session_filter": "open"
     }
-    r = requests.get(url, headers=HEADERS, params=params)
-    if r.status_code != 200:
-        bot_logger.warning(f"[Tradier Timesales {interval}] {r.status_code}")
+    try:
+        r = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        if r.status_code != 200:
+            bot_logger.warning(f"[Tradier Timesales {interval}] {r.status_code} {r.text}")
+            return None
+        j = r.json()
+        if "series" not in j or "data" not in j["series"]:
+            bot_logger.warning(f"[Tradier Timesales {interval}] empty data")
+            return None
+        df = pd.DataFrame(j["series"]["data"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df.set_index("timestamp", inplace=True)
+        return df[["open", "high", "low", "close", "volume"]]
+    except Exception as e:
+        bot_logger.error(f"Exception in _fetch_timesales: {e}")
         return None
-    j = r.json()
-    if "series" not in j or "data" not in j["series"]:
-        bot_logger.warning(f"[Tradier Timesales {interval}] empty")
-        return None
-    df = pd.DataFrame(j["series"]["data"])
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df.set_index("timestamp", inplace=True)
-    return df[["open", "high", "low", "close", "volume"]]
 
 def _fetch_history(symbol, start_date, end_date):
     url = f"{TRADIER_BASE_URL}/markets/history"
@@ -158,21 +161,25 @@ def _fetch_history(symbol, start_date, end_date):
         "end":   end_date.strftime("%Y-%m-%d"),
         "interval": "daily"
     }
-    r = requests.get(url, headers=HEADERS, params=params)
-    if r.status_code != 200:
-        bot_logger.warning(f"[Tradier History] {symbol} {r.status_code}")
+    try:
+        r = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        if r.status_code != 200:
+            bot_logger.warning(f"[Tradier History] {symbol} {r.status_code} {r.text}")
+            return None
+        j = r.json()
+        if "history" not in j or j["history"] is None:
+            bot_logger.warning(f"[Tradier History] no data for {symbol}")
+            return None
+        rows = j["history"].get("day", [])
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
+        return df[["open", "high", "low", "close", "volume"]]
+    except Exception as e:
+        bot_logger.error(f"Exception in _fetch_history: {e}")
         return None
-    j = r.json()
-    if "history" not in j or j["history"] is None:
-        bot_logger.warning(f"[Tradier History] no data {symbol}")
-        return None
-    rows = j["history"].get("day", [])
-    if not rows:
-        return None
-    df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"])
-    df.set_index("date", inplace=True)
-    return df[["open", "high", "low", "close", "volume"]]
 
 
 # ────────────────────────────────────────────────────────────
@@ -186,7 +193,7 @@ def get_multi_timeframe_data(symbol: str = "SPY"):
           "intraday": { "1min_5d": {...}, ... },
           "merged": { **all_features }
         }
-    with automatic caching to limit Tradier API usage.
+    with automatic caching and throttling to limit Tradier API usage to ~10 calls/min.
     """
     now = datetime.utcnow()
 
@@ -244,6 +251,7 @@ def get_multi_timeframe_data(symbol: str = "SPY"):
         "intraday": intraday_features,
         "merged": merged,
     }
+
 
 # ◀︎ compatibility alias (strategy imports this name)
 fetch_long_term_features = get_multi_timeframe_data
