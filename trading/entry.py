@@ -1,6 +1,7 @@
+# entry.py
+
 import time
 from datetime import datetime
-from config import MAX_DAY_TRADES, ENFORCE_PDT_LIMITS
 from utils.logger import bot_logger
 from utils.trade_tracker import TradeTracker
 from utils.trade_logger import log_trade
@@ -30,15 +31,6 @@ def handle_entry(market_data):
         confidence = signal["confidence"]
         trade_type = signal["trade_type"]  # 0 = day, 1 = swing
         trade_setup = signal["trade_setup"]
-
-        # 🛡️ PDT / Max trades enforcement
-        if trade_type == 0:
-            if ENFORCE_PDT_LIMITS and not trade_tracker.can_place_day_trade():
-                bot_logger.info("[Entry] Blocked by PDT rules.")
-                return
-            if trade_tracker.get_today_day_trade_count() >= MAX_DAY_TRADES:
-                bot_logger.info("[Entry] Blocked by max daily limit.")
-                return
 
         # 🧠 Meta-agent decision
         meta_state = build_meta_state_for_entry(
