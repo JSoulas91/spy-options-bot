@@ -21,8 +21,12 @@ from config import (
 from utils.logger import bot_logger as logger
 from utils.telegram import send_telegram_message
 
+# ─── Health‑check integration ────────────────────────────────────────────────
+from monitor.health_check import update_status
+
 REWARD_TRACKING_PATH = "meta/reward_history.csv"
 
+# ──────────────────────────────────────────────────────────────────────────────
 def load_meta_data():
     if not os.path.exists(META_LOG_PATH):
         logger.warning(f"⚠️ No meta training data found at {META_LOG_PATH}")
@@ -41,7 +45,6 @@ def preprocess_data(data):
 
         action_raw = current.get("meta_action", 0)
         action = int(np.argmax(action_raw)) if isinstance(action_raw, list) else int(action_raw)
-
         reward = compute_shaped_reward(current)
         done = current.get("done", False)
 
@@ -63,15 +66,17 @@ def normalize_rewards(rewards):
     std = np.std(rewards) + 1e-8
     return [(r - mean) / std for r in rewards]
 
+# ──────────────────────────────────────────────────────────────────────────────
 def train():
     logger.info("🚀 Starting PPO meta-agent training...")
+    update_status("last_ppo_attempt")               # ✅ health‑check
 
     data = load_meta_data()
     if not data:
         logger.warning("❌ No data to train on.")
         return
 
-    save_meta_agent_dims(data[0])  # Save state/action dimensions
+    save_meta_agent_dims(data[0])
     buffer = preprocess_data(data)
 
     agent = PPOAgent()
@@ -96,7 +101,6 @@ def train():
             weights_tensor = torch.tensor(weights, dtype=torch.float32)
 
             td_errors = agent.train_step(states, actions, rewards, dones, next_states, weights_tensor)
-
             epoch_rewards.extend(raw_rewards)
             buffer.update_priorities(indices, td_errors)
 
@@ -106,7 +110,6 @@ def train():
         logger.info(f"📈 Epoch {epoch + 1}/{EPOCHS} — Avg Reward: {avg_reward:.4f}")
         agent.adjust_entropy()
 
-        # Adaptive LR if performance degrades
         if epoch > 0 and avg_reward < prev_avg_reward:
             agent.adjust_learning_rate(agent.optimizer, factor=0.9)
 
@@ -114,6 +117,7 @@ def train():
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
 
     agent.save()
+    update_status("last_ppo")                       # ✅ health‑check
     send_telegram_message(f"✅ Meta-agent training complete. Avg reward: {avg_reward:.4f}")
     logger.info("🎉 PPO meta-agent training finished.")
 
