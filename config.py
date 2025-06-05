@@ -32,6 +32,7 @@ MAX_DAY_TRADES = int(os.getenv('MAX_DAY_TRADES', 3))
 ENFORCE_PDT_LIMITS = os.getenv('ENFORCE_PDT_LIMITS', 'false').lower() == 'true'
 AGGRESSIVE_TRADE_SIZE = float(os.getenv('AGGRESSIVE_TRADE_SIZE', 0.15))
 MIN_OPTION_EXPIRY_DAYS = int(os.getenv('MIN_OPTION_EXPIRY_DAYS', 7))
+MAX_OPEN_TRADES = int(os.getenv('MAX_OPEN_TRADES', 8))  # <-- Added max open trades
 
 # === STRATEGY SETTINGS ===
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', 0.75))
