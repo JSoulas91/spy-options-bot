@@ -1,108 +1,74 @@
-# utils/trade_tracker.py
-
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, date
+from threading import Lock
+from config import MAX_OPEN_TRADES
 from utils.logger import bot_logger
-
-TRADE_LOG_FILE = "data/day_trade_log.json"
-MAX_OPEN_TRADES = 8  # Total across day and swing trades
 
 class TradeTracker:
     def __init__(self):
-        self.trade_log = []
-        self.load_log()
+        self.lock = Lock()
+        self.trade_log_path = os.path.join(os.path.dirname(__file__), "trade_log.json")
+        self.trades = []
+        self.load_trades()
 
-    def load_log(self):
+    def load_trades(self):
+        if os.path.exists(self.trade_log_path):
+            try:
+                with open(self.trade_log_path, "r") as f:
+                    self.trades = json.load(f)
+                self.cleanup_old_trades()
+            except Exception as e:
+                bot_logger.error(f"[TradeTracker] Failed to load trades: {e}")
+                self.trades = []
+        else:
+            self.trades = []
+
+    def save_trades(self):
         try:
-            if os.path.exists(TRADE_LOG_FILE):
-                with open(TRADE_LOG_FILE, "r") as f:
-                    self.trade_log = json.load(f)
-            else:
-                self.trade_log = []
+            with open(self.trade_log_path, "w") as f:
+                json.dump(self.trades, f, indent=2)
         except Exception as e:
-            bot_logger.error(f"❌ Failed to load trade log: {e}")
-            self.trade_log = []
+            bot_logger.error(f"[TradeTracker] Failed to save trades: {e}")
 
-    def save_log(self):
-        try:
-            with open(TRADE_LOG_FILE, "w") as f:
-                json.dump(self.trade_log, f, indent=2)
-        except Exception as e:
-            bot_logger.error(f"❌ Failed to save trade log: {e}")
+    def cleanup_old_trades(self):
+        today_str = date.today().isoformat()
+        before_cleanup = len(self.trades)
+        self.trades = [t for t in self.trades if t.get("status") != "closed" or t.get("close_date") == today_str]
+        after_cleanup = len(self.trades)
+        if before_cleanup != after_cleanup:
+            bot_logger.info(f"[TradeTracker] Cleaned up {before_cleanup - after_cleanup} old closed trades")
+            self.save_trades()
 
-    def _now(self):
-        return datetime.now()
-
-    def _parse_timestamp(self, ts):
-        try:
-            return datetime.strptime(ts.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
-        except Exception:
-            return self._now()
-
-    def _new_trade_id(self):
-        return self._now().strftime("%Y-%m-%dT%H:%M:%S")
-
-    def add_trade(self, trade_type="day"):
-        trade = {
-            "id": self._new_trade_id(),
-            "timestamp": self._new_trade_id(),
-            "type": trade_type,
-            "status": "open"
-        }
-        self.trade_log.append(trade)
-        self.save_log()
-        bot_logger.info(f"📌 Logged new {trade_type} trade: {trade['id']}")
-        return trade["id"]
-
-    def close_trade(self, trade_id):
-        for trade in self.trade_log:
-            if trade["id"] == trade_id and trade["status"] == "open":
-                trade["status"] = "closed"
-                bot_logger.info(f"✅ Closed trade: {trade_id}")
-                self.save_log()
-                return True
-        bot_logger.warning(f"⚠️ Tried to close unknown or already closed trade: {trade_id}")
-        return False
-
-    def get_open_swing_trades(self):
-        return [t for t in self.trade_log if t["type"] == "swing" and t["status"] == "open"]
-
-    def get_today_day_trade_count(self):
-        today_str = self._now().strftime("%Y-%m-%d")
-        return sum(
-            1 for t in self.trade_log
-            if t["type"] == "day" and t["timestamp"].startswith(today_str)
-        )
-
-    def get_total_open_trades(self):
-        return sum(1 for t in self.trade_log if t["status"] == "open")
+    def get_open_trades_count(self):
+        with self.lock:
+            open_count = sum(1 for t in self.trades if t.get("status") == "open")
+            return open_count
 
     def can_place_trade(self):
-        open_count = self.get_total_open_trades()
-        if open_count >= MAX_OPEN_TRADES:
-            bot_logger.info(f"🚫 Max open trades reached: {open_count}/{MAX_OPEN_TRADES}")
-            return False
-        return True
+        with self.lock:
+            open_count = self.get_open_trades_count()
+            if open_count >= MAX_OPEN_TRADES:
+                bot_logger.info(f"[TradeTracker] Reached max open trades limit ({MAX_OPEN_TRADES})")
+                return False
+            return True
 
-    def purge_old_trades(self):
-        now = self._now()
-        five_days_ago = now - timedelta(days=7)
-        original_count = len(self.trade_log)
+    def log_trade(self, trade_data, trade_type):
+        with self.lock:
+            self.trades.append({
+                "id": trade_data.get("id"),
+                "symbol": trade_data.get("symbol"),
+                "timestamp": trade_data.get("timestamp"),
+                "trade_type": trade_type,
+                "status": "open"
+            })
+            self.save_trades()
 
-        self.trade_log = [
-            t for t in self.trade_log
-            if not (
-                (t["type"] == "day" and self._parse_timestamp(t["timestamp"]) < five_days_ago)
-                or (t["type"] == "swing" and t["status"] == "closed")
-            )
-        ]
-
-        removed = original_count - len(self.trade_log)
-        if removed > 0:
-            bot_logger.info(f"🧹 Purged {removed} old/closed trades from log.")
-            self.save_log()
-
-    def log_trade(self, order, trade_type):
-        trade_id = self.add_trade("day" if trade_type == 0 else "swing")
-        order["id"] = trade_id
+    def close_trade(self, trade_id):
+        with self.lock:
+            for trade in self.trades:
+                if trade.get("id") == trade_id and trade.get("status") == "open":
+                    trade["status"] = "closed"
+                    trade["close_date"] = date.today().isoformat()
+                    self.save_trades()
+                    break
