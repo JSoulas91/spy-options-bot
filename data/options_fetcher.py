@@ -1,6 +1,8 @@
 import os
+import time
 import requests
 from datetime import datetime, timedelta
+from functools import lru_cache
 from utils.logger import bot_logger
 
 TRADIER_API_KEY = os.getenv("TRADIER_API_KEY")
@@ -10,14 +12,33 @@ HEADERS = {
     "Accept": "application/json"
 }
 
+# -------------------- TTL Cache --------------------
+cache_store = {}
 
+def ttl_cache(key, ttl=30):
+    now = time.time()
+    if key in cache_store:
+        value, expiry = cache_store[key]
+        if now < expiry:
+            return value
+        else:
+            del cache_store[key]
+    return None
+
+def set_cache(key, value, ttl=30):
+    cache_store[key] = (value, time.time() + ttl)
+
+# -------------------- Utilities --------------------
+
+@lru_cache(maxsize=1)
 def get_upcoming_fridays(count=3, min_dte=2):
     """
     Returns the next `count` Friday expiries with at least `min_dte` days until expiration.
+    Cached since it doesn't change often.
     """
     today = datetime.now().date()
     fridays = []
-    for i in range(1, 45):  # look up to 45 days out
+    for i in range(1, 45):
         day = today + timedelta(days=i)
         if day.weekday() == 4 and (day - today).days >= min_dte:
             fridays.append(day.strftime("%Y-%m-%d"))
@@ -26,53 +47,34 @@ def get_upcoming_fridays(count=3, min_dte=2):
     return fridays
 
 
-def get_option_chain(symbol="SPY", expiry=None, option_type="call"):
-    """
-    Fetch the option chain for a given symbol and expiration.
-    """
-    url = f"{TRADIER_BASE_URL}/markets/options/chains"
-    params = {
-        "symbol": symbol,
-        "expiration": expiry,
-        "type": option_type,
-        "greeks": "false"
-    }
-    try:
-        response = requests.get(url, headers=HEADERS, params=params)
-        data = response.json()
-
-        if "options" not in data or data["options"] is None:
-            bot_logger.warning(f"[Options Fetch] No contracts returned for {symbol} @ {expiry}")
-            return []
-
-        contracts = data["options"].get("option", [])
-        return contracts if isinstance(contracts, list) else [contracts]
-
-    except Exception as e:
-        bot_logger.exception(f"[Option Chain Error] {e}")
-        return []
-
-
 def get_quote(symbol):
     """
-    Fetch a quote for a given OCC-formatted option symbol or equity symbol.
-    Includes Greeks.
+    Fetch a quote for a given OCC-formatted option or equity symbol, with caching.
     """
+    cache_key = f"quote:{symbol}"
+    cached = ttl_cache(cache_key, ttl=20)  # quotes update every ~10s
+    if cached:
+        return cached
+
     url = f"{TRADIER_BASE_URL}/markets/quotes"
     params = {"symbols": symbol, "greeks": "true"}
     try:
         response = requests.get(url, headers=HEADERS, params=params)
         data = response.json()
         quote = data.get("quotes", {}).get("quote")
-        return quote if isinstance(quote, dict) else None
+        if isinstance(quote, dict):
+            set_cache(cache_key, quote, ttl=20)
+            return quote
+        return None
     except Exception as e:
         bot_logger.exception(f"[Quote Fetch Error] {e}")
         return None
 
 
+@lru_cache(maxsize=1)
 def get_expiration_dates(symbol="SPY"):
     """
-    Fetch all available expiration dates using includeAllRoots=true.
+    Cached expiration dates.
     """
     url = f"{TRADIER_BASE_URL}/markets/options/expirations"
     params = {
@@ -90,10 +92,43 @@ def get_expiration_dates(symbol="SPY"):
         return []
 
 
+def get_option_chain(symbol="SPY", expiry=None, option_type="call"):
+    """
+    Cached option chain per (symbol, expiry, type).
+    """
+    cache_key = f"chain:{symbol}:{expiry}:{option_type}"
+    cached = ttl_cache(cache_key, ttl=180)  # option chains change less frequently
+    if cached:
+        return cached
+
+    url = f"{TRADIER_BASE_URL}/markets/options/chains"
+    params = {
+        "symbol": symbol,
+        "expiration": expiry,
+        "type": option_type,
+        "greeks": "false"
+    }
+    try:
+        response = requests.get(url, headers=HEADERS, params=params)
+        data = response.json()
+
+        if "options" not in data or data["options"] is None:
+            bot_logger.warning(f"[Options Fetch] No contracts returned for {symbol} @ {expiry}")
+            return []
+
+        contracts = data["options"].get("option", [])
+        if not isinstance(contracts, list):
+            contracts = [contracts]
+
+        set_cache(cache_key, contracts, ttl=180)
+        return contracts
+
+    except Exception as e:
+        bot_logger.exception(f"[Option Chain Error] {e}")
+        return []
+
+
 def select_moneyness_contracts(contracts, underlying_price, count_per_type=2):
-    """
-    Select ATM, OTM, and ITM contracts closest to the underlying price.
-    """
     sorted_contracts = sorted(contracts, key=lambda c: abs(c["strike"] - underlying_price))
     atm_contracts = sorted_contracts[:count_per_type]
 
@@ -108,8 +143,8 @@ def select_moneyness_contracts(contracts, underlying_price, count_per_type=2):
 
 def fetch_options_bundle(symbol="SPY", expiries=3, per_moneyness=2):
     """
-    Fetch ITM, ATM, OTM contracts for the next `expiries` Fridays.
-    Includes Greeks and IV for each option.
+    Fetch ITM/ATM/OTM contracts across upcoming expirations.
+    Uses quote and chain caching to reduce API calls.
     """
     try:
         expiry_dates = get_upcoming_fridays(count=expiries, min_dte=2)
@@ -127,10 +162,10 @@ def fetch_options_bundle(symbol="SPY", expiries=3, per_moneyness=2):
                 selected = select_moneyness_contracts(chain, underlying_price, count_per_type=per_moneyness)
 
                 for contract in selected:
-                    option_quote = get_quote(contract["symbol"])
-                    if option_quote:
-                        bot_logger.info(f"[Greeks] Note: Greeks/IV are updated hourly by ORATS and may be up to 60 minutes stale.")
-                        contract["quote"] = option_quote
+                    opt_sym = contract["symbol"]
+                    opt_quote = get_quote(opt_sym)  # cached per symbol
+                    if opt_quote:
+                        contract["quote"] = opt_quote
                         contract["option_type"] = opt_type
                         contract["expiry"] = expiry
                         contracts.append(contract)
@@ -166,9 +201,7 @@ def get_option_metrics(symbol="SPY"):
             for contract in filtered:
                 opt_sym = contract["symbol"]
                 opt_quote = get_quote(opt_sym)
-
                 if opt_quote and all(k in opt_quote for k in ["delta", "gamma", "theta", "vega", "rho", "iv"]):
-                    bot_logger.info(f"[Greeks] Note: Greeks/IV are updated hourly by ORATS and may be stale.")
                     metrics[opt_type] = {
                         "symbol": opt_sym,
                         "strike": contract["strike"],
