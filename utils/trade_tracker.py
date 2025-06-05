@@ -3,10 +3,10 @@
 import json
 import os
 from datetime import datetime, timedelta
-from config import MAX_DAY_TRADES, ENFORCE_PDT_LIMITS
 from utils.logger import bot_logger
 
 TRADE_LOG_FILE = "data/day_trade_log.json"
+MAX_OPEN_TRADES = 8  # Total across day and swing trades
 
 class TradeTracker:
     def __init__(self):
@@ -36,10 +36,9 @@ class TradeTracker:
 
     def _parse_timestamp(self, ts):
         try:
-            # Handle ISO8601 and possible UTC suffix
             return datetime.strptime(ts.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
         except Exception:
-            return self._now()  # Fallback if malformed
+            return self._now()
 
     def _new_trade_id(self):
         return self._now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -69,39 +68,32 @@ class TradeTracker:
     def get_open_swing_trades(self):
         return [t for t in self.trade_log if t["type"] == "swing" and t["status"] == "open"]
 
-    def get_recent_day_trades(self):
-        now = self._now()
-        cutoff = now - timedelta(days=7)  # 5 business days buffer
-        return [
-            t for t in self.trade_log
-            if t["type"] == "day" and self._parse_timestamp(t["timestamp"]) >= cutoff
-        ]
-
     def get_today_day_trade_count(self):
         today_str = self._now().strftime("%Y-%m-%d")
         return sum(
-            1 for t in self.get_recent_day_trades()
-            if t["timestamp"].startswith(today_str)
+            1 for t in self.trade_log
+            if t["type"] == "day" and t["timestamp"].startswith(today_str)
         )
 
-    def can_execute_trade(self):
-        if not ENFORCE_PDT_LIMITS:
-            return True
-        count = self.get_today_day_trade_count()
-        if count < MAX_DAY_TRADES:
-            return True
-        bot_logger.warning(f"🚫 PDT limit reached: {count} trades today (max = {MAX_DAY_TRADES})")
-        return False
+    def get_total_open_trades(self):
+        return sum(1 for t in self.trade_log if t["status"] == "open")
+
+    def can_place_trade(self):
+        open_count = self.get_total_open_trades()
+        if open_count >= MAX_OPEN_TRADES:
+            bot_logger.info(f"🚫 Max open trades reached: {open_count}/{MAX_OPEN_TRADES}")
+            return False
+        return True
 
     def purge_old_trades(self):
         now = self._now()
-        five_business_days_ago = now - timedelta(days=7)
+        five_days_ago = now - timedelta(days=7)
         original_count = len(self.trade_log)
 
         self.trade_log = [
             t for t in self.trade_log
             if not (
-                (t["type"] == "day" and self._parse_timestamp(t["timestamp"]) < five_business_days_ago)
+                (t["type"] == "day" and self._parse_timestamp(t["timestamp"]) < five_days_ago)
                 or (t["type"] == "swing" and t["status"] == "closed")
             )
         ]
@@ -110,3 +102,7 @@ class TradeTracker:
         if removed > 0:
             bot_logger.info(f"🧹 Purged {removed} old/closed trades from log.")
             self.save_log()
+
+    def log_trade(self, order, trade_type):
+        trade_id = self.add_trade("day" if trade_type == 0 else "swing")
+        order["id"] = trade_id
