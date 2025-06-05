@@ -43,10 +43,36 @@ def compute_macd(series, fast=12, slow=26, signal=9):
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     return macd, signal_line
 
+def fetch_tradier_timesales(symbol, start_dt, end_dt, interval):
+    url = f"{TRADIER_BASE_URL}/markets/timesales"
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "start": start_dt.strftime("%Y-%m-%dT%H:%M"),
+        "end": end_dt.strftime("%Y-%m-%dT%H:%M"),
+        "session_filter": "open"
+    }
+
+    try:
+        response = requests.get(url, headers=HEADERS, params=params)
+        if response.status_code != 200:
+            bot_logger.warning(f"[Tradier Timesales {interval}] Failed: {response.status_code}")
+            return None
+
+        data = response.json()
+        if "series" not in data or "data" not in data["series"]:
+            bot_logger.warning(f"[Tradier Timesales {interval}] No data")
+            return None
+
+        df = pd.DataFrame(data["series"]["data"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df.set_index("timestamp", inplace=True)
+        return df[["open", "high", "low", "close", "volume"]]
+    except Exception as e:
+        bot_logger.exception(f"[Tradier Timesales {interval}] {e}")
+        return None
+
 def fetch_tradier_history(symbol, start_date, end_date):
-    """
-    Fetch historical daily OHLC data from Tradier.
-    """
     url = f"{TRADIER_BASE_URL}/markets/history"
     params = {
         "symbol": symbol,
@@ -56,12 +82,12 @@ def fetch_tradier_history(symbol, start_date, end_date):
     }
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
-        bot_logger.warning(f"[Tradier Fetch] Failed for {symbol}: {response.status_code}")
+        bot_logger.warning(f"[Tradier History] Failed for {symbol}: {response.status_code}")
         return None
 
     data = response.json()
     if "history" not in data or data["history"] is None:
-        bot_logger.warning(f"[Tradier Fetch] No history returned for {symbol}")
+        bot_logger.warning(f"[Tradier History] No data for {symbol}")
         return None
 
     quotes = data["history"].get("day", [])
@@ -71,32 +97,45 @@ def fetch_tradier_history(symbol, start_date, end_date):
     df = pd.DataFrame(quotes)
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
-    df = df[["open", "high", "low", "close", "volume"]]
-    return df
+    return df[["open", "high", "low", "close", "volume"]]
 
 def fetch_long_term_features(symbol="SPY"):
-    now = datetime.utcnow().date()
+    now = datetime.utcnow()
 
-    timeframes = {
-        "5d": now - timedelta(days=5),
-        "10d": now - timedelta(days=10),
-        "15d": now - timedelta(days=15),
-        "1mo": now - timedelta(days=30),
-        "3mo": now - timedelta(days=90),
-        "6mo": now - timedelta(days=180),
+    # Daily OHLC (1d candles) for longer-term ranges
+    daily_ranges = {
+        "5d": now.date() - timedelta(days=5),
+        "10d": now.date() - timedelta(days=10),
+        "15d": now.date() - timedelta(days=15),
+        "1mo": now.date() - timedelta(days=30),
+        "3mo": now.date() - timedelta(days=90),
+        "6mo": now.date() - timedelta(days=180),
     }
 
     results = {}
-    for label, start_date in timeframes.items():
+    for label, start_date in daily_ranges.items():
         try:
-            df = fetch_tradier_history(symbol, start_date, now)
-            if df is not None and not df.empty:
-                features = compute_indicators(df)
-                results[label] = features if features else {}
-            else:
-                results[label] = {}
+            df = fetch_tradier_history(symbol, start_date, now.date())
+            results[label] = compute_indicators(df) if df is not None else {}
         except Exception as e:
-            bot_logger.exception(f"[Tradier Fetch Error] {label}: {e}")
+            bot_logger.exception(f"[Tradier History Error] {label}: {e}")
+            results[label] = {}
+
+    # Intraday OHLCs
+    intraday_configs = {
+        "1min_5d":  {"interval": "1min",  "start": now - timedelta(days=5)},
+        "5min_5d":  {"interval": "5min",  "start": now - timedelta(days=5)},
+        "15min_15d": {"interval": "15min", "start": now - timedelta(days=15)},
+        "1hr_30d":  {"interval": "1hour", "start": now - timedelta(days=30)},
+        "1d_6mo":   {"interval": "daily", "start": now - timedelta(days=180)},  # Alias
+    }
+
+    for label, config in intraday_configs.items():
+        try:
+            df = fetch_tradier_timesales(symbol, config["start"], now, config["interval"])
+            results[label] = compute_indicators(df) if df is not None else {}
+        except Exception as e:
+            bot_logger.exception(f"[Tradier Intraday Error] {label}: {e}")
             results[label] = {}
 
     return results
