@@ -45,6 +45,11 @@ def handle_entry(market_data):
             bot_logger.info("[Entry] Meta-agent rejected trade setup.")
             return
 
+        # 🚦 Check max open trades limit before placing new trade
+        if not trade_tracker.can_place_trade():
+            bot_logger.info("[Entry] Blocked: Max open trades limit reached. Skipping new trade.")
+            return
+
         # ✅ Execute trade via Tradier with retries
         order = execute_trade_with_retries(trade_setup)
 
