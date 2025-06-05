@@ -13,27 +13,19 @@ from utils.trade_logger import get_daily_trade_summary
 from retrain import retrain_model
 from main import run_market_open_tasks
 
-# ─────────────────────────────────────────────
-# ░▒▓  Global timezone handling  ▓▒░
-# ─────────────────────────────────────────────
-#
-# Force the Python process to run on US/Eastern wall‑clock time so the
-# “HH:MM” strings passed to `schedule.every().day.at()` align with the
-# New York trading day, even if the underlying server is on UTC.
-#
-# `time.tzset()` exists on Linux / macOS. On Windows it’s a no‑op, but
-# schedule will already use local time there.
-#
+# ─── Health‑check ────────────────────────────────────────────────────────────
+from monitor.health_check import update_status
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global timezone handling: US/Eastern wall‑clock
 os.environ["TZ"] = "US/Eastern"
-if hasattr(time, "tzset"):        # Not available on Windows
+if hasattr(time, "tzset"):          # Unix only
     time.tzset()
 
-eastern = pytz.timezone("US/Eastern")
+eastern  = pytz.timezone("US/Eastern")
 telegram = TelegramNotifier()
 
-# ─────────────────────────────────────────────
-# ░▒▓  Task helpers  ▓▒░
-# ─────────────────────────────────────────────
+# ─── Task helpers ────────────────────────────────────────────────────────────
 def send_daily_summary_task():
     try:
         summary_text = get_daily_trade_summary()
@@ -64,17 +56,14 @@ def backup_logs_task():
         bot_logger.error(f"Log backup failed: {e}")
 
 def train_meta_agent_task():
-    """
-    Launch daily PPO training with a safety timeout.  If the subprocess
-    hangs longer than `timeout` seconds, we kill it and log the event.
-    """
+    """Run PPO training with a 5‑min safety timeout."""
     bot_logger.info("Starting daily PPO training …")
     try:
         result = subprocess.run(
             ["python", "meta/train_meta_agent.py"],
             capture_output=True,
             text=True,
-            timeout=300,                 # ← 5‑minute cap (adjust as needed)
+            timeout=300,           # 5‑minute cap
             check=False
         )
         bot_logger.info("PPO training completed.")
@@ -82,16 +71,15 @@ def train_meta_agent_task():
         if result.stderr:
             bot_logger.warning(f"PPO stderr:\n{result.stderr}")
     except subprocess.TimeoutExpired as e:
-        bot_logger.error(f"PPO training timed out after 300 s: {e}")
+        bot_logger.error(f"PPO training timed out: {e}")
         telegram.send_message("⚠️ PPO training timed out after 5 minutes.")
     except Exception as e:
         bot_logger.error(f"PPO training failed: {e}")
 
-# ─────────────────────────────────────────────
-# ░▒▓  Main scheduler loop  ▓▒░
-# ─────────────────────────────────────────────
+# ─── Main scheduler loop ─────────────────────────────────────────────────────
 def run_scheduler_loop():
     bot_logger.info("Scheduler started.")
+    update_status("last_scheduler_start")          # ✅ heartbeat
 
     # Market‑hours automation
     schedule.every().day.at("09:30").do(run_market_open_tasks)
@@ -103,9 +91,14 @@ def run_scheduler_loop():
     schedule.every().day.at("17:30").do(backup_logs_task)
     schedule.every().day.at("17:50").do(train_meta_agent_task)
 
+    # Hourly health‑check runner
+    schedule.every().hour.at(":30").do(
+        lambda: subprocess.run(["python", "monitor/run_monitor.py"])
+    )
+
     while True:
         try:
             schedule.run_pending()
             time.sleep(1)
         except Exception as e:
-            bot_logger.error(f"[Scheduler] Unexpected error in main loop: {e}")
+            bot_logger.error(f"[Scheduler] Unexpected error: {e}")
