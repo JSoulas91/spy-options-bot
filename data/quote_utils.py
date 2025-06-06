@@ -1,45 +1,29 @@
 # data/quote_utils.py
 
 import time
-import requests
-from config import TRADIER_BASE_URL, TRADIER_ACCESS_TOKEN
-from utils.logger import bot_logger as logger
-from utils.cache_manager import cache
+from typing import Optional
+from data.tradier_api import fetch_spy_quote  # Reuse your existing quote call
 
-HEADERS = {
-    "Authorization": f"Bearer {TRADIER_ACCESS_TOKEN}",
-    "Accept": "application/json",
-}
+# Cache settings
+QUOTE_CACHE_SECONDS = 6
+_last_quote_time = 0.0
+_last_quote_data: Optional[float] = None
 
-
-def get_spy_quote(ttl: int = 5) -> float:
+def get_spy_quote() -> Optional[float]:
     """
-    Returns the latest SPY quote, using in-memory cache to limit API calls.
-    Default TTL is 5 seconds.
+    Returns the latest SPY quote with in-memory caching (valid for QUOTE_CACHE_SECONDS).
+    Reduces Tradier API usage while maintaining accuracy.
     """
-    cache_key = "spy_quote"
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
+    global _last_quote_time, _last_quote_data
+    now = time.time()
 
-    try:
-        response = requests.get(
-            f"{TRADIER_BASE_URL}/v1/markets/quotes",
-            params={"symbols": "SPY"},
-            headers=HEADERS,
-            timeout=3,
-        )
-        data = response.json()
+    if now - _last_quote_time < QUOTE_CACHE_SECONDS and _last_quote_data is not None:
+        return _last_quote_data
 
-        quote = data.get("quotes", {}).get("quote", {})
-        price = quote.get("last")
+    quote = fetch_spy_quote()
+    if quote:
+        _last_quote_data = quote
+        _last_quote_time = now
+        return quote
 
-        if price:
-            cache.set(cache_key, price, ttl=ttl)
-            return price
-        else:
-            raise ValueError(f"Invalid quote data: {quote}")
-
-    except Exception as e:
-        logger.warning(f"[QuoteUtils] Failed to fetch SPY quote: {e}")
-        return -1  # fallback: caller should handle this safely
+    return _last_quote_data  # Fallback to last known
