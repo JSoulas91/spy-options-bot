@@ -1,6 +1,8 @@
 # utils/telegram_notifier.py
 
 import requests
+import time
+import subprocess
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from utils.logger import bot_logger
 
@@ -8,16 +10,18 @@ class TelegramNotifier:
     def __init__(self, bot_token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID):
         self.bot_token = bot_token
         self.chat_id = chat_id
-        self.base_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        self.last_update_id = None  # Tracks last processed message
 
     def send_message(self, message: str):
+        url = f"{self.base_url}/sendMessage"
         payload = {
             "chat_id": self.chat_id,
             "text": message,
             "parse_mode": "HTML"
         }
         try:
-            response = requests.post(self.base_url, data=payload)
+            response = requests.post(url, data=payload)
             response.raise_for_status()
             bot_logger.info("📨 Telegram alert sent.")
         except requests.exceptions.RequestException as e:
@@ -43,3 +47,42 @@ class TelegramNotifier:
             self.send_message(message)
         except Exception as e:
             bot_logger.warning(f"[Swing Alert Error] {e}")
+
+    def listen_for_commands(self):
+        logger = bot_logger
+        logger.info("📡 Listening for Telegram commands...")
+
+        while True:
+            try:
+                url = f"{self.base_url}/getUpdates"
+                params = {"timeout": 10}
+                if self.last_update_id:
+                    params["offset"] = self.last_update_id + 1
+
+                response = requests.get(url, params=params)
+                response.raise_for_status()
+                updates = response.json().get("result", [])
+
+                for update in updates:
+                    self.last_update_id = update["update_id"]
+                    message = update.get("message", {})
+                    text = message.get("text", "")
+                    chat_id = str(message.get("chat", {}).get("id"))
+
+                    if chat_id != str(self.chat_id):
+                        logger.info("⚠️ Ignored message from unauthorized user.")
+                        continue
+
+                    if text == "/shutdown_bot":
+                        logger.info("🛑 Shutdown command received.")
+                        self.send_message("🛑 Shutting down bot...")
+                        subprocess.run(["pkill", "-f", "live_runner.py"])
+                    elif text == "/restart_bot":
+                        logger.info("🔁 Restart command received.")
+                        self.send_message("🔁 Restarting bot...")
+                        subprocess.Popen(["python3", "live_runner.py"])
+
+            except Exception as e:
+                logger.warning(f"[Command Listener Error] {e}")
+
+            time.sleep(3)
