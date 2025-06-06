@@ -7,6 +7,8 @@
 
 import time
 import traceback
+import os
+import sys
 from datetime import datetime, timezone
 from threading import Lock, deque
 
@@ -57,8 +59,17 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
     logger.info(f"[LiveRunner] Started for {symbol}, interval {interval_sec}s")
     send_telegram_message("▶️ Bot live (20‑sec loop)")
 
+    kill_switch_path = "/home/ubuntu/kill_switch.txt"
+
     while True:
         tic = time.time()
+
+        # Kill switch check
+        if os.path.exists(kill_switch_path):
+            logger.warning("[LiveRunner] Kill switch detected. Stopping bot.")
+            send_telegram_message("⏹️ Bot stopping via kill switch.")
+            sys.exit(0)
+
         try:
             update_status("heartbeat")
             features   = get_features(symbol)
