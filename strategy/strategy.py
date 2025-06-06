@@ -4,7 +4,6 @@ from helpers import is_day_trade, is_swing_trade
 from config import (
     CONFIDENCE_THRESHOLD,
     STOP_LOSS_ATR_MULTIPLIER,
-    TRAILING_STOP_PERCENT,   # still used for swing stop
     ENABLE_VIX_THROTTLING,
     ENABLE_ADAPTIVE_CONFIDENCE,
     VIX_MAX_THRESHOLD,
@@ -47,12 +46,10 @@ KEYS = [
     "support","resistance","implied_volatility",
     "delta","gamma","theta","vega"
 ]
-def extract(ind):
-    return {k: ind.get(k) for k in KEYS}
+def extract(ind): return {k: ind.get(k) for k in KEYS}
 
 def evaluate_trade(position: dict, market_data: dict):
     try:
-        action      = "hold"
         symbol      = position.get("symbol", "SPY")
         entry_price = position.get("entry_price")
         price       = market_data.get("price")
@@ -61,24 +58,23 @@ def evaluate_trade(position: dict, market_data: dict):
         confidence  = market_data.get("confidence_score", 0)
 
         if entry_price is None or price is None:
-            raise ValueError("Missing entry_price or price")
+            raise ValueError("Missing entry_price or price.")
 
-        # ── Merge multi‑timeframe + option metrics
+        # ── Merge indicators
         try:
-            mtf   = fetch_long_term_features(symbol)
-            ind   = merge_indicators(indicators, mtf.get("merged", {}))
+            mtf = fetch_long_term_features(symbol)
+            ind = merge_indicators(indicators, mtf.get("merged", {}))
         except Exception as e:
             logger.error(f"[MTF] {e}"); ind = indicators
-
         try:
-            opts  = get_option_metrics(symbol)
+            opts = get_option_metrics(symbol)
             if opts: ind.update(opts)
         except Exception as e:
             logger.error(f"[Greeks] {e}")
 
-        # ── Risk event exit
+        # ── Immediate exit if risk event
         if is_high_risk_event_active():
-            send_telegram_message("🚨 Economic event – exit.")
+            send_telegram_message("🚨 Econ event — exit")
             return "exit"
 
         vix        = get_current_vix()
@@ -86,69 +82,58 @@ def evaluate_trade(position: dict, market_data: dict):
         hour       = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").hour if ts else 12
         atr        = ind.get("atr", 0)
 
-        meta_in = {"confidence":confidence,"vix":vix,"hour":hour,
-                   "is_swing":1 if trade_type=="swing" else 0,"atr":atr}
-        meta_st   = normalize_meta_state(meta_in)
-        meta_act  = meta_agent.select_action(meta_st)
-        meta_par  = meta_agent.interpret_action(meta_act)
+        meta_in  = {"confidence":confidence,"vix":vix,"hour":hour,
+                    "is_swing":1 if trade_type=="swing" else 0,"atr":atr}
+        meta_st  = normalize_meta_state(meta_in)
+        meta_act = meta_agent.select_action(meta_st)
+        meta_par = meta_agent.interpret_action(meta_act)
 
-        shaped    = compute_shaped_reward(position, ind, market_data)
-        sharpe    = compute_sharpe_style_reward(entry_price, price, atr)
+        shaped = compute_shaped_reward(position, ind, market_data)
+        sharpe = compute_sharpe_style_reward(entry_price, price, atr)
         log_reward_trend({"meta_state":meta_st,"meta_action":meta_act,
                           "shaped_reward":shaped,"sharpe_reward":sharpe})
 
+        # meta overrides
         if meta_act in (0,2):
             return "exit"
 
-        # ── Confidence + VIX gating
+        # confidence / VIX gate
         thr = meta_par.get("confidence_threshold", CONFIDENCE_THRESHOLD)
-        if ENABLE_VIX_THROTTLING and vix is not None:
-            if vix >= VIX_MAX_THRESHOLD:
-                return "exit"
-            elif vix >= VIX_MODERATE_THRESHOLD:
-                thr += CONFIDENCE_STEP_UP
-        if confidence < thr:
-            return "exit"
+        if ENABLE_VIX_THROTTLING and vix:
+            if vix >= VIX_MAX_THRESHOLD: return "exit"
+            if vix >= VIX_MODERATE_THRESHOLD: thr += CONFIDENCE_STEP_UP
+        if confidence < thr: return "exit"
 
-        # ── Extract key metrics
         iv = ind.get("implied_volatility")
 
         if vix and iv and vix > 22 and iv > 0.5:
             return "exit"
 
-        # ───────────────────────────────────────────────
-        #  DAY‑TRADE EXIT LOGIC  (high‑water trailing stop)
-        # ───────────────────────────────────────────────
+        # ── DAY‑TRADE EXIT LOGIC (ATR high‑water trailing)
         if is_day_trade(position):
-            if is_market_closing_soon(ts):
-                return "exit"
+            if is_market_closing_soon(ts): return "exit"
 
-            # Track high‑water mark since entry
             high_mark = position.get("high_since_entry", entry_price)
             if price > high_mark:
                 position["high_since_entry"] = price
                 high_mark = price
 
-            # ATR‑scaled trailing stop
             trail = atr * 1.2 if atr else price * 0.015
             if price <= high_mark - trail:
-                logger.info("📉 ATR trailing stop hit.")
+                logger.info("📉 ATR trailing stop triggered.")
                 return "exit"
 
-            # Hard ATR stop‑loss
             if atr and price <= entry_price - atr * STOP_LOSS_ATR_MULTIPLIER:
                 return "exit"
 
-        # ───────────────────────────────────────────────
-        #  SWING LOGIC (unchanged except trailing%)
-        # ───────────────────────────────────────────────
+        # ── SWING
         elif is_swing_trade(position):
             if atr and price <= entry_price - atr * STOP_LOSS_ATR_MULTIPLIER * 1.5:
                 return "exit"
             if iv and iv > 0.6:
                 logger.warning("High IV swing – consider exit.")
 
-        return action
+        return "hold"
     except Exception as e:
         logger.error(f"[Strategy] {e}\n{traceback.format_exc()}")
         return "hold"
