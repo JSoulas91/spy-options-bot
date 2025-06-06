@@ -76,9 +76,12 @@ def close_and_log_trade(trade, reason="Manual exit"):
     try:
         trade_id = trade.get("id", "?")
         symbol = trade.get("symbol", "?")
+        option_symbol = trade.get("option_symbol")
 
         reward = compute_shaped_reward(trade)
-        next_state = build_meta_state_for_exit(trade)
+
+        # 🧠 Build meta-state with live SPY + option quote (cached inside)
+        next_state = build_meta_state_for_exit(trade, option_symbol=option_symbol)
 
         trade.update({
             "shaped_reward": reward,
