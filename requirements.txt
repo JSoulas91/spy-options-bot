@@ -1,24 +1,27 @@
-# Core Trading, Data Handling, and Web Scraping
+# ── Core data & TA ───────────────────────────────
 pandas==2.2.2
 numpy==1.26.4
-scikit-learn==1.4.2
 ta==0.10.2
-matplotlib==3.8.4
-yfinance==0.2.37
+
+# ── Plotting for reward charts ──────────────────
+matplotlib==3.8.4           # used by meta_telegram_reporter
+Pillow==10.3.0              # matplotlib PNG backend
+
+# ── HTTP / scheduling / utils ───────────────────
 requests==2.31.0
-beautifulsoup4==4.12.3
+python-dotenv==1.0.1
 schedule==1.2.1
 pytz==2024.1
-python-dotenv==1.0.1
+beautifulsoup4==4.12.3       # (kept; optional scraping)
 
-# PPO Meta-Agent & Reinforcement Learning
-torch==2.3.0                   # CPU-compatible; keep this unpinned if using GPU elsewhere
-gym==0.26.2                    # PPO-compatible with custom env
-tensorboard==2.16.2            # PPO training logs and visualization
-joblib==1.4.2                  # For model persistence and checkpointing
+# ── Reinforcement‑learning stack ────────────────
+torch==2.3.0                 # CPU build; pin as needed
+gym==0.26.2
+tensorboard==2.16.2
+joblib==1.4.2
 
-# Logging and Automation
-loguru==0.7.2                  # Advanced logging with structured formatting
+# ── Logging & monitoring ────────────────────────
+loguru==0.7.2
 
-# Optional: Legacy or fallback usage
-# alpaca-trade-api==3.1.0      # Commented out; not needed for Tradier-only setup
+# ── Optional finance helpers (kept) ─────────────
+yfinance==0.2.37
