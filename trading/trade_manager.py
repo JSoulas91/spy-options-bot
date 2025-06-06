@@ -1,4 +1,3 @@
-# trade_manager.py
 import time
 import traceback
 from typing import Optional, Dict, Any
@@ -15,7 +14,14 @@ from data.tradier_api import place_option_order
 # ─── Health‑check integration ────────────────────────────────────────────────
 from monitor.health_check import update_status
 
-# Helper
+# ─── Constants ───────────────────────────────────────────────────────────────
+VALID_ORDER_STATUSES = {"ok", "filled", "open", "pending"}
+
+# ─── Cached macro/VIX values ─────────────────────────────────────────────────
+_cached_vix = None
+_cached_macro = None
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 def should_hold_swing_trade(confidence: float, vix: float, is_monday_risk: bool) -> bool:
     return all([confidence >= 0.7, vix <= 20, not is_monday_risk])
 
@@ -36,30 +42,36 @@ def execute_trade_with_retries(contract: Dict[str, Any]) -> Optional[Dict[str, A
 
     while retries < MAX_RETRIES:
         try:
-            # Log every attempt for health‑check
-            update_status("last_trade_attempt")      # ✅
+            update_status("last_trade_attempt")  # ✅
 
             # Preconditions
             if contract.get("dte", 1) <= 0:
                 msg = "⛔ Contract is expiring today. Trade skipped."
-                logger.warning(msg); send_telegram_message(msg); return None
+                logger.warning(msg)
+                send_telegram_message(msg)
+                return None
 
             if ENFORCE_PDT_LIMITS and not tracker.can_place_trade():
                 msg = "🚫 PDT rule triggered. Trade skipped."
-                logger.warning(msg); send_telegram_message(msg); return None
+                logger.warning(msg)
+                send_telegram_message(msg)
+                return None
 
             if retries > 0 and not should_retry_trade(contract):
                 msg = "🧠 Meta‑agent vetoed further retries."
-                logger.warning(msg); send_telegram_message(msg); return None
+                logger.warning(msg)
+                send_telegram_message(msg)
+                return None
 
             # Submit order
             order = _submit_order(contract)
 
-            if order and order.get("status", "").lower() in {"ok", "filled", "open", "pending"}:
+            if order and order.get("status", "").lower() in VALID_ORDER_STATUSES:
                 contract["retries_used"] = retries
                 tracker.record_trade(order)
-                update_status("last_trade")          # ✅ confirmed trade
-                logger.info(f"✅ Order placed. ID: {order.get('id')}, Status: {order.get('status')}")
+                update_status("last_trade")  # ✅ confirmed trade
+                order_id = order.get("id", "UNKNOWN")
+                logger.info(f"✅ Order placed. ID: {order_id}, Status: {order.get('status')}")
                 return order
             else:
                 raise Exception(f"Order rejected or malformed: {order}")
@@ -81,14 +93,22 @@ def execute_trade_with_retries(contract: Dict[str, Any]) -> Optional[Dict[str, A
 
 # --------------------------------------------------------------------------- #
 def evaluate_swing_hold(contract: Dict[str, Any], confidence: float) -> bool:
-    vix = get_current_vix()
-    is_monday_risk = has_monday_macro_event()
-    decision = should_hold_swing_trade(confidence, vix, is_monday_risk)
+    global _cached_vix, _cached_macro
+
+    if _cached_vix is None:
+        _cached_vix = get_current_vix()
+
+    if _cached_macro is None:
+        _cached_macro = has_monday_macro_event()
+
+    decision = should_hold_swing_trade(confidence, _cached_vix, _cached_macro)
 
     if decision:
-        msg = f"📊 Holding swing trade over weekend. VIX: {vix}, Confidence: {confidence}"
+        msg = f"📊 Holding swing trade over weekend. VIX: {_cached_vix}, Confidence: {confidence}"
     else:
-        msg = f"❌ Swing hold blocked. VIX: {vix}, Confidence: {confidence}, Monday risk: {is_monday_risk}"
-    logger.info(msg); send_telegram_message(msg)
+        msg = f"❌ Swing hold blocked. VIX: {_cached_vix}, Confidence: {confidence}, Monday risk: {_cached_macro}"
+
+    logger.info(msg)
+    send_telegram_message(msg)
 
     return decision
