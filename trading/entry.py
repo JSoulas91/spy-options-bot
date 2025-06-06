@@ -31,7 +31,9 @@ def handle_entry(market_data):
         trade_type  = signal["trade_type"]      # 0 = day, 1 = swing
         trade_setup = signal["trade_setup"]
 
-        # 🧠 Build meta‑state & let agent decide
+        option_symbol = trade_setup.get("option_symbol")
+
+        # 🧠 Build meta‑state with live SPY + option quote (cached inside build_meta_state_for_entry)
         meta_state = build_meta_state_for_entry(
             data_1m   = signal["tf_1m"],
             data_5m   = signal["tf_5m"],
@@ -41,7 +43,8 @@ def handle_entry(market_data):
             confidence_score = confidence,
             trade_type       = trade_type,
             past_trades      = trade_tracker.get_open_trades(),
-            long_term_data   = signal.get("long_term_data", {})
+            long_term_data   = signal.get("long_term_data", {}),
+            option_symbol    = option_symbol  # Pass option symbol for live quote
         )
 
         try:
@@ -74,7 +77,7 @@ def handle_entry(market_data):
             "trade_type": trade_type,
             "meta_state": meta_state.tolist(),   # serialize as list for JSON
             "meta_action": int(action),
-            "option_symbol": trade_setup.get("option_symbol")  # store for exit meta‑state
+            "option_symbol": option_symbol        # store for exit meta‑state
         })
 
         # 🧾 Track + persist
