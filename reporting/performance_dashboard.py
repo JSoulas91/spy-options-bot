@@ -1,42 +1,49 @@
-import statistics
+import statistics, numpy as np
 
 class PerformanceDashboard:
     def __init__(self):
         self.daily_results = []
-        self.total_trades = 0
-        self.winning_trades = 0
-        self.losing_trades = 0
-        self.pnl_list = []
+        self.pnl_list      = []
+        self.latencies     = []   # ms between signal and fill
+        self.total_trades  = self.winning = self.losing = 0
 
-    def record_trade(self, trade_result):
-        self.daily_results.append(trade_result)
-        self.total_trades += 1
-        pnl = trade_result.get("pnl", 0)
+    def record_trade(self, trade):
+        pnl = trade.get("pnl", 0)
+        latency = trade.get("latency_ms", None)
+
+        self.daily_results.append(trade)
         self.pnl_list.append(pnl)
-        if pnl > 0:
-            self.winning_trades += 1
-        else:
-            self.losing_trades += 1
+        self.total_trades += 1
+        self.winning += pnl > 0
+        self.losing  += pnl <= 0
+        if latency is not None:
+            self.latencies.append(latency)
+
+    # ── Sharpe calc (daily) ──
+    @staticmethod
+    def _sharpe(pnls):
+        if len(pnls) < 2: return 0.0
+        r = np.array(pnls)
+        return (r.mean() / (r.std() + 1e-9)) * np.sqrt(len(r))
 
     def generate_summary(self):
-        if not self.daily_results:
+        if not self.pnl_list:
             return "📊 No trades recorded today."
 
-        total_pnl = sum(self.pnl_list)
-        avg_pnl = statistics.mean(self.pnl_list) if self.pnl_list else 0
-        win_rate = (self.winning_trades / self.total_trades) * 100 if self.total_trades > 0 else 0
-        best_trade = max(self.pnl_list) if self.pnl_list else 0
-        worst_trade = min(self.pnl_list) if self.pnl_list else 0
+        total = sum(self.pnl_list)
+        avg   = statistics.mean(self.pnl_list)
+        winrt = (self.winning / self.total_trades) * 100
+        sharpe= self._sharpe(self.pnl_list)
+        best, worst = max(self.pnl_list), min(self.pnl_list)
+        avg_lat = statistics.mean(self.latencies) if self.latencies else "N/A"
 
-        summary = (
-            f"<b>📈 Daily Performance Dashboard</b>\n\n"
-            f"🔸 Trades: {self.total_trades}\n"
-            f"✅ Wins: {self.winning_trades}, ❌ Losses: {self.losing_trades}\n"
-            f"💰 Net PnL: {total_pnl:.2f}%\n"
-            f"📉 Avg PnL: {avg_pnl:.2f}%\n"
-            f"🏆 Best Trade: {best_trade:.2f}%\n"
-            f"⚠️ Worst Trade: {worst_trade:.2f}%\n"
-            f"📊 Win Rate: {win_rate:.2f}%"
+        return (
+            f"<b>📈 Daily Performance</b>\n\n"
+            f"Trades: {self.total_trades}\n"
+            f"✅ Wins: {self.winning} | ❌ Losses: {self.losing}\n"
+            f"Net PnL: {total:.2f}% | Avg: {avg:.2f}%\n"
+            f"🏆 Best: {best:.2f}% | ⚠️ Worst: {worst:.2f}%\n"
+            f"📊 Win Rate: {winrt:.1f}%\n"
+            f"⚖️ Sharpe*: {sharpe:.2f}\n"
+            f"⏱️ Avg Latency: {avg_lat}"
         )
-
-        return summary
