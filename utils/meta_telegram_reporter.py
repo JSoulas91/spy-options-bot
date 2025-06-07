@@ -1,34 +1,47 @@
 # utils/meta_telegram_reporter.py
 """
-Send concise meta‑agent training summaries and reward charts to Telegram.
+Send concise meta‑agent training summaries *plus* a reward‑curve image to Telegram.
 """
-
-import io, time, matplotlib.pyplot as plt
-from datetime import datetime
+from __future__ import annotations
+import io, time, requests, matplotlib.pyplot as plt
 from typing import List, Dict
 
-from utils.logger       import bot_logger as logger
-from telegram_bot       import TelegramBot
+from utils.logger         import bot_logger as logger
+from utils.telegram_utils import send_telegram_message
+from config               import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-TG = TelegramBot()
-LAST_SENT = 0.0
-MIN_INTERVAL_SEC = 60  # avoid spam
+LAST_SENT         = 0.0
+MIN_INTERVAL_SEC  = 60                # throttle updates
 
+# ───────────────────────────────── plotting helper
 def _make_reward_plot(reward_history: List[float]) -> bytes:
-    """Return PNG bytes of reward line chart."""
+    """Return PNG bytes of a simple reward line chart."""
     fig, ax = plt.subplots()
     ax.plot(reward_history, linewidth=2)
-    ax.set_title("Meta‑Agent Reward")
+    ax.set_title("Meta‑Agent Avg Reward")
     ax.set_xlabel("Epoch")
-    ax.set_ylabel("Avg Reward")
+    ax.set_ylabel("Reward")
     ax.grid(True)
-    buf = io.BytesIO()
     plt.tight_layout()
+    buf = io.BytesIO()
     fig.savefig(buf, format="png")
     plt.close(fig)
     buf.seek(0)
     return buf.read()
 
+def _send_photo(img_bytes: bytes, caption: str = ""):
+    """Low‑level Telegram `sendPhoto` helper."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    files = {"photo": ("reward.png", img_bytes)}
+    data  = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption, "parse_mode": "Markdown"}
+    try:
+        resp = requests.post(url, data=data, files=files, timeout=15)
+        if resp.status_code != 200:
+            logger.warning(f"[Tele‑photo] {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.error(f"[Tele‑photo] {e}")
+
+# ───────────────────────────────── public API
 def send_training_report(stats: Dict, reward_history: List[float]):
     """
     stats = {
@@ -40,30 +53,24 @@ def send_training_report(stats: Dict, reward_history: List[float]):
         "avg_duration": 8.3,
         "avg_pnl": 12.85,
     }
-    reward_history = [ ... ]  # same len as epochs
     """
     global LAST_SENT
     if time.time() - LAST_SENT < MIN_INTERVAL_SEC:
-        return  # throttle
+        return  # avoid Telegram spam
 
-    text = (
-        f"📈 *Meta Training Update*\n"
-        f"Epoch: *{stats['epoch']}*\n"
-        f"Avg Reward: *{stats['avg_reward']:.3f}*\n"
-        f"Sharpe (est): *{stats['sharpe']:.2f}*\n"
-        f"Reject Rate: *{stats['reject_rate']*100:.1f}%*\n"
-        f"Avg Trade Dur: *{stats['avg_duration']:.1f} min*\n"
-        f"Avg PnL: *{stats['avg_pnl']:.2f}$*"
+    txt = (
+        f"📚 *Meta Training* — Epoch *{stats['epoch']}*\n"
+        f"Avg R: `{stats['avg_reward']:.4f}`  σR: `{stats['reward_std']:.4f}`\n"
+        f"Sharpe≈ `{stats['sharpe']:.2f}`  Reject: `{stats['reject_rate']*100:.1f}%`\n"
+        f"Dur≈ `{stats['avg_duration']:.1f}` min   PnL≈ `${stats['avg_pnl']:.2f}`"
     )
-
-    # send text first
-    TG.send_message(text)
+    send_telegram_message(txt)
 
     # attach chart
     try:
-        png_bytes = _make_reward_plot(reward_history)
-        TG.send_photo(png_bytes, caption="Reward trend")
+        png = _make_reward_plot(reward_history)
+        _send_photo(png, caption="Reward trend")
     except Exception as e:
-        logger.error(f"[Meta Report] Plot send failed: {e}")
+        logger.error(f"[MetaReport] plot failed: {e}")
 
     LAST_SENT = time.time()
