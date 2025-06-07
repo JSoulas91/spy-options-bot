@@ -1,8 +1,19 @@
-# utils/telegram_utils.py
-from utils.telegram_notifier import TelegramNotifier
+import requests
+import os
 
-_notifier = TelegramNotifier()
+def send_telegram_message(message):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-def send_telegram_message(msg: str):
-    """Single‑line helper used across the code‑base."""
-    _notifier.send_message(msg)
+    if not token or not chat_id:
+        print("❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in environment.")
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    try:
+        response = requests.post(url, data=payload)
+        if response.status_code != 200:
+            print("❌ Failed to send Telegram message:", response.text)
+    except Exception as e:
+        print("❌ Telegram send error:", str(e))
