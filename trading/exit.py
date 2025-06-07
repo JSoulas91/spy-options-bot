@@ -22,7 +22,7 @@ def _simulate_close(ref: float):
     slip = ref * DEFAULT_SLIPPAGE_BPS / 10_000
     fill = ref - slip
     delay = random.randint(SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS)
-    time.sleep(delay/1000)
+    time.sleep(delay / 1000)
     return round(fill, 4), delay
 
 def _dte(tr):
@@ -33,20 +33,32 @@ def _dte(tr):
             datetime.now(eastern).date()).days
 
 def should_exit(tr):
+    """
+    Returns reason string if exit recommended, else None.
+    Prioritize meta-agent evaluation, then near expiry exit.
+    """
+    # Meta-agent-driven exit decision
     if evaluate_exit_decision(tr):
-        return "Meta‑agent"
+        return "Meta-agent"
+
+    # Near expiry auto-exit for type 1 trades (e.g., calls/puts)
     if tr.get("trade_type") == 1 and _dte(tr) <= 1:
         return "Near expiry"
+
     return None
 
 def close_and_log_trade(tr, reason: str, ref_price: float):
+    """
+    Closes a trade (simulated or live), computes reward, logs data,
+    updates trade tracker, and sends Telegram notification.
+    """
     try:
         if SIMULATION_MODE:
             fill, latency = _simulate_close(ref_price)
         else:
             t0 = time.time()
             close_trade(tr)
-            latency = int((time.time()-t0)*1000)
+            latency = int((time.time() - t0) * 1000)
             fill = ref_price
 
         reward = compute_shaped_reward(tr)
@@ -59,9 +71,11 @@ def close_and_log_trade(tr, reason: str, ref_price: float):
             "shaped_reward": reward,
             "meta_next_state": next_state,
         })
+
         trade_tracker.mark_trade_closed(tr["id"])
         log_trade_exit(tr)
 
+        # Append experience for meta-agent training
         with open(META_LOG_PATH, "a") as f:
             f.write(json.dumps({
                 "state": tr.get("meta_state"),
@@ -72,17 +86,21 @@ def close_and_log_trade(tr, reason: str, ref_price: float):
             }) + "\n")
 
         send_telegram_message(
-            f"🔴 Exit {tr['symbol']} {tr['id']} | {reason} | R {reward:.3f}"
+            f"🔴 Exit {tr['symbol']} {tr['id']} | {reason} | Reward {reward:.3f}"
         )
     except Exception as exc:
-        bot_logger.error(f"[Exit‑close] {exc}")
+        bot_logger.error(f"[Exit-close] {exc}")
         bot_logger.debug(traceback.format_exc())
 
 def handle_exit(snapshot: dict | None = None):
+    """
+    Main loop to check all open trades for exit signals.
+    Also hard closes all trades at 15:55 market time.
+    """
     try:
         now = datetime.now(eastern)
 
-        # hard close 15:55
+        # Hard exit at 15:55 to close all positions before market close
         if now.hour == 15 and now.minute >= 55:
             for tr in list(trade_tracker.get_open_trades()):
                 close_and_log_trade(tr, "Auto 15:55", snapshot["price"] if snapshot else 0)
@@ -93,6 +111,7 @@ def handle_exit(snapshot: dict | None = None):
             reason = should_exit(tr)
             if reason:
                 close_and_log_trade(tr, reason, ref_price)
+
     except Exception as exc:
         bot_logger.error(f"[Exit] {exc}")
         bot_logger.debug(traceback.format_exc())
