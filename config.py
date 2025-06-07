@@ -1,79 +1,63 @@
 # config.py
-"""
-Centralised configuration loader.
-
-• Reads .env via python‑dotenv
-• Exposes strongly‑typed constants with sane defaults
-• Now includes simulation + dynamic‑sizing knobs
-"""
-
 import os
 from dotenv import load_dotenv
 from utils.logger import bot_logger
 
 load_dotenv()
-bot_logger.info("🔧 Loading configuration from .env…")
+bot_logger.info("🔧 Loading configuration from .env …")
 
-# ────────────────────────────────────────────────────────────
-def get_env_var(name: str, required: bool = True, default=None):
+def _env(name: str, default=None, required: bool = False):
     val = os.getenv(name, default)
     if required and val is None:
         raise EnvironmentError(f"Missing required env var: {name}")
     return val
 
-# ──────────────────────────────────────────────────────────── PATHS
+# ───────────────────────────────────────── PATHS
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ──────────────────────────────────────────────────────────── TRADIER
-TRADIER_API_TOKEN   = get_env_var("TRADIER_API_TOKEN")
-USE_TRADIER_SANDBOX = os.getenv("USE_TRADIER_SANDBOX", "true").lower() == "true"
+# ───────────────────────────────────────── TRADIER
+TRADIER_API_TOKEN   = _env("TRADIER_API_TOKEN", required=True)
+USE_TRADIER_SANDBOX = _env("USE_TRADIER_SANDBOX", "true").lower() == "true"
 TRADIER_BASE_URL    = (
     "https://sandbox.tradier.com/v1"
     if USE_TRADIER_SANDBOX else
     "https://api.tradier.com/v1"
 )
 
-# ──────────────────────────────────────────────────────────── TELEGRAM
-TELEGRAM_BOT_TOKEN = get_env_var("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID   = get_env_var("TELEGRAM_CHAT_ID")
+# ───────────────────────────────────────── TELEGRAM
+TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN", required=True)
+TELEGRAM_CHAT_ID   = _env("TELEGRAM_CHAT_ID",   required=True)
 
-# ──────────────────────────────────────────────────────────── TRADING SETTINGS
-DEFAULT_POSITION_SIZE = float(os.getenv("DEFAULT_POSITION_SIZE", 0.10))  # 10 %
-MAX_OPEN_TRADES       = int(os.getenv("MAX_OPEN_TRADES", 8))
-MAX_DAY_TRADES        = int(os.getenv("MAX_DAY_TRADES", 3))
-ENFORCE_PDT_LIMITS    = os.getenv("ENFORCE_PDT_LIMITS", "false").lower() == "true"
+# ───────────────────────────────────────── SIMULATION
+SIMULATION_MODE          = _env("SIMULATION_MODE", "true").lower() == "true"
+DEFAULT_SLIPPAGE_BPS     = float(_env("DEFAULT_SLIPPAGE_BPS",  3))      # 0.03 %
+DEFAULT_SPREAD_BPS       = float(_env("DEFAULT_SPREAD_BPS",   4))       # 0.04 %
+SIM_MIN_FILL_DELAY_MS    = int(_env("SIM_MIN_FILL_DELAY_MS", 50))
+SIM_MAX_FILL_DELAY_MS    = int(_env("SIM_MAX_FILL_DELAY_MS",150))
 
-# —— dynamic sizing (entry.py uses these)
-ENABLE_DYNAMIC_SIZING = os.getenv("ENABLE_DYNAMIC_SIZING", "true").lower() == "true"
-MIN_POSITION_SIZE     = float(os.getenv("MIN_POSITION_SIZE", 0.05))  # 5 %
-MAX_POSITION_SIZE     = float(os.getenv("MAX_POSITION_SIZE", 0.25))  # 25 %
+# ───────────────────────────────────────── TRADING SETTINGS
+DEFAULT_POSITION_SIZE = float(_env("DEFAULT_POSITION_SIZE", 0.10))      # 10 %
+MAX_DAY_TRADES        = int(_env("MAX_DAY_TRADES", 3))
+ENFORCE_PDT_LIMITS    = _env("ENFORCE_PDT_LIMITS", "false").lower() == "true"
+MAX_OPEN_TRADES       = int(_env("MAX_OPEN_TRADES", 8))
 
-# ──────────────────────────────────────────────────────────── STRATEGY
-CONFIDENCE_THRESHOLD     = float(os.getenv("CONFIDENCE_THRESHOLD", 0.75))
-STOP_LOSS_ATR_MULTIPLIER = float(os.getenv("STOP_LOSS_ATR_MULTIPLIER", 1.5))
-TRAILING_STOP_PERCENT    = float(os.getenv("TRAILING_STOP_PERCENT", 0.10))
-PREFERS_LIQUID_OPTIONS   = os.getenv("PREFERS_LIQUID_OPTIONS", "true").lower() == "true"
+# Dynamic sizing
+ENABLE_DYNAMIC_SIZING = _env("ENABLE_DYNAMIC_SIZING", "true").lower() == "true"
+MIN_POSITION_SIZE     = float(_env("MIN_POSITION_SIZE", 0.05))
+MAX_POSITION_SIZE     = float(_env("MAX_POSITION_SIZE", 0.25))
 
-# ──────────────────────────────────────────────────────────── TIME
-MARKET_OPEN         = os.getenv("MARKET_OPEN", "09:30")
-MARKET_CLOSE        = os.getenv("MARKET_CLOSE", "16:00")
-NO_NEW_TRADES_AFTER = os.getenv("NO_NEW_TRADES_AFTER", "15:30")
+# ───────────────────────────────────────── STRATEGY
+CONFIDENCE_THRESHOLD     = float(_env("CONFIDENCE_THRESHOLD", 0.75))
+STOP_LOSS_ATR_MULTIPLIER = float(_env("STOP_LOSS_ATR_MULTIPLIER", 1.5))
+TRAILING_STOP_PERCENT    = float(_env("TRAILING_STOP_PERCENT", 0.10))
 
-# ──────────────────────────────────────────────────────────── VOLATILITY / VIX
-VIX_MAX_THRESHOLD      = float(os.getenv("VIX_MAX_THRESHOLD", 30.0))
-VIX_MODERATE_THRESHOLD = float(os.getenv("VIX_MODERATE_THRESHOLD", 25.0))
-VIX_SAFE_FOR_SWING     = float(os.getenv("VIX_SAFE_FOR_SWING", 20.0))
-CONFIDENCE_STEP_UP     = float(os.getenv("CONFIDENCE_STEP_UP", 0.05))
+# ───────────────────────────────────────── VIX / VOL
+VIX_MAX_THRESHOLD      = float(_env("VIX_MAX_THRESHOLD", 30.0))
+VIX_MODERATE_THRESHOLD = float(_env("VIX_MODERATE_THRESHOLD", 25.0))
+CONFIDENCE_STEP_UP     = float(_env("CONFIDENCE_STEP_UP", 0.05))
 
-# ──────────────────────────────────────────────────────────── SIMULATION MODE
-SIMULATION_MODE       = os.getenv("SIMULATION_MODE", "false").lower() == "true"
-DEFAULT_SLIPPAGE_BPS  = float(os.getenv("DEFAULT_SLIPPAGE_BPS", 5))    # 5 bps = 0.05 %
-DEFAULT_SPREAD_BPS    = float(os.getenv("DEFAULT_SPREAD_BPS", 8))     # bid‑ask half‑spread model
-SIM_MIN_FILL_DELAY_MS = int(os.getenv("SIM_MIN_FILL_DELAY_MS", 50))
-SIM_MAX_FILL_DELAY_MS = int(os.getenv("SIM_MAX_FILL_DELAY_MS", 150))
-
-# ──────────────────────────────────────────────────────────── META‑AGENT PATHS
+# ───────────────────────────────────────── META / PATHS
 META_LOG_PATH  = os.path.join(BASE_DIR, "meta", "meta_log.jsonl")
 META_INFO_PATH = os.path.join(BASE_DIR, "meta", "meta_agent_info.json")
 
-bot_logger.info("✅ Configuration loaded.")
+bot_logger.info(f"✅ Config loaded – Simulation mode {'ON' if SIMULATION_MODE else 'OFF'}")
