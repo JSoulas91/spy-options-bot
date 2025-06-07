@@ -1,116 +1,119 @@
-import pytz
-import json
-from datetime import datetime
-from utils.trade_tracker import trade_tracker
-from utils.trade_logger import log_trade_exit
-from utils.logger import bot_logger
-from trade_manager import close_trade
-from meta.meta_agent import evaluate_exit_decision
-from meta.reward_shaper import compute_shaped_reward
-from meta.meta_state import build_meta_state_for_exit
-from utils.telegram_notifier import TelegramNotifier
-from config import META_LOG_PATH
+# trading/exit.py
+"""
+Handles exit logic.
 
-eastern = pytz.timezone('US/Eastern')
+• In SIMULATION_MODE the close is simulated with slippage & latency
+• Otherwise we call Tradier through close_trade()
+"""
+
+import json, random, time, traceback
+from datetime import datetime
+
+import pytz
+from utils.logger           import bot_logger
+from utils.trade_logger     import log_trade_exit
+from utils.trade_tracker    import trade_tracker
+from utils.telegram_notifier import TelegramNotifier
+from trade_manager          import close_trade
+from meta.meta_agent        import evaluate_exit_decision
+from meta.meta_state        import build_meta_state_for_exit
+from meta.reward_shaper     import compute_shaped_reward
+from config                 import (
+    META_LOG_PATH, SIMULATION_MODE,
+    DEFAULT_SLIPPAGE_BPS, SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS
+)
+
+eastern  = pytz.timezone("US/Eastern")
 notifier = TelegramNotifier()
 
-def get_days_to_expiry(contract):
-    try:
-        expiry_str = contract.get("expiry")
-        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").date()
-        today = datetime.now(eastern).date()
-        return (expiry_date - today).days
-    except Exception as e:
-        bot_logger.warning(f"[Expiry Parse Error] Failed to parse expiry for contract={contract.get('symbol', '?')}: {e}")
-        return 0
 
-def handle_exit():
+# ──────────────────────────────────────────
+def _simulate_close(fill_ref: float, side: str):
+    slip = fill_ref * DEFAULT_SLIPPAGE_BPS / 10_000
+    price = fill_ref - slip if side == "sell" else fill_ref + slip
+    delay = random.randint(SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS)
+    time.sleep(delay / 1000)
+    return round(price, 4), delay
+
+
+def handle_exit(market_snapshot=None):
     try:
         now = datetime.now(eastern)
 
-        # ⏳ Force close day trades at 3:55 PM ET
+        # Auto close day‑trades 3:55 PM
         if now.hour == 15 and now.minute >= 55:
-            closed_ids = []
-            for trade in trade_tracker.get_open_trades():
-                if trade.get("trade_type") == 0:
-                    close_and_log_trade(trade, reason="Time-based exit (3:55 PM)")
-                    closed_ids.append(str(trade.get("id", '?')))
-
-            if closed_ids:
-                notifier.send_message(
-                    f"📉 [Auto Exit @ 3:55 PM ET]\nClosed {len(closed_ids)} day trade(s): {', '.join(closed_ids)}"
-                )
-                bot_logger.info(f"[EXIT] Auto exit triggered at 3:55 PM — Closed trades: {closed_ids}")
+            for tr in list(trade_tracker.get_open_trades()):
+                close_and_log_trade(tr, "Auto 15:55 exit")
             return
 
-        # 📈 Dynamic exit evaluation
-        for trade in trade_tracker.get_open_trades():
-            exit_reason = should_exit_trade(trade)
-            if exit_reason:
-                close_and_log_trade(trade, reason=exit_reason)
+        for tr in list(trade_tracker.get_open_trades()):
+            reason = should_exit_trade(tr)
+            if reason:
+                close_and_log_trade(tr, reason, ref_price=market_snapshot["price"] if market_snapshot else None)
 
-    except Exception as e:
-        bot_logger.exception(f"[EXIT ERROR] Failed to handle exits: {e}")
+    except Exception as exc:
+        bot_logger.exception(f"[EXIT] {exc}")
 
-def should_exit_trade(trade):
+
+def should_exit_trade(trade: dict):
     try:
-        trade_id = trade.get("id", "?")
-        symbol = trade.get("symbol", "?")
-
         if evaluate_exit_decision(trade):
-            bot_logger.info(f"[Exit Eval] Meta-agent signaled exit for trade_id={trade_id}, symbol={symbol}")
-            return "Meta-agent signal"
-
-        if trade.get("trade_type") == 1:
-            dte = get_days_to_expiry(trade)
-            if dte <= 1:
-                bot_logger.info(f"[Exit Eval] Swing trade near expiry (DTE={dte}) — trade_id={trade_id}")
-                return f"Contract near expiry (DTE={dte})"
-
+            return "Meta‑agent"
+        if trade.get("trade_type") == 1 and _dte(trade) <= 1:
+            return "Near expiry"
         return None
     except Exception as e:
-        bot_logger.exception(f"[Exit Evaluation Error] trade_id={trade.get('id', '?')}, symbol={trade.get('symbol', '?')} — {e}")
+        bot_logger.error(f"[Exit‑eval] {e}")
         return None
 
-def close_and_log_trade(trade, reason="Manual exit"):
+
+def _dte(tr):
+    exp = tr.get("expiry");  # yyyy‑mm‑dd
+    if not exp: return 999
+    return (datetime.strptime(exp, "%Y-%m-%d").date() - datetime.now(eastern).date()).days
+
+
+def close_and_log_trade(trade: dict, reason: str, ref_price=None):
     try:
-        trade_id = trade.get("id", "?")
-        symbol = trade.get("symbol", "?")
-        option_symbol = trade.get("option_symbol")
+        trade_id = trade["id"]; symbol = trade.get("symbol","?")
+        side = "sell"  # closing
+        if SIMULATION_MODE:
+            fill_px, latency_ms = _simulate_close(ref_price or 0, side)
+        else:
+            t0 = time.time()
+            close_trade(trade)                       # real Tradier
+            latency_ms = int((time.time()-t0)*1000)
+            fill_px = trade.get("close_price") or ref_price
 
         reward = compute_shaped_reward(trade)
-
-        # 🧠 Build meta-state with live SPY + option quote (cached inside)
-        next_state = build_meta_state_for_exit(trade, option_symbol=option_symbol)
+        next_state = build_meta_state_for_exit(trade)
 
         trade.update({
-            "shaped_reward": reward,
             "exit_reason": reason,
-            "meta_next_state": next_state
+            "shaped_reward": reward,
+            "meta_next_state": next_state,
+            "close_price": fill_px,
+            "latency_ms": latency_ms,
         })
-
-        # 🧨 Close via Tradier
-        close_trade(trade)
         trade_tracker.mark_trade_closed(trade_id)
         log_trade_exit(trade)
 
-        notifier.send_message(f"🚪 Exited trade {trade_id} ({symbol})\nReason: {reason}\nReward: {reward:.3f}")
-        bot_logger.info(f"[EXIT] Closed trade {trade_id} ({symbol}) — Reason: {reason} — Reward: {reward:.3f}")
-
-        # 🎓 Meta-agent experience logging
-        state = trade.get("meta_state")
-        action = trade.get("meta_action")
-        if state and action is not None and next_state:
-            experience = {
-                "state": state,
-                "action": action,
+        # log experience for PPO
+        with open(META_LOG_PATH, "a") as f:
+            f.write(json.dumps({
+                "state": trade.get("meta_state"),
+                "action": trade.get("meta_action"),
                 "reward": reward,
                 "next_state": next_state,
                 "done": True
-            }
-            with open(META_LOG_PATH, "a") as f:
-                f.write(json.dumps(experience) + "\n")
-            bot_logger.debug(f"[EXIT] Logged meta-agent experience for trade_id={trade_id}")
+            }) + "\n")
 
-    except Exception as e:
-        bot_logger.exception(f"[Trade Close Error] trade_id={trade.get('id', '?')} — {e}")
+        notifier.send_message(
+            f"🔴 Exit {symbol} ({trade_id})\n"
+            f"{reason} | Reward {reward:.3f}"
+        )
+        bot_logger.info(f"[EXIT] {symbol} {trade_id} closed ({reason})")
+
+    except Exception as exc:
+        bot_logger.error(f"[Exit‑close] {exc}")
+        bot_logger.debug(traceback.format_exc())
