@@ -13,7 +13,8 @@ from meta.meta_agent         import evaluate_exit_decision
 from meta.reward_shaper      import compute_shaped_reward
 from config import (
     META_LOG_PATH, SIMULATION_MODE,
-    DEFAULT_SLIPPAGE_BPS, SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS
+    DEFAULT_SLIPPAGE_BPS, SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS,
+    HARD_CLOSE_DAYTRADES_ONLY
 )
 
 eastern = pytz.timezone("US/Eastern")
@@ -95,14 +96,18 @@ def close_and_log_trade(tr, reason: str, ref_price: float):
 def handle_exit(snapshot: dict | None = None):
     """
     Main loop to check all open trades for exit signals.
-    Also hard closes all trades at 15:55 market time.
+    Also optionally hard closes only day trades at 15:55 market time.
     """
     try:
         now = datetime.now(eastern)
 
-        # Hard exit at 15:55 to close all positions before market close
+        # Hard exit at 15:55 to close positions before market close
         if now.hour == 15 and now.minute >= 55:
             for tr in list(trade_tracker.get_open_trades()):
+                if HARD_CLOSE_DAYTRADES_ONLY:
+                    # Close only day trades if flag set
+                    if not tr.get("is_daytrade", False):
+                        continue  # skip non-day trades
                 close_and_log_trade(tr, "Auto 15:55", snapshot["price"] if snapshot else 0)
             return
 
