@@ -13,8 +13,11 @@ from utils.trade_logger import get_daily_trade_summary
 from retrain import retrain_model
 from main import run_market_open_tasks
 
-# ─── Health‑check ────────────────────────────────────────────────────────────
+# Health‑check
 from monitor.health_check import update_status
+
+# Online meta-agent update
+from meta.online_meta_update import online_update
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Global timezone handling: US/Eastern wall‑clock
@@ -63,7 +66,7 @@ def train_meta_agent_task():
             ["python", "meta/train_meta_agent.py"],
             capture_output=True,
             text=True,
-            timeout=300,           # 5‑minute cap
+            timeout=300,
             check=False
         )
         bot_logger.info("PPO training completed.")
@@ -75,6 +78,14 @@ def train_meta_agent_task():
         telegram.send_message("⚠️ PPO training timed out after 5 minutes.")
     except Exception as e:
         bot_logger.error(f"PPO training failed: {e}")
+
+def online_meta_update_task():
+    try:
+        bot_logger.info("Running online meta-agent update …")
+        online_update()
+        bot_logger.info("Online meta-agent update completed.")
+    except Exception as e:
+        bot_logger.error(f"Online meta-agent update failed: {e}")
 
 # ─── Main scheduler loop ─────────────────────────────────────────────────────
 def run_scheduler_loop():
@@ -89,6 +100,7 @@ def run_scheduler_loop():
     schedule.every().day.at("17:00").do(retrain_model_task)
     schedule.every().day.at("17:20").do(clean_logs_task)
     schedule.every().day.at("17:30").do(backup_logs_task)
+    schedule.every().day.at("17:40").do(online_meta_update_task)   # ✅ NEW
     schedule.every().day.at("17:50").do(train_meta_agent_task)
 
     # Hourly health‑check runner
