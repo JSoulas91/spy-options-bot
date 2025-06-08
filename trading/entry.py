@@ -134,4 +134,4 @@ def handle_entry(market_data: dict):
     except Exception as exc:
         bot_logger.error(f"[Entry] {exc}")
         bot_logger.debug(traceback.format_exc())
-        send_telegram_message(f"⚠️ Entry error\n{exc}") 
+        send_telegram_message(f"⚠️ Entry error\n{exc}")
