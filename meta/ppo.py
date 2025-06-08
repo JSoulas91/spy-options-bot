@@ -1,5 +1,8 @@
-# meta/ppo.py  – dual‑head (direction + confidence) PPO  ✚  tiny‑LSTM encoder
-import os, torch, torch.nn as nn, torch.optim as optim
+# meta/ppo.py  – Dual‑head PPO with tiny‑LSTM encoder + Dropout + Grad‑clip
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from torch.distributions import Categorical
 
 from meta.meta_agent_info import get_meta_agent_dims
@@ -9,45 +12,36 @@ from utils.logger          import bot_logger as logger
 # ──────────────────────────────────────────────────────────────
 class DualHeadLSTM(nn.Module):
     """
-    Architecture
-    ┌───────────────────────────┐
-    │  state  (batch, feat)     │
-    └───────┬───────────────────┘
-            │  unsqueeze(1)  →  sequence len = 1
-            ▼
-    ┌───────────────────────────┐
-    │  LSTM (in=feat, hid=32)   │   «just 1 step, so super‑light»
-    └───────┬───────────────────┘
-            ▼   take last hidden (batch, 32)
-    ┌───────────────────────────┐
-    │  FC → ReLU  (shared)      │
-    └───────┬───────────────────┘
-       ┌────┴─────────┬───────────────┐
-       ▼              ▼               ▼
-  dir_head        conf_head       value_head
-  (3‑logits)      (sigmoid)         (scalar)
+    Mini‑architecture
+       state(feat) → LSTM(32) → Dropout(0.1) → shared FC
+                                    ├── dir_head  (3‑logits)
+                                    ├── conf_head (sigmoid 0‑1)
+                                    └── value_head
+    Extremely light: ≤ 45 k params.
     """
     def __init__(self, state_dim: int, hidden: int = 64, lstm_hid: int = 32):
         super().__init__()
-        self.lstm = nn.LSTM(input_size=state_dim,
-                            hidden_size=lstm_hid,
-                            num_layers=1,
-                            batch_first=True)
-
-        self.shared = nn.Sequential(
+        self.lstm = nn.LSTM(
+            input_size=state_dim,
+            hidden_size=lstm_hid,
+            num_layers=1,
+            batch_first=True,
+        )
+        self.dropout = nn.Dropout(p=0.1)          # NEW 🟢
+        self.shared  = nn.Sequential(
             nn.Linear(lstm_hid, hidden),
             nn.ReLU()
         )
         self.dir_head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, 3)            # 3 direction classes
+            nn.Linear(hidden, 3)                  # logits
         )
         self.conf_head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
             nn.Linear(hidden, 1),
-            nn.Sigmoid()                    # 0‑1 confidence
+            nn.Sigmoid()
         )
         self.value_head = nn.Sequential(
             nn.Linear(hidden, hidden),
@@ -56,22 +50,23 @@ class DualHeadLSTM(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        # x: (batch, feat) ➜ (batch, 1, feat)
+        # x: (batch, feat)  →  (batch, 1, feat)
         out, _ = self.lstm(x.unsqueeze(1))
-        lstm_last = out[:, -1, :]          # (batch, lstm_hid)
-        h = self.shared(lstm_last)
+        h = self.dropout(out[:, -1, :])           # take last step
+        h = self.shared(h)
         return (
-            self.dir_head(h),              # logits
-            self.conf_head(h).squeeze(-1), # scalar
-            self.value_head(h)             # critic value
+            self.dir_head(h),          # logits
+            self.conf_head(h).squeeze(-1),   # scalar
+            self.value_head(h)         # critic value
         )
 
 # ──────────────────────────────────────────────────────────────
 class PPOAgent:
     """
-    Dual output heads          :   • direction  (categorical: 0/1/2)
-                                   • confidence (continuous 0‑1)
-    Tiny‑LSTM encoder in front :   better temporal context with negligible cost.
+    Dual‑output PPO agent:
+        • Direction (categorical 0/1/2)
+        • Confidence (regression 0‑1)
+    Now with gradient‑clipping & dropout for VPS‑friendly stability.
     """
     def __init__(
         self,
@@ -80,23 +75,24 @@ class PPOAgent:
         gamma: float = 0.99,
         eps_clip: float = 0.2,
         k_epochs: int = 4,
-        conf_loss_w: float = 0.2,        # weight of confidence MSE
-        entropy_coef_start: float = 1e‑2,
+        conf_loss_w: float = 0.20,
+        entropy_coef_start: float = 1e-2,
         target_entropy: float | None = None,
+        grad_clip_norm: float = 1.0,          # NEW 🟢
     ):
         if state_dim is None:
-            state_dim, _ = get_meta_agent_dims()   # action dim not needed now
+            state_dim, _ = get_meta_agent_dims()
         self.net = DualHeadLSTM(state_dim)
         self.opt = optim.Adam(self.net.parameters(), lr=lr)
 
-        # learnable entropy coefficient (direction head only)
         self.entropy_coef = torch.tensor(entropy_coef_start, requires_grad=True)
-        self.entropy_opt  = optim.Adam([self.entropy_coef], lr=1e‑3)
+        self.entropy_opt  = optim.Adam([self.entropy_coef], lr=1e-3)
 
         self.gamma, self.eps_clip, self.k_epochs = gamma, eps_clip, k_epochs
-        self.conf_loss_w = conf_loss_w
-        self.tgt_entropy = target_entropy or -1.0 * 3   # 3‑class target
-        self._load()                                   # load weights if any
+        self.conf_loss_w   = conf_loss_w
+        self.grad_clip_norm = grad_clip_norm
+        self.tgt_entropy   = target_entropy or -1.0 * 3   # 3‑class
+        self._load()
 
     # ───────── persistence ────────────────────────────────
     def _load(self):
@@ -104,35 +100,38 @@ class PPOAgent:
             logger.warning("⚠️ No saved PPO model found – starting fresh.")
             return
         ckpt = torch.load(META_MODEL_PATH, map_location="cpu")
-        self.net.load_state_dict(ckpt['net'])
-        self.opt.load_state_dict(ckpt['opt'])
-        self.entropy_coef.data = torch.tensor(ckpt.get('ent_coef', 1e‑2))
-        self.entropy_opt.load_state_dict(ckpt['ent_opt'])
-        logger.info("📥 PPO dual‑head + LSTM model loaded.")
+        self.net.load_state_dict(ckpt["net"])
+        self.opt.load_state_dict(ckpt["opt"])
+        self.entropy_coef.data = torch.tensor(ckpt.get("ent_coef", 1e-2))
+        self.entropy_opt.load_state_dict(ckpt["ent_opt"])
+        logger.info("📥 PPO dual‑head + LSTM model loaded.")
 
     def save(self):
-        torch.save({
-            'net':       self.net.state_dict(),
-            'opt':       self.opt.state_dict(),
-            'ent_coef':  self.entropy_coef.item(),
-            'ent_opt':   self.entropy_opt.state_dict(),
-        }, META_MODEL_PATH)
+        torch.save(
+            {
+                "net":       self.net.state_dict(),
+                "opt":       self.opt.state_dict(),
+                "ent_coef":  self.entropy_coef.item(),
+                "ent_opt":   self.entropy_opt.state_dict(),
+            },
+            META_MODEL_PATH,
+        )
         logger.info("💾 PPO model saved → %s", META_MODEL_PATH)
 
-    # ───────── rollout helpers (used in live code) ─────────
+    # ───────── rollout (inference) ─────────────────────────
     @torch.no_grad()
     def act(self, state: torch.Tensor):
         dir_logits, conf, _ = self.net(state)
         dist   = Categorical(logits=dir_logits)
         action = dist.sample()
         return (
-            action.item(),                 # 0/1/2
-            conf.item(),                   # scalar 0‑1
-            dist.log_prob(action),         # log‑prob for PPO
-            dist.entropy()
+            action.item(),           # 0/1/2
+            conf.item(),             # 0‑1
+            dist.log_prob(action),   # Tensor
+            dist.entropy(),          # Tensor
         )
 
-    # ───────── PPO plumbing  ───────────────────────────────
+    # ───────── PPO internals ──────────────────────────────
     @staticmethod
     def _returns(rewards, dones, last_v, γ):
         ret, out = last_v, []
@@ -147,31 +146,34 @@ class PPOAgent:
         loss.backward()
         self.entropy_opt.step()
 
-    # public API called from train_meta_agent.py  ───────────
-    def train_step(self, states, actions_dir, target_conf,
-                   rewards, dones, next_states,
-                   old_logp, weights=None):
+    # ====================================================================== #
+    # Public training step (called from train_meta_agent.py)
+    # ====================================================================== #
+    def train_step(
+        self,
+        states: torch.Tensor,
+        actions_dir: torch.Tensor,     # LongTensor[N]
+        target_conf: torch.Tensor,     # FloatTensor[N]
+        rewards: list,
+        dones: list,
+        next_states: torch.Tensor,
+        old_logp: torch.Tensor,
+        weights: torch.Tensor | None = None,
+    ):
         """
-        All tensors are already on CPU and correct dtype.
-        • states / next_states :  (N, feat)
-        • actions_dir         :  LongTensor[N]
-        • target_conf         :  FloatTensor[N]   (0‑1)
-        • rewards / dones     :  list/array
-        • old_logp            :  Tensor[N]
-        • weights             :  PER importance (or None)
+        All tensors are already on CPU.
         """
         with torch.no_grad():
             _, _, v_next = self.net(next_states)
-        _, _, v = self.net(states)                     # critic on current
+        _, _, v = self.net(states)
 
         returns = self._returns(rewards, dones, v_next.squeeze(), self.gamma)
         adv     = returns - v.squeeze().detach()
 
-        # forward current policy
         dir_logits, conf_pred, _ = self.net(states)
-        dist  = Categorical(logits=dir_logits)
-        logp  = dist.log_prob(actions_dir)
-        ratio = torch.exp(logp - old_logp)
+        dist   = Categorical(logits=dir_logits)
+        logp   = dist.log_prob(actions_dir)
+        ratio  = torch.exp(logp - old_logp)
 
         surr1 = ratio * adv
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * adv
@@ -180,15 +182,18 @@ class PPOAgent:
         conf_loss   = nn.MSELoss()(conf_pred, target_conf) * self.conf_loss_w
         entropy_term= dist.entropy().mean()
 
-        loss = actor_loss + 0.5*critic_loss + conf_loss - self.entropy_coef * entropy_term
+        loss = actor_loss + 0.5 * critic_loss + conf_loss - self.entropy_coef * entropy_term
         if weights is not None:
-            loss = loss * weights.mean()
+            loss *= weights.mean()
 
         self.opt.zero_grad()
         loss.backward()
+        # 🔒 Grad‑clip so VPS can’t explode RAM / NaNs
+        nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.opt.step()
+
         self._entropy_update(entropy_term)
 
-        # TD‑errors for PER priority update
+        # TD‑error for PER
         td_err = (returns - v.detach().squeeze()).cpu().numpy().tolist()
         return td_err
