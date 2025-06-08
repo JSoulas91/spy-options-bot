@@ -1,8 +1,12 @@
 # trading/entry.py
 """
-Handles new trade entries (live or simulated) using meta-agent gating.
+Handles new trade entries (live or simulated).
+
+➕  Logs every meta‑decision to meta/meta_log.jsonl for online training
+➕  Sends Telegram alert if the meta‑agent vetoes a trade
 """
-import random, time, traceback
+
+import json, random, time, traceback
 from datetime import datetime
 
 from utils.logger            import bot_logger
@@ -12,17 +16,19 @@ from utils.trade_logger      import log_trade
 from utils.metrics_logger    import log_trade_metrics
 from utils.vix_utils         import get_current_vix
 from meta.meta_state         import build_meta_state_for_entry
-from meta.meta_agent         import meta_agent
+from meta.meta_agent         import MetaAgent
 from strategy                import evaluate_trade_signal
 from trade_manager           import execute_trade_with_retries
 from config import (
     DEFAULT_POSITION_SIZE, ENABLE_DYNAMIC_SIZING,
     MIN_POSITION_SIZE, MAX_POSITION_SIZE, VIX_MODERATE_THRESHOLD,
     SIMULATION_MODE, DEFAULT_SLIPPAGE_BPS, DEFAULT_SPREAD_BPS,
-    SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS
+    SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS,
+    META_LOG_PATH                                     # <-- new
 )
 
 trade_tracker = TradeTracker()
+meta_agent    = MetaAgent()       # single instance
 
 # ───────────────────────────────── helpers
 def _dynamic_size(conf: float, vix: float) -> float:
@@ -34,11 +40,11 @@ def _dynamic_size(conf: float, vix: float) -> float:
 
 def _simulate_fill(mkt: float, side: str):
     spread = mkt * DEFAULT_SPREAD_BPS / 10_000
-    mid    = mkt + (spread/2 if side == "buy" else -spread/2)
+    mid    = mkt + (spread / 2 if side == "buy" else -spread / 2)
     slip   = mkt * DEFAULT_SLIPPAGE_BPS / 10_000
     fill   = mid + (slip if side == "buy" else -slip)
     delay  = random.randint(SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS)
-    time.sleep(delay/1000)
+    time.sleep(delay / 1000)
     return round(fill, 4), delay
 
 # ───────────────────────────────── core
@@ -48,6 +54,7 @@ def handle_entry(market_data: dict):
         if now.hour == 15 and now.minute >= 30:
             return
 
+        # 1.  Get raw trading signal from your heuristics
         signal = evaluate_trade_signal(market_data)
         if not signal.get("should_trade"):
             return
@@ -56,6 +63,7 @@ def handle_entry(market_data: dict):
         trade_type  = signal["trade_type"]
         trade_setup = signal["trade_setup"]
 
+        # 2.  Build meta‑state & ask the agent
         vix = get_current_vix() or 20
         size = _dynamic_size(confidence, vix)
         trade_setup["size"] = size
@@ -68,25 +76,36 @@ def handle_entry(market_data: dict):
             signal.get("long_term_data", {}),
             size
         )
+        action_idx, agent_conf = meta_agent.select_action(meta_state)
+        meta_params = meta_agent.interpret_action(action_idx, agent_conf)
 
-        meta_agent.eval_mode()
-        meta_action = meta_agent.select_action(meta_state)
-        meta_params = meta_agent.interpret_action(meta_action)
+        # ---- log the decision for future online training ----
+        try:
+            with open(META_LOG_PATH, "a") as f:
+                f.write(json.dumps({
+                    "timestamp":   now.isoformat(),
+                    "meta_state":  meta_state.tolist(),
+                    "meta_action": action_idx,
+                    "agent_conf":  agent_conf,
+                    "done": False     # will be updated on exit
+                }) + "\n")
+        except Exception as e:
+            bot_logger.warning(f"[Meta‑log] {e}")
 
-        agent_conf = meta_params.get("agent_confidence", 0)
-
-        bot_logger.info(f"[MetaAgent Entry] action={meta_action} agent_conf={agent_conf:.3f}")
-        if meta_action == 0 or agent_conf < 0.5:
-            bot_logger.info("[MetaAgent Entry] Blocked by agent.")
-            send_telegram_message("🛑 Entry blocked by meta-agent (action=0 or low confidence).")
+        # 3.  If agent vetoes → skip + alert
+        if action_idx == 0:
+            send_telegram_message(
+                f"⛔️ Meta‑agent vetoed trade (conf {agent_conf:.2f})."
+            )
             return
 
+        # 4.  Risk gate: max open trades
         if not trade_tracker.can_place_trade():
             return
 
         # --------------- live vs sim ---------------
         if SIMULATION_MODE:
-            m_price = market_data["price"]
+            m_price  = market_data["price"]
             fill_px, latency = _simulate_fill(m_price, "buy")
             order = {
                 "id": f"sim_{int(time.time()*1000)}",
@@ -97,11 +116,11 @@ def handle_entry(market_data: dict):
             }
             slippage = abs(fill_px - m_price) / m_price
         else:
-            t0 = time.time()
+            t0     = time.time()
             order  = execute_trade_with_retries(trade_setup)
             if not order:
                 return
-            latency  = int((time.time()-t0)*1000)
+            latency  = int((time.time() - t0) * 1000)
             slippage = abs(order.get("fill_price", market_data["price"]) -
                            market_data["price"]) / market_data["price"]
 
@@ -113,9 +132,9 @@ def handle_entry(market_data: dict):
             "timestamp": now.isoformat(),
             "trade_type": trade_type,
             "meta_state": meta_state.tolist(),
-            "option_symbol": trade_setup.get("option_symbol"),
-            "meta_action": int(meta_action),
-            "meta_confidence": float(agent_conf)
+            "meta_action": action_idx,
+            "agent_conf": agent_conf,
+            "option_symbol": trade_setup.get("option_symbol")
         })
         trade_tracker.log_trade(order, trade_type)
         log_trade({
@@ -129,7 +148,8 @@ def handle_entry(market_data: dict):
 
         send_telegram_message(
             f"🟢 Enter {order['symbol']} size {size:.2%} "
-            f"fill {order['fill_price']}  slip {slippage*100:.2f}%"
+            f"fill {order['fill_price']}  slip {slippage*100:.2f}% "
+            f"(agent conf {agent_conf:.2f})"
         )
 
     except Exception as exc:
