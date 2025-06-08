@@ -1,6 +1,6 @@
 # trading/entry.py
 """
-Handles new trade entries (live or simulated).
+Handles new trade entries (live or simulated) using meta-agent gating.
 """
 import random, time, traceback
 from datetime import datetime
@@ -68,8 +68,16 @@ def handle_entry(market_data: dict):
             signal.get("long_term_data", {}),
             size
         )
+
         meta_agent.eval_mode()
-        if meta_agent.select_action(meta_state) == 0:
+        meta_action = meta_agent.select_action(meta_state)
+        meta_params = meta_agent.interpret_action(meta_action)
+
+        # ─── Logging agent decision
+        bot_logger.info(f"[MetaAgent Entry] action={meta_action} conf={meta_params.get('agent_confidence'):.3f}")
+        if meta_action == 0 or meta_params.get("agent_confidence", 0) < 0.5:
+            bot_logger.info("[MetaAgent Entry] Blocked by agent.")
+            send_telegram_message("🛑 Entry blocked by meta-agent (action=0 or low confidence).")
             return
 
         if not trade_tracker.can_place_trade():
@@ -104,7 +112,9 @@ def handle_entry(market_data: dict):
             "timestamp": now.isoformat(),
             "trade_type": trade_type,
             "meta_state": meta_state.tolist(),
-            "option_symbol": trade_setup.get("option_symbol")
+            "option_symbol": trade_setup.get("option_symbol"),
+            "meta_action": int(meta_action),
+            "meta_confidence": float(meta_params.get("agent_confidence", -1))
         })
         trade_tracker.log_trade(order, trade_type)
         log_trade({
@@ -120,6 +130,7 @@ def handle_entry(market_data: dict):
             f"🟢 Enter {order['symbol']} size {size:.2%} "
             f"fill {order['fill_price']}  slip {slippage*100:.2f}%"
         )
+
     except Exception as exc:
         bot_logger.error(f"[Entry] {exc}")
         bot_logger.debug(traceback.format_exc())
