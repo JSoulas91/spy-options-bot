@@ -73,9 +73,10 @@ def handle_entry(market_data: dict):
         meta_action = meta_agent.select_action(meta_state)
         meta_params = meta_agent.interpret_action(meta_action)
 
-        # ─── Logging agent decision
-        bot_logger.info(f"[MetaAgent Entry] action={meta_action} conf={meta_params.get('agent_confidence'):.3f}")
-        if meta_action == 0 or meta_params.get("agent_confidence", 0) < 0.5:
+        agent_conf = meta_params.get("agent_confidence", 0)
+
+        bot_logger.info(f"[MetaAgent Entry] action={meta_action} agent_conf={agent_conf:.3f}")
+        if meta_action == 0 or agent_conf < 0.5:
             bot_logger.info("[MetaAgent Entry] Blocked by agent.")
             send_telegram_message("🛑 Entry blocked by meta-agent (action=0 or low confidence).")
             return
@@ -114,7 +115,7 @@ def handle_entry(market_data: dict):
             "meta_state": meta_state.tolist(),
             "option_symbol": trade_setup.get("option_symbol"),
             "meta_action": int(meta_action),
-            "meta_confidence": float(meta_params.get("agent_confidence", -1))
+            "meta_confidence": float(agent_conf)
         })
         trade_tracker.log_trade(order, trade_type)
         log_trade({
