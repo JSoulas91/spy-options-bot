@@ -19,7 +19,7 @@ from monitor.health_check import update_status
 # Online meta-agent update
 from meta.online_meta_update import online_update
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 # Global timezone handling: US/Eastern wall‑clock
 os.environ["TZ"] = "US/Eastern"
 if hasattr(time, "tzset"):          # Unix only
@@ -28,7 +28,7 @@ if hasattr(time, "tzset"):          # Unix only
 eastern  = pytz.timezone("US/Eastern")
 telegram = TelegramNotifier()
 
-# ─── Task helpers ────────────────────────────────────────────────────────────
+# ─── Task helpers ──────────────────────────────────────────────
 def send_daily_summary_task():
     try:
         summary_text = get_daily_trade_summary()
@@ -59,7 +59,6 @@ def backup_logs_task():
         bot_logger.error(f"Log backup failed: {e}")
 
 def train_meta_agent_task():
-    """Run PPO training with a 5‑min safety timeout."""
     bot_logger.info("Starting daily PPO training …")
     try:
         result = subprocess.run(
@@ -87,21 +86,45 @@ def online_meta_update_task():
     except Exception as e:
         bot_logger.error(f"Online meta-agent update failed: {e}")
 
-# ─── Main scheduler loop ─────────────────────────────────────────────────────
+def run_simulation_training_task():
+    bot_logger.info("🏋️‍♂️ Running simulation training …")
+    try:
+        result = subprocess.run(
+            ["python", "sim_train_full.py"],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False
+        )
+        bot_logger.info("Simulation training completed.")
+        bot_logger.debug(f"Simulation stdout:\n{result.stdout}")
+        if result.stderr:
+            bot_logger.warning(f"Simulation stderr:\n{result.stderr}")
+    except subprocess.TimeoutExpired as e:
+        bot_logger.error(f"Simulation training timed out: {e}")
+        telegram.send_message("⚠️ Simulation training timed out after 10 minutes.")
+    except Exception as e:
+        bot_logger.error(f"Simulation training failed: {e}")
+
+# ─── Main scheduler loop ───────────────────────────────────────
 def run_scheduler_loop():
     bot_logger.info("Scheduler started.")
-    update_status("last_scheduler_start")          # ✅ heartbeat
+    update_status("last_scheduler_start")  # ✅ heartbeat
 
     # Market‑hours automation
     schedule.every().day.at("09:30").do(run_market_open_tasks)
 
-    # Post‑market automation (all times US/Eastern)
+    # Post‑market automation (US/Eastern)
     schedule.every().day.at("16:45").do(send_daily_summary_task)
     schedule.every().day.at("17:00").do(retrain_model_task)
     schedule.every().day.at("17:20").do(clean_logs_task)
     schedule.every().day.at("17:30").do(backup_logs_task)
-    schedule.every().day.at("17:40").do(online_meta_update_task)   # ✅ NEW
+    schedule.every().day.at("17:40").do(online_meta_update_task)
     schedule.every().day.at("17:50").do(train_meta_agent_task)
+
+    # 🔁 Simulation training: Sat + Sun at noon ET
+    schedule.every().saturday.at("12:00").do(run_simulation_training_task)
+    schedule.every().sunday.at("12:00").do(run_simulation_training_task)
 
     # Hourly health‑check runner
     schedule.every().hour.at(":30").do(
