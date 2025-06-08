@@ -1,62 +1,69 @@
+# meta/meta_agent.py
+"""
+Wrapper around the dual‑head PPO model.
+• select_action(state) ➜ (action_index, agent_confidence)
+• interpret_action(idx, conf) ➜ strategy parameters dict
+"""
+
 import os
 import numpy as np
-from meta.ppo import PPOPolicy
-from meta.meta_state import get_current_meta_state
+import torch
+
+from meta.ppo import PPOAgent          # ← our tiny‑LSTM PPO
+from utils.logger import bot_logger as logger
+from config import META_MODEL_PATH
 
 class MetaAgent:
-    def __init__(self, model_path="meta/meta_agent_model.pkl"):
-        self.model_path = model_path
-        self.policy = self._load_or_initialize_policy()
+    def __init__(self, ckpt_path: str = META_MODEL_PATH):
+        self.ckpt_path = ckpt_path
+        self._model    = PPOAgent()          # dims auto‑loaded
+        self._model.net.eval()               # inference mode
+        logger.info("[MetaAgent] PPO model ready.")
 
-    def _load_or_initialize_policy(self):
-        policy = PPOPolicy(input_dim=5, output_dim=3)
-        if os.path.exists(self.model_path):
-            try:
-                policy.load(self.model_path)
-                print("[MetaAgent] Loaded existing meta-agent policy.")
-            except Exception as e:
-                print(f"[MetaAgent] Failed to load existing policy: {e}. Starting fresh.")
-        else:
-            print("[MetaAgent] No existing policy found. Initializing new one.")
-        return policy
+    # ───────────────────────────────────────────────
+    def select_action(self, state: np.ndarray | list):
+        """
+        Returns:
+            action_idx (int)  : 0 = veto / 1 = normal / 2 = tighten‑exit
+            agent_conf (float): model’s confidence 0‑1 (from sigmoid head)
+        """
+        state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            act_idx, conf, _, _ = self._model.act(state_t)
+        return int(act_idx), float(conf)
 
-    def select_action(self, state):
+    # ───────────────────────────────────────────────
+    @staticmethod
+    def interpret_action(action_idx: int, agent_conf: float):
         """
-        Given a meta-state, return an action (as index).
+        Map action index → dict of strategy knobs + echo confidence.
         """
-        state = np.array(state).reshape(1, -1)
-        return self.policy.select_action(state)
-
-    def interpret_action(self, action_index):
-        """
-        Converts action index into a dictionary of strategy parameters.
-        """
-        actions = {
-            0: {"confidence_threshold": 0.65, "position_size": 0.05},  # Conservative
-            1: {"confidence_threshold": 0.55, "position_size": 0.10},  # Moderate
-            2: {"confidence_threshold": 0.45, "position_size": 0.15},  # Aggressive
+        mapping = {
+            0: {                         # force exit / veto
+                "confidence_threshold": 0.80,
+                "scale_factor": 0.5,
+                "tighten_exit": True,
+            },
+            1: {                         # neutral / default
+                "confidence_threshold": 0.60,
+                "scale_factor": 1.0,
+                "tighten_exit": False,
+            },
+            2: {                         # aggressive but with tighter risk
+                "confidence_threshold": 0.50,
+                "scale_factor": 0.8,     # partial scale‑in
+                "tighten_exit": True,
+            },
         }
-        return actions.get(action_index, actions[1])  # Default to moderate
+        out = mapping.get(action_idx, mapping[1])
+        out["agent_confidence"] = agent_conf
+        return out
 
-    def should_retry_trade(self, contract=None):
-        """
-        Decide whether a failed trade should be retried based on current meta-state.
-        Returns False if the meta-agent suggests avoiding further risk.
-        """
-        try:
-            state = get_current_meta_state()
-            action_index = self.select_action(state)
-            if action_index == 0:
-                print("[MetaAgent] Retry vetoed by meta-agent (conservative mode).")
-                return False
-            return True
-        except Exception as e:
-            print(f"[MetaAgent] Failed to evaluate retry decision: {e}")
-            return True  # fallback to allow retry
+    # ───────────────────────────────────────────────
+    # helpers used elsewhere (optional)
+    def veto_retry(self, state):
+        idx, _ = self.select_action(state)
+        return idx == 0
 
-    def save_policy(self):
-        """
-        Save the trained model.
-        """
-        self.policy.save(self.model_path)
-        print("[MetaAgent] Meta-agent policy saved.")
+    def save(self):
+        self._model.save()
