@@ -1,13 +1,3 @@
-"""
-Meta‑state builders (entry / exit)
-──────────────────────────────────
-• Dynamic feature normalisation (auto‑scales to LT history)
-• Position‑size awareness
-• Market‑regime one‑hot encoding
-• Live SPY & option quote for exit state
-• 6‑second TTL caches to stay far below 60 Tradier calls / min
-"""
-
 from __future__ import annotations
 
 import time
@@ -51,7 +41,7 @@ def normalize(val: float, rng: Tuple[float, float]) -> float:
 # ───────────────────────────────────────────────
 # Dynamic range cache
 _DYNAMIC: Dict[str, Tuple[Tuple[float, float], float]] = {}
-_DYN_TTL = 3600  # 1 h
+_DYN_TTL = 3600  # 1 hour
 
 def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, float]:
     vals: List[float] = []
@@ -74,7 +64,6 @@ def get_range(feat: str, long_term) -> Tuple[float, float]:
     _DYNAMIC[feat] = (rng, now)
     return rng
 
-# ───────────────────────────────────────────────
 def summarise_past(trades, rng_p, rng_d):
     if not trades:
         return [0.5, 0.5]
@@ -111,9 +100,8 @@ def build_meta_state_for_entry(
     long_term_data=None,
     position_size: float = 0.0,
 ) -> np.ndarray:
-
-    past_trades   = past_trades or []
-    long_term_data= long_term_data or {}
+    past_trades = past_trades or []
+    long_term_data = long_term_data or {}
 
     try:
         # Dynamic ranges
@@ -134,7 +122,7 @@ def build_meta_state_for_entry(
             ]
 
         vix_val = fetch_vix_price() or 20.0
-        regime  = _classify_regime(data_1d.iloc[-1], vix_val)
+        regime = _classify_regime(data_1d.iloc[-1], vix_val)
         regime_vect = _regime_one_hot(regime)
 
         state = [
@@ -182,11 +170,12 @@ def build_meta_state_for_exit(
     past_trades=None,
     long_term_data=None,
 ) -> np.ndarray:
-    past_trades   = past_trades or []
-    long_term_data= long_term_data or {}
+    past_trades = past_trades or []
+    long_term_data = long_term_data or {}
+
     try:
-        spy_q      = get_spy_latest_quote() or {}
-        spy_price  = spy_q.get("price", 0)
+        spy_q     = get_spy_latest_quote() or {}
+        spy_price = spy_q.get("price", 0)
 
         opt_sym = trade.get("option_symbol")
         opt_q   = _cached_option_quote(opt_sym) if opt_sym else {}
@@ -201,17 +190,18 @@ def build_meta_state_for_exit(
         entry      = trade.get("entry_price", 0)
         pnl_pct    = (spy_price - entry) / max(entry, 1e-9)
 
-        minutes_open = normalize(
-            (datetime.now(eastern) -
-             datetime.fromisoformat(trade.get("timestamp")).astimezone(eastern)
-             ).seconds // 60,
-            dur_rng)
+        # Fix timedelta conversion
+        try:
+            entry_time = datetime.fromisoformat(trade.get("timestamp")).astimezone(eastern)
+            minutes_open = (datetime.now(eastern) - entry_time).total_seconds() // 60
+        except Exception:
+            minutes_open = 0
 
         state = [
             normalize(confidence, DEFAULT_RANGES["CONF"]),
             1.0 if t_type == 1 else 0.0,
             normalize(get_minutes_since_open(), dur_rng),
-            minutes_open,
+            normalize(minutes_open, dur_rng),
             normalize(pnl_pct, prof_rng),
             normalize(fetch_vix_price() or 20.0, DEFAULT_RANGES["VIX"]),
             *summarise_past(trades=past_trades, rng_p=prof_rng, rng_d=dur_rng),
@@ -226,15 +216,8 @@ def build_meta_state_for_exit(
         return np.zeros(43, dtype=np.float32)
 
 # ───────────────────────────────────────────────
-# Log‑row → meta‑state helper (used by training)
-# ───────────────────────────────────────────────
 def build_meta_state_from_log(row: dict) -> np.ndarray:
-    """
-    Training logs store the raw meta‑state under 'meta_state'.
-    Return that vector if present; otherwise a zero‑vector of length 73.
-    """
     vec = row.get("meta_state")
     if vec is not None:
         return np.asarray(vec, dtype=np.float32)
-
     return np.zeros(73, dtype=np.float32)
