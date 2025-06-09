@@ -8,16 +8,16 @@ from utils.logger import bot_logger as logger
 # ─────────────────────────────────────────────
 # ░▒▓  Environment / Globals  ▓▒░
 # ─────────────────────────────────────────────
-TRADIER_API_KEY     = os.getenv("TRADIER_API_TOKEN")
-TRADIER_ACCOUNT_ID  = os.getenv("TRADIER_ACCOUNT_ID")
-USE_LIVE_TRADIER    = os.getenv("USE_LIVE_TRADIER", "false").lower() == "true"
+TRADIER_API_TOKEN    = os.getenv("TRADIER_API_TOKEN")
+TRADIER_ACCOUNT_ID   = os.getenv("TRADIER_ACCOUNT_ID")
+USE_LIVE_TRADIER     = os.getenv("USE_LIVE_TRADIER", "false").lower() == "true"
 
-if not TRADIER_API_KEY or not TRADIER_ACCOUNT_ID:
-    raise EnvironmentError("Missing TRADIER_API_KEY or TRADIER_ACCOUNT_ID in environment")
+if not TRADIER_API_TOKEN or not TRADIER_ACCOUNT_ID:
+    raise EnvironmentError("Missing TRADIER_API_TOKEN or TRADIER_ACCOUNT_ID in environment")
 
 BASE_URL = "https://api.tradier.com/v1" if USE_LIVE_TRADIER else "https://sandbox.tradier.com/v1"
 HEADERS  = {
-    "Authorization": f"Bearer {TRADIER_API_KEY}",
+    "Authorization": f"Bearer {TRADIER_API_TOKEN}",
     "Accept":        "application/json"
 }
 
@@ -30,10 +30,6 @@ def safe_request(method: str,
                  data:   Optional[Dict[str, Any]] = None,
                  max_retries: int = 3,
                  timeout: int = 10) -> Optional[Dict[str, Any]]:
-    """
-    Wrapper around requests with basic retry logic and exponential back‑off.
-    Returns parsed JSON on success, or None on failure.
-    """
     url = f"{BASE_URL}/{endpoint}"
 
     for attempt in range(max_retries):
@@ -51,8 +47,7 @@ def safe_request(method: str,
         except Exception as exc:
             logger.error(f"Tradier API error [{endpoint}] (attempt {attempt+1}/{max_retries}): {exc}")
             if attempt < max_retries - 1:
-                sleep_for = 2 ** attempt  # 1 s, 2 s, 4 s …
-                time.sleep(sleep_for)
+                time.sleep(2 ** attempt)
             else:
                 logger.exception("Maximum retries reached – giving up.")
     return None
@@ -73,7 +68,6 @@ def get_option_quote(option_symbol: str) -> Dict[str, Any]:
 # ░▒▓  Option chain  ▓▒░
 # ─────────────────────────────────────────────
 def _normalize_contract_list(obj: Any) -> List[Dict[str, Any]]:
-    """Tradier returns dict if only one contract – normalise to list."""
     if obj is None:
         return []
     return obj if isinstance(obj, list) else [obj]
@@ -97,14 +91,10 @@ def place_option_order(option_symbol: str,
                        order_type: str = "market",
                        duration: str = "day"
                        ) -> Dict[str, Any]:
-    """
-    Places an option order for SPY contracts.
-    side examples: 'buy_to_open', 'sell_to_close'
-    """
     endpoint = f"accounts/{TRADIER_ACCOUNT_ID}/orders"
     payload = {
         "class"        : "option",
-        "symbol"       : "SPY",          # underlying – you trade only SPY
+        "symbol"       : "SPY",
         "option_symbol": option_symbol,
         "side"         : side,
         "quantity"     : quantity,
