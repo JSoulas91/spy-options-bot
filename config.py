@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # === TRADIER KEYS ===
-TRADIER_API_KEY      = os.getenv("TRADIER_API_KEY", "")
 TRADIER_API_TOKEN    = os.getenv("TRADIER_API_TOKEN", "")
 TRADIER_ACCOUNT_ID   = os.getenv("TRADIER_ACCOUNT_ID", "")
 USE_LIVE_TRADIER     = os.getenv("USE_LIVE_TRADIER", "false").lower() == "true"
