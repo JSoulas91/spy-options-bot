@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 
 from config import MAX_RETRIES, RETRY_DELAY_SECONDS, ENFORCE_PDT_LIMITS
 from utils.logger import bot_logger as logger
-from utils.telegram import send_telegram_message
+from utils.telegram_utils import send_telegram_message
 from utils.trade_tracker import TradeTracker
 from utils.vix_utils import get_current_vix
 from utils.economic_calendar import has_monday_macro_event
