@@ -1,4 +1,8 @@
 # meta/train_meta_agent.py – adapted for dual‑head PPO
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import os, json, csv
 import numpy as np, torch
 from typing import List, Dict
