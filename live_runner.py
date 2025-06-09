@@ -6,7 +6,7 @@ from threading import Lock
 from collections import deque
 
 from utils.logger   import bot_logger as logger
-from utils.telegram import send_telegram_message
+from utils.telegram_utils import send_telegram_message
 from monitor.health_check import update_status
 
 from data.multi_timeframe_fetcher import fetch_long_term_features
