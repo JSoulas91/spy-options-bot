@@ -3,7 +3,7 @@ import json
 import time
 from datetime import datetime, timedelta
 from utils.logger import bot_logger
-from utils.telegram import send_telegram_message
+from utils.telegram_utils import send_telegram_message
 
 STATUS_FILE = "monitor/last_status.json"
 MAX_MINUTES_SINCE_LAST_TRADE = 60 * 6  # 6 hours max gap
