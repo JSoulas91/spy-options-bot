@@ -18,7 +18,7 @@ from utils.vix_utils         import get_current_vix
 from meta.meta_state         import build_meta_state_for_entry
 from meta.meta_agent         import MetaAgent
 from strategy.strategy       import evaluate_trade_signal   # ✅ FIXED import
-from trade_manager           import execute_trade_with_retries
+from trading.trade_manager           import execute_trade_with_retries
 from config import (
     DEFAULT_POSITION_SIZE, ENABLE_DYNAMIC_SIZING,
     MIN_POSITION_SIZE, MAX_POSITION_SIZE, VIX_MODERATE_THRESHOLD,
