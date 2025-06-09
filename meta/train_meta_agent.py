@@ -10,7 +10,7 @@ from meta.meta_agent_info      import save_meta_agent_dims
 from meta.prioritized_buffer   import PrioritizedReplayBuffer
 from utils.logger              import bot_logger as logger
 from utils.meta_telegram_reporter import send_training_report
-from utils.telegram            import send_telegram_message
+from utils.telegram_utils      import send_telegram_message
 from monitor.health_check      import update_status
 from config import (
     META_LOG_PATH, EPOCHS, BATCH_SIZE,
