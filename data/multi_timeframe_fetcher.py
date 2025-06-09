@@ -6,49 +6,61 @@ from typing import Dict, Any
 
 import pandas as pd
 import requests
+import pytz
 
 from utils.logger import bot_logger
 from data.quote_utils import get_spy_quote  # ← live SPY quote w/ 6‑sec cache
 
 # ── Tradier auth ───────────────────────────────────────────
-TRADIER_API_TOKEN   = os.getenv("TRADIER_API_TOKEN")
-TRADIER_BASE_URL  = "https://api.tradier.com/v1"
+TRADIER_API_TOKEN = os.getenv("TRADIER_API_TOKEN")
+TRADIER_BASE_URL = "https://api.tradier.com/v1"
 HEADERS = {
     "Authorization": f"Bearer {TRADIER_API_TOKEN}",
-    "Accept":        "application/json",
+    "Accept": "application/json",
 }
 
 # ── In‑memory caches (thread‑safe) ─────────────────────────
 _INTRADAY_CACHE: Dict[str, Dict[str, Any]] = {}
-_HISTORY_CACHE:  Dict[str, Dict[str, Any]] = {}
+_HISTORY_CACHE: Dict[str, Dict[str, Any]] = {}
 _CACHE_LOCK = threading.Lock()
 
 INTRADAY_TTL_SEC = 6      # intraday refetch ≤10×/min
-HISTORY_TTL_HRS   = 12     # daily history 2×/day
+HISTORY_TTL_HRS = 12      # daily history 2×/day
+
+# ───────────────────────────────────────────────────────────
+# Market open time helper
+# ───────────────────────────────────────────────────────────
+def get_minutes_since_open() -> int:
+    eastern = pytz.timezone("US/Eastern")
+    now = datetime.now(eastern)
+    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    if now < market_open:
+        return 0
+    delta = now - market_open
+    return delta.seconds // 60
 
 # ───────────────────────────────────────────────────────────
 # 📈 Indicator helpers
 # ───────────────────────────────────────────────────────────
-# … indicator functions unchanged …
 def compute_rsi(series, period=14):
     delta = series.diff()
-    gain  = delta.clip(lower=0).rolling(period).mean()
-    loss  = (-delta).clip(lower=0).rolling(period).mean()
-    rs    = gain / (loss + 1e-9)
+    gain = delta.clip(lower=0).rolling(period).mean()
+    loss = (-delta).clip(lower=0).rolling(period).mean()
+    rs = gain / (loss + 1e-9)
     return 100 - 100 / (1 + rs)
 
 def compute_macd(series, fast=12, slow=26, signal=9):
-    exp1  = series.ewm(span=fast,  adjust=False).mean()
-    exp2  = series.ewm(span=slow,  adjust=False).mean()
-    macd  = exp1 - exp2
-    sig   = macd.ewm(span=signal, adjust=False).mean()
+    exp1 = series.ewm(span=fast, adjust=False).mean()
+    exp2 = series.ewm(span=slow, adjust=False).mean()
+    macd = exp1 - exp2
+    sig = macd.ewm(span=signal, adjust=False).mean()
     return macd, sig
 
 def compute_atr(df, period=14):
     tr = pd.concat(
         [df["high"] - df["low"],
          (df["high"] - df["close"].shift()).abs(),
-         (df["low"]  - df["close"].shift()).abs()],
+         (df["low"] - df["close"].shift()).abs()],
         axis=1
     ).max(axis=1)
     return tr.rolling(period).mean()
@@ -64,17 +76,17 @@ def compute_indicators(df: pd.DataFrame) -> Dict[str, Any]:
     if df is None or df.empty:
         return {}
     df = df.copy()
-    df["ema_20"]  = df["close"].ewm(span=20 , adjust=False).mean()
-    df["ema_50"]  = df["close"].ewm(span=50 , adjust=False).mean()
+    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
     df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
-    df["rsi"]     = compute_rsi(df["close"])
+    df["rsi"] = compute_rsi(df["close"])
     df["macd"], df["macd_signal"] = compute_macd(df["close"])
-    df["atr"]     = compute_atr(df)
-    df["vwap"]    = compute_vwap(df)
-    ma20          = df["close"].rolling(20)
+    df["atr"] = compute_atr(df)
+    df["vwap"] = compute_vwap(df)
+    ma20 = df["close"].rolling(20)
     df["bb_upper"] = ma20.mean() + 2 * ma20.std()
     df["bb_lower"] = ma20.mean() - 2 * ma20.std()
-    sup, res      = compute_support_resistance(df)
+    sup, res = compute_support_resistance(df)
 
     last = df.iloc[-1]
     return {
@@ -116,8 +128,8 @@ def _fetch_timesales(symbol, start_dt, end_dt, interval):
     params = {
         "symbol": symbol,
         "interval": interval,
-        "start":  start_dt.strftime("%Y-%m-%dT%H:%M"),
-        "end":    end_dt.strftime("%Y-%m-%dT%H:%M"),
+        "start": start_dt.strftime("%Y-%m-%dT%H:%M"),
+        "end": end_dt.strftime("%Y-%m-%dT%H:%M"),
         "session_filter": "open",
     }
     try:
@@ -139,12 +151,12 @@ def _fetch_history(symbol, start_date, end_date):
     url = f"{TRADIER_BASE_URL}/markets/history"
     params = {
         "symbol": symbol,
-        "start":  start_date.strftime("%Y-%m-%d"),
-        "end":    end_date.strftime("%Y-%m-%d"),
+        "start": start_date.strftime("%Y-%m-%d"),
+        "end": end_date.strftime("%Y-%m-%d"),
         "interval": "daily",
     }
     try:
-        r  = requests.get(url, headers=HEADERS, params=params, timeout=8)
+        r = requests.get(url, headers=HEADERS, params=params, timeout=8)
         r.raise_for_status()
         js = r.json()
         rows = js.get("history", {}).get("day", [])
