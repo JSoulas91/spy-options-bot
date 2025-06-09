@@ -1,24 +1,15 @@
-# data/tradier_api.py
-import os
 import time
 import requests
 from typing import Any, Dict, List, Optional
+from config import TRADIER_API_TOKEN, TRADIER_ACCOUNT_ID, TRADIER_BASE_URL
 from utils.logger import bot_logger as logger
 
 # ─────────────────────────────────────────────
-# ░▒▓  Environment / Globals  ▓▒░
+# ░▒▓  Headers  ▓▒░
 # ─────────────────────────────────────────────
-TRADIER_API_TOKEN    = os.getenv("TRADIER_API_TOKEN")
-TRADIER_ACCOUNT_ID   = os.getenv("TRADIER_ACCOUNT_ID")
-USE_LIVE_TRADIER     = os.getenv("USE_LIVE_TRADIER", "false").lower() == "true"
-
-if not TRADIER_API_TOKEN or not TRADIER_ACCOUNT_ID:
-    raise EnvironmentError("Missing TRADIER_API_TOKEN or TRADIER_ACCOUNT_ID in environment")
-
-BASE_URL = "https://api.tradier.com/v1" if USE_LIVE_TRADIER else "https://sandbox.tradier.com/v1"
-HEADERS  = {
+HEADERS = {
     "Authorization": f"Bearer {TRADIER_API_TOKEN}",
-    "Accept":        "application/json"
+    "Accept": "application/json"
 }
 
 # ─────────────────────────────────────────────
@@ -27,10 +18,10 @@ HEADERS  = {
 def safe_request(method: str,
                  endpoint: str,
                  params: Optional[Dict[str, Any]] = None,
-                 data:   Optional[Dict[str, Any]] = None,
+                 data: Optional[Dict[str, Any]] = None,
                  max_retries: int = 3,
                  timeout: int = 10) -> Optional[Dict[str, Any]]:
-    url = f"{BASE_URL}/{endpoint}"
+    url = f"{TRADIER_BASE_URL}/{endpoint}"
 
     for attempt in range(max_retries):
         try:
@@ -75,9 +66,11 @@ def _normalize_contract_list(obj: Any) -> List[Dict[str, Any]]:
 def get_option_chain(symbol: str = "SPY",
                      expiration: Optional[str] = None,
                      greeks: bool = False) -> List[Dict[str, Any]]:
-    params = {"symbol": symbol,
-              "expiration": expiration,
-              "greeks": "true" if greeks else "false"}
+    params = {
+        "symbol": symbol,
+        "expiration": expiration,
+        "greeks": "true" if greeks else "false"
+    }
     data = safe_request("GET", "markets/options/chains", params=params)
     option_obj = (data or {}).get("options", {}).get("option", [])
     return _normalize_contract_list(option_obj)
@@ -89,17 +82,16 @@ def place_option_order(option_symbol: str,
                        quantity: int,
                        side: str,
                        order_type: str = "market",
-                       duration: str = "day"
-                       ) -> Dict[str, Any]:
+                       duration: str = "day") -> Dict[str, Any]:
     endpoint = f"accounts/{TRADIER_ACCOUNT_ID}/orders"
     payload = {
-        "class"        : "option",
-        "symbol"       : "SPY",
+        "class": "option",
+        "symbol": "SPY",
         "option_symbol": option_symbol,
-        "side"         : side,
-        "quantity"     : quantity,
-        "type"         : order_type,
-        "duration"     : duration
+        "side": side,
+        "quantity": quantity,
+        "type": order_type,
+        "duration": duration
     }
     data = safe_request("POST", endpoint, data=payload)
     return (data or {}).get("order", {}) or {}
@@ -121,6 +113,6 @@ def get_account_balances() -> Dict[str, Any]:
 
 def get_account_positions() -> List[Dict[str, Any]]:
     positions = (safe_request("GET", f"accounts/{TRADIER_ACCOUNT_ID}/positions") or {}) \
-                    .get("positions", {}) \
-                    .get("position", [])
+        .get("positions", {}) \
+        .get("position", [])
     return _normalize_contract_list(positions)
