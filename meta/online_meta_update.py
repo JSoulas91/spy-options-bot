@@ -5,7 +5,7 @@ import random
 import numpy as np
 from datetime import datetime, timedelta
 
-from meta.ppo import PPOPolicy
+from meta.ppo import PPOAgent
 from meta.meta_env import MetaEnv
 from meta.meta_agent_info import load_agent_info
 from config import META_LOG_PATH
