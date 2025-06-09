@@ -13,6 +13,24 @@ def log_trade(trade_data: dict):
             writer.writeheader()
         writer.writerow(trade_data)
 
+def log_trade_exit(trade: dict):
+    log_row = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "trade_id": trade.get("id"),
+        "symbol": trade.get("symbol"),
+        "type": trade.get("trade_type", "exit"),
+        "status": "closed",
+        "profit": trade.get("profit", 0.0)
+    }
+
+    file_exists = os.path.isfile(TRADE_LOG_FILE)
+
+    with open(TRADE_LOG_FILE, mode="a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=log_row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(log_row)
+
 def get_daily_trade_summary(csv_path=TRADE_LOG_FILE):
     if not os.path.exists(csv_path):
         return "No trade data available today."
@@ -32,7 +50,7 @@ def get_daily_trade_summary(csv_path=TRADE_LOG_FILE):
     wins = df_today[df_today["profit"] > 0]
     losses = df_today[df_today["profit"] <= 0]
     total_pnl = df_today["profit"].sum()
-    win_rate = (len(wins) / num_trades) * 100
+    win_rate = (len(wins) / num_trades) * 100 if num_trades > 0 else 0
 
     return (
         f"📅 Date: {today}\n"
