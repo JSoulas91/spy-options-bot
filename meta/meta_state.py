@@ -3,7 +3,7 @@ Meta‑state builders (entry / exit)
 ──────────────────────────────────
 • Dynamic feature normalisation (auto‑scales to LT history)
 • Position‑size awareness
-• Market‑regime one‑hot encoding  ← NEW
+• Market‑regime one‑hot encoding
 • Live SPY & option quote for exit state
 • 6‑second TTL caches to stay far below 60 Tradier calls / min
 """
@@ -17,34 +17,43 @@ from typing import Dict, Tuple, List
 import numpy as np
 import pytz
 
-from utils.logger     import bot_logger as logger
-from utils.vix_utils  import get_vix_level
+from utils.logger import bot_logger as logger
+from utils.vix_utils import fetch_vix_price          # ← updated import
 from data.multi_timeframe_fetcher import (
     get_minutes_since_open,
     get_spy_latest_quote,
 )
 from data.options_fetcher import get_quote as get_option_quote
-from config import MAX_POSITION_SIZE           # ← position‑sizing awareness
+from config import MAX_POSITION_SIZE  # position‑sizing awareness
 
 # ───────────────────────────────────────────────
 eastern = pytz.timezone("US/Eastern")
 
 DEFAULT_RANGES: Dict[str, Tuple[float, float]] = {
-    "RSI":(0,100),"MACD":(-5,5),"EMA_DIST":(-10,10),"VOL":(0,10_000_000),
-    "CONF":(0,1),"DURATION":(0,390),"PROFIT":(-1,1),"VIX":(10,40),
-    "SPY_ABS":(350,500),"IV":(0,1),"DELTA":(-1,1),"SIZE":(0,MAX_POSITION_SIZE),
+    "RSI": (0, 100),
+    "MACD": (-5, 5),
+    "EMA_DIST": (-10, 10),
+    "VOL": (0, 10_000_000),
+    "CONF": (0, 1),
+    "DURATION": (0, 390),
+    "PROFIT": (-1, 1),
+    "VIX": (10, 40),
+    "SPY_ABS": (350, 500),
+    "IV": (0, 1),
+    "DELTA": (-1, 1),
+    "SIZE": (0, MAX_POSITION_SIZE),
 }
 
-def normalize(val: float, rng: Tuple[float,float]) -> float:
+def normalize(val: float, rng: Tuple[float, float]) -> float:
     lo, hi = rng
     return 0.5 if hi - lo == 0 else float(max(0, min(1, (val - lo) / (hi - lo))))
 
 # ───────────────────────────────────────────────
 # Dynamic range cache
-_DYNAMIC: Dict[str, Tuple[Tuple[float,float], float]] = {}
-_DYN_TTL = 3600  # 1 h
+_DYNAMIC: Dict[str, Tuple[Tuple[float, float], float]] = {}
+_DYN_TTL = 3600  # 1 h
 
-def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float,float]:
+def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, float]:
     vals: List[float] = []
     for df in long_term.values():
         if df is None or df.empty:
@@ -55,7 +64,7 @@ def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float,floa
             vals.extend(df.get(feat, []).tolist())
     return (min(vals), max(vals)) if vals else DEFAULT_RANGES[feat]
 
-def get_range(feat: str, long_term) -> Tuple[float,float]:
+def get_range(feat: str, long_term) -> Tuple[float, float]:
     now = time.time()
     if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
         return _DYNAMIC[feat][0]
@@ -127,7 +136,7 @@ def build_meta_state_for_entry(
             ]
 
         # ── Regime classification
-        vix_val = get_vix_level()
+        vix_val = fetch_vix_price() or 20.0       # ← was get_vix_level()
         regime  = _classify_regime(data_1d.iloc[-1], vix_val)
         regime_vect = _regime_one_hot(regime)
 
@@ -152,7 +161,7 @@ def build_meta_state_for_entry(
         ]
 
         # ‑‑ Long‑term trends
-        for p in ["5d","10d","15d","1mo","3mo","6mo"]:
+        for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
             df = long_term_data.get(p)
             if df is not None and not df.empty:
                 last = df.iloc[-1]
@@ -172,13 +181,14 @@ def build_meta_state_for_entry(
         return np.zeros(73, dtype=np.float32)   # 73 = previous 70 + 3 regime bits
 
 # ───────────────────────────────────────────────
-# Exit state (unchanged except length comment)
-_OPTION_CACHE: Dict[str, Tuple[dict,float]] = {}
+# Exit state (unchanged except VIX call)
+_OPTION_CACHE: Dict[str, Tuple[dict, float]] = {}
 def _cached_option_quote(sym: str, ttl=6):
     now = time.time()
     if sym in _OPTION_CACHE and now - _OPTION_CACHE[sym][1] < ttl:
         return _OPTION_CACHE[sym][0]
-    q = get_option_quote(sym); _OPTION_CACHE[sym] = (q, now)
+    q = get_option_quote(sym)
+    _OPTION_CACHE[sym] = (q, now)
     return q
 
 def build_meta_state_for_exit(
@@ -217,7 +227,7 @@ def build_meta_state_for_exit(
             normalize(get_minutes_since_open(), dur_rng),
             minutes_open,
             normalize(pnl_pct, prof_rng),
-            normalize(get_vix_level(), DEFAULT_RANGES["VIX"]),
+            normalize(fetch_vix_price() or 20.0, DEFAULT_RANGES["VIX"]),  # ← updated
             *summarise_past(trades=past_trades, rng_p=prof_rng, rng_d=dur_rng),
             normalize(spy_price - entry, DEFAULT_RANGES["EMA_DIST"]),
             normalize(spy_price, spy_abs),
