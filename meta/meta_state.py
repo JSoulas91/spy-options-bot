@@ -18,13 +18,13 @@ import numpy as np
 import pytz
 
 from utils.logger import bot_logger as logger
-from utils.vix_utils import fetch_vix_price          # ← updated import
+from utils.vix_utils import fetch_vix_price
 from data.multi_timeframe_fetcher import (
     get_minutes_since_open,
     get_spy_latest_quote,
 )
 from data.options_fetcher import get_quote as get_option_quote
-from config import MAX_POSITION_SIZE  # position‑sizing awareness
+from config import MAX_POSITION_SIZE
 
 # ───────────────────────────────────────────────
 eastern = pytz.timezone("US/Eastern")
@@ -95,7 +95,6 @@ def _classify_regime(one_day: dict, vix_val: float) -> str:
     return "vol_cluster"
 
 def _regime_one_hot(regime: str) -> List[float]:
-    # bull → [1,0,0], bear → [0,1,0], vol_cluster → [0,0,1]
     if regime == "bull":
         return [1.0, 0.0, 0.0]
     if regime == "bear":
@@ -125,7 +124,6 @@ def build_meta_state_for_entry(
         dur_rng  = DEFAULT_RANGES["DURATION"]
         prof_rng = DEFAULT_RANGES["PROFIT"]
 
-        # Per‑TF helper
         def tf_feats(df):
             last = df.iloc[-1]
             return [
@@ -135,8 +133,7 @@ def build_meta_state_for_entry(
                 normalize(last.get("volume", 0), vol_rng),
             ]
 
-        # ── Regime classification
-        vix_val = fetch_vix_price() or 20.0       # ← was get_vix_level()
+        vix_val = fetch_vix_price() or 20.0
         regime  = _classify_regime(data_1d.iloc[-1], vix_val)
         regime_vect = _regime_one_hot(regime)
 
@@ -145,22 +142,13 @@ def build_meta_state_for_entry(
             1.0 if trade_type == 1 else 0.0,
             normalize(get_minutes_since_open(), dur_rng),
             normalize(vix_val, DEFAULT_RANGES["VIX"]),
-
-            # ‑‑ Position sizing
             normalize(position_size, DEFAULT_RANGES["SIZE"]),
-
-            # ‑‑ Regime one‑hot
             *regime_vect,
-
-            # ‑‑ Past trades summary
             *summarise_past(past_trades, prof_rng, dur_rng),
-
-            # ‑‑ Time‑frame features
             *tf_feats(data_1m), *tf_feats(data_5m),
             *tf_feats(data_15m), *tf_feats(data_1h), *tf_feats(data_1d),
         ]
 
-        # ‑‑ Long‑term trends
         for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
             df = long_term_data.get(p)
             if df is not None and not df.empty:
@@ -177,11 +165,9 @@ def build_meta_state_for_entry(
 
     except Exception as e:
         logger.error(f"[MetaState] entry build error: {e}")
-        # keep vector length stable
-        return np.zeros(73, dtype=np.float32)   # 73 = previous 70 + 3 regime bits
+        return np.zeros(73, dtype=np.float32)
 
 # ───────────────────────────────────────────────
-# Exit state (unchanged except VIX call)
 _OPTION_CACHE: Dict[str, Tuple[dict, float]] = {}
 def _cached_option_quote(sym: str, ttl=6):
     now = time.time()
@@ -227,7 +213,7 @@ def build_meta_state_for_exit(
             normalize(get_minutes_since_open(), dur_rng),
             minutes_open,
             normalize(pnl_pct, prof_rng),
-            normalize(fetch_vix_price() or 20.0, DEFAULT_RANGES["VIX"]),  # ← updated
+            normalize(fetch_vix_price() or 20.0, DEFAULT_RANGES["VIX"]),
             *summarise_past(trades=past_trades, rng_p=prof_rng, rng_d=dur_rng),
             normalize(spy_price - entry, DEFAULT_RANGES["EMA_DIST"]),
             normalize(spy_price, spy_abs),
@@ -237,4 +223,18 @@ def build_meta_state_for_exit(
         return np.asarray(state, dtype=np.float32)
     except Exception as e:
         logger.error(f"[MetaState] exit build error: {e}")
-        return np.zeros(43, dtype=np.float32)   # previous 40 + 3 regime bits (if added later)
+        return np.zeros(43, dtype=np.float32)
+
+# ───────────────────────────────────────────────
+# Log‑row → meta‑state helper (used by training)
+# ───────────────────────────────────────────────
+def build_meta_state_from_log(row: dict) -> np.ndarray:
+    """
+    Training logs store the raw meta‑state under 'meta_state'.
+    Return that vector if present; otherwise a zero‑vector of length 73.
+    """
+    vec = row.get("meta_state")
+    if vec is not None:
+        return np.asarray(vec, dtype=np.float32)
+
+    return np.zeros(73, dtype=np.float32)
