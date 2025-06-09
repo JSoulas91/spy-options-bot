@@ -12,11 +12,11 @@ import traceback
 from datetime import datetime, time
 from typing   import Dict, Any
 
-from strategy.helpers import is_day_trade, is_swing_trade
+from strategy.helpers import is_day_trade, is_swing_trade, get_min_meta_confidence
 from config  import (
     CONFIDENCE_THRESHOLD, STOP_LOSS_ATR_MULTIPLIER,
     ENABLE_VIX_THROTTLING, VIX_MAX_THRESHOLD, VIX_MODERATE_THRESHOLD,
-    CONFIDENCE_STEP_UP, MIN_META_CONFIDENCE
+    CONFIDENCE_STEP_UP
 )
 from utils.logger          import bot_logger as logger
 from utils.telegram_utils  import send_telegram_message
@@ -47,7 +47,7 @@ def _extract(ind: Dict[str, Any]):
 def _is_close_to_close(ts: str) -> bool:
     try:
         return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").time() >= time(15, 55)
-    except Exception:       # malformed timestamp
+    except Exception:
         return False
 
 def _merge(primary: Dict, fallback: Dict) -> Dict:
@@ -55,9 +55,7 @@ def _merge(primary: Dict, fallback: Dict) -> Dict:
     d.update({k: v for k, v in primary.items() if v is not None})
     return d
 
-# ─────────────────────────────────────────────────────────
 def classify_regime(one_day: dict, vix_val: float) -> str:
-    """Very light regime filter (bull / bear / vol)."""
     price  = one_day.get("price", 0)
     ema200 = one_day.get("ema_200", price)
     if price > ema200 and vix_val < 18:
@@ -135,13 +133,11 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
             "sharpe_reward": sharpe,
         })
 
-        # meta_action semantics
-        if meta_action == 0:           # force‑exit
+        if meta_action == 0:
             return "exit"
 
-        # Meta‑agent confidence floor
         agent_conf = meta_params.get("agent_confidence")
-        if agent_conf is not None and agent_conf < MIN_META_CONFIDENCE:
+        if agent_conf is not None and agent_conf < get_min_meta_confidence(regime):
             return "exit"
 
         # ───── Confidence / VIX / Regime filter ─────────────────
@@ -161,8 +157,7 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
         if vix_val > 22 and iv and iv > 0.5:
             return "exit"
 
-        # ───── Scale factor / tighten exits from meta‑agent ─────
-        scale   = meta_params.get("scale_factor", 1.0)        # default 1×
+        scale   = meta_params.get("scale_factor", 1.0)
         tighten = meta_params.get("tighten_exit", False)
 
         # ───── Day‑trade specific exits ────────────────────────
@@ -176,9 +171,9 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
                 high_mark = price
 
             trail_base = atr * 1.2 if atr else price * 0.015
-            trail = trail_base / scale           # larger scale ⇒ looser trail
+            trail = trail_base / scale
             if tighten:
-                trail *= 0.8                     # tighten an extra 20 %
+                trail *= 0.8
 
             if price <= high_mark - trail:
                 return "exit"
