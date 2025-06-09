@@ -221,3 +221,28 @@ def build_meta_state_from_log(row: dict) -> np.ndarray:
     if vec is not None:
         return np.asarray(vec, dtype=np.float32)
     return np.zeros(73, dtype=np.float32)
+
+# ───────────────────────────────────────────────
+# Simple 5‑feature normaliser used by strategy.py
+_SIMPLE_BOUNDS = {
+    "confidence": (0, 1),
+    "vix":        (10, 40),
+    "hour":       (0, 23),
+    "is_swing":   (0, 1),
+    "atr":        (0, 10),
+}
+
+def _to_unit(val: float, lo: float, hi: float) -> float:
+    if hi - lo == 0:
+        return 0.0
+    return float(np.clip(2 * (val - lo) / (hi - lo) - 1, -1, 1))
+
+def normalize_meta_state(feat: dict) -> np.ndarray:
+    """
+    Normalise {confidence, vix, hour, is_swing, atr} → np.ndarray[5] in [-1,1].
+    """
+    vals = []
+    for key in ("confidence", "vix", "hour", "is_swing", "atr"):
+        lo, hi = _SIMPLE_BOUNDS.get(key, (0, 1))
+        vals.append(_to_unit(float(feat.get(key, 0)), lo, hi))
+    return np.asarray(vals, dtype=np.float32)
