@@ -1,27 +1,33 @@
 # meta/reward_shaper.py
+"""
+Reward‑shaping utilities for the meta‑agent.
+Keeps a rolling Sharpe‑style normalization window and logs reward trends.
+"""
+
+from __future__ import annotations
+import csv, os, datetime
+from collections import deque
+from pathlib     import Path
 
 import numpy as np
-from collections import deque
+from utils.logger import bot_logger as logger
 
-# Rolling window for Sharpe-style reward shaping
-reward_window = deque(maxlen=20)
+# ─────────────────────────────────────────────────────────
+ROLL_WINDOW = 20
+reward_window: deque[float] = deque(maxlen=ROLL_WINDOW)
 
-def compute_reward(trade, market_data, exit_reason=None):
+HIST_CSV   = Path("meta/reward_history.csv")
+HIST_CSV.parent.mkdir(parents=True, exist_ok=True)
+
+# ─────────────────────────────────────────────────────────
+def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = None) -> float:
     """
-    Compute base shaped reward for the PPO meta-agent based on trade outcome and context.
-
-    Args:
-        trade (dict): Trade details (entry, exit, pnl, confidence, trade_type, etc.)
-        market_data (dict): Market context at exit, e.g., indicators, VIX.
-        exit_reason (str, optional): Reason for trade exit.
-
-    Returns:
-        float: Raw shaped reward (before Sharpe normalization).
+    Build a shaped reward from raw PnL plus contextual signals.
     """
-    pnl = float(trade.get("pnl", 0))
-    confidence = float(trade.get("confidence", 0))
-    trade_type = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
-    reward = pnl
+    pnl         = float(trade.get("pnl", 0))
+    confidence  = float(trade.get("confidence", 0))
+    trade_type  = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
+    reward      = pnl
 
     # 💡 Confidence shaping
     if pnl > 0:
@@ -29,16 +35,16 @@ def compute_reward(trade, market_data, exit_reason=None):
     elif pnl < 0:
         reward -= 0.5 if confidence >= 0.7 else 0.2
 
-    # ⏰ Time penalty for poor day trade timing
+    # ⏰ Time decay penalty for late day‑trades
     if trade_type == 0:
         try:
             exit_hour = int(trade.get("exit_time", "15:59").split(":")[0])
             if exit_hour >= 15 and pnl < 0:
-                reward -= 0.3  # Time decay penalty
-        except:
+                reward -= 0.3
+        except Exception:
             pass
 
-    # ⚖️ Weak trades (low PnL)
+    # ⚖️ Low absolute PnL dampening
     if abs(pnl) < 5:
         reward *= 0.25
 
@@ -51,58 +57,73 @@ def compute_reward(trade, market_data, exit_reason=None):
     elif vix > 15:
         reward -= 0.1
 
-    # 🔚 Exit reasons
-    if exit_reason == "Contract near expiry":
-        reward -= 0.2
-    elif exit_reason == "Meta-agent signal":
-        reward += 0.1
-    elif exit_reason == "Stop loss":
-        reward -= 0.1
-    elif exit_reason == "Take profit":
-        reward += 0.2
-    elif exit_reason == "Time-based exit":
-        reward -= 0.1
+    # 🔚 Exit reason tweaks
+    match exit_reason:
+        case "Contract near expiry": reward -= 0.2
+        case "Meta-agent signal":    reward += 0.1
+        case "Stop loss":            reward -= 0.1
+        case "Take profit":          reward += 0.2
+        case "Time-based exit":      reward -= 0.1
 
     return reward
 
-
-def compute_sharpe_style_reward(returns, risk_free_rate=0.0, epsilon=1e-8):
+# ─────────────────────────────────────────────────────────
+def compute_sharpe_style_reward(returns, rf: float = 0.0, eps: float = 1e-8) -> float:
     """
-    Compute a Sharpe-style risk-adjusted reward from a sequence of returns.
-
-    Args:
-        returns (list or np.array): Sequence of raw reward values.
-        risk_free_rate (float): Risk free rate baseline (default 0).
-        epsilon (float): Small constant to prevent division by zero.
-
-    Returns:
-        float: Sharpe ratio style reward.
+    Basic Sharpe‑ratio style metric for a list/array of returns.
+    Returns 0 if fewer than 2 points.
     """
-    returns = np.array(returns)
-    excess_returns = returns - risk_free_rate
-    mean_return = np.mean(excess_returns)
-    std_return = np.std(excess_returns) + epsilon
-    sharpe_ratio = mean_return / std_return
-    return sharpe_ratio
+    if len(returns) < 2:
+        return 0.0
+    r = np.asarray(returns, dtype=np.float32) - rf
+    return float(r.mean() / (r.std() + eps))
 
-
-def compute_shaped_reward(log_entry):
+# ─────────────────────────────────────────────────────────
+def compute_shaped_reward(log_entry: dict) -> float:
     """
-    Compute final risk-adjusted reward using Sharpe-style normalization.
+    Use `compute_reward` then scale via rolling Sharpe normalization.
     """
-    trade = log_entry.get("trade", {})
-    market_data = log_entry.get("market", {})
-    exit_reason = log_entry.get("exit_reason")
+    trade        = log_entry.get("trade", {})
+    market_data  = log_entry.get("market", {})
+    exit_reason  = log_entry.get("exit_reason")
 
-    raw_reward = compute_reward(trade, market_data, exit_reason)
+    raw = compute_reward(trade, market_data, exit_reason)
 
-    # Sharpe-style normalization using rolling window
-    reward_window.append(raw_reward)
+    reward_window.append(raw)
     if len(reward_window) < reward_window.maxlen:
-        return np.clip(raw_reward, -1.0, 1.0)  # not enough history yet
+        return float(np.clip(raw, -1.0, 1.0))
 
     mean = np.mean(reward_window)
-    std = np.std(reward_window) + 1e-6
-    sharpe_reward = (raw_reward - mean) / std
+    std  = np.std(reward_window) + 1e-6
+    sharpe_scaled = (raw - mean) / std
+    return float(np.clip(sharpe_scaled, -1.0, 1.0))
 
-    return float(np.clip(sharpe_reward, -1.0, 1.0))
+# ─────────────────────────────────────────────────────────
+def _append_csv(timestamp: str, shaped: float, raw: float):
+    """
+    Append reward row to CSV: timestamp, raw, shaped
+    """
+    is_new = not HIST_CSV.exists()
+    with HIST_CSV.open("a", newline="") as f:
+        w = csv.writer(f)
+        if is_new:
+            w.writerow(["timestamp", "raw_reward", "shaped_reward"])
+        w.writerow([timestamp, raw, shaped])
+
+def log_reward_trend(entry: dict):
+    """
+    Log reward info and update CSV + rolling stats.
+    Expects keys: meta_state, meta_action, shaped_reward, sharpe_reward
+    """
+    try:
+        ts      = datetime.datetime.utcnow().isoformat()
+        shaped  = entry.get("shaped_reward", 0.0)
+        raw     = entry.get("sharpe_reward", 0.0)
+        _append_csv(ts, raw, shaped)
+
+        if len(reward_window) == reward_window.maxlen:
+            rolling_sharpe = compute_sharpe_style_reward(list(reward_window))
+            logger.info(f"[RewardTrend] windowSharpe={rolling_sharpe:.2f}  last={shaped:+.3f}")
+
+    except Exception as exc:
+        logger.warning(f"[RewardTrend] logging failed: {exc}")
