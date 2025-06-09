@@ -17,14 +17,14 @@ from utils.metrics_logger    import log_trade_metrics
 from utils.vix_utils         import get_current_vix
 from meta.meta_state         import build_meta_state_for_entry
 from meta.meta_agent         import MetaAgent
-from strategy                import evaluate_trade_signal
+from strategy.strategy       import evaluate_trade_signal   # ✅ FIXED import
 from trade_manager           import execute_trade_with_retries
 from config import (
     DEFAULT_POSITION_SIZE, ENABLE_DYNAMIC_SIZING,
     MIN_POSITION_SIZE, MAX_POSITION_SIZE, VIX_MODERATE_THRESHOLD,
     SIMULATION_MODE, DEFAULT_SLIPPAGE_BPS, DEFAULT_SPREAD_BPS,
     SIM_MIN_FILL_DELAY_MS, SIM_MAX_FILL_DELAY_MS,
-    META_LOG_PATH                                     # <-- new
+    META_LOG_PATH
 )
 
 trade_tracker = TradeTracker()
