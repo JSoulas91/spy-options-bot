@@ -1,8 +1,8 @@
-# meta/meta_agent.py
 """
 Wrapper around the dual‑head PPO model.
 • select_action(state) ➜ (action_index, agent_confidence)
 • interpret_action(idx, conf) ➜ strategy parameters dict
+• should_retry_trade(contract) ➜ bool (meta-agent retry veto)
 """
 
 import os
@@ -68,25 +68,25 @@ class MetaAgent:
     def save(self):
         self._model.save()
 
-# ───────────────────────────────────────────────
-def should_retry_trade(trade_info: dict) -> bool:
-    """
-    Decide whether to retry a trade based on trade_info dict.
-    Customize this logic based on your meta-agent's retry policy.
+# Singleton meta agent instance
+_meta_agent_instance = None
 
-    Parameters
-    ----------
-    trade_info : dict
-        Information about the trade attempt, e.g. {"retry_count": int, ...}
+def get_meta_agent():
+    global _meta_agent_instance
+    if _meta_agent_instance is None:
+        _meta_agent_instance = MetaAgent()
+    return _meta_agent_instance
 
-    Returns
-    -------
-    bool
-        True if trade should be retried, False otherwise.
+def should_retry_trade(contract: dict) -> bool:
     """
-    max_retries = 3
-    retries = trade_info.get("retry_count", 0)
-    # For example, retry only if retries < max_retries
-    if retries < max_retries:
+    Meta-agent veto function for retrying trades.
+    Input contract dict should include 'meta_state' key for state.
+    Returns False if veto, True otherwise.
+    """
+    meta_agent = get_meta_agent()
+    state = contract.get("meta_state")
+    if state is None:
+        # no state info, default allow retry
         return True
-    return False
+    # The veto action is index 0
+    return not meta_agent.veto_retry(state)
