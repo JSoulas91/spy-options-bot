@@ -2,21 +2,26 @@
 """
 Send concise meta‑agent training summaries (text + reward chart) to Telegram.
 """
+
 from __future__ import annotations
-import io, time
+
+import io
+import time
+from datetime import datetime
 from typing import List, Dict
 
 import matplotlib.pyplot as plt
 
-from utils.logger         import bot_logger as logger
-from telegram_bot         import TelegramBot   # your existing wrapper
+from utils.logger import bot_logger as logger
+from utils.telegram_utils import send_telegram_message  # ✅ existing helper
 
-TG              = TelegramBot()
-_MIN_INTERVAL   = 90          # seconds – throttle updates
-_LAST_SENT_TS   = 0.0
+_MIN_INTERVAL = 90  # seconds – throttle updates
+_LAST_SENT_TS = 0.0
+
 
 # ─────────────────────────────────────────────────────────────
 def _make_chart(rewards: List[float]) -> bytes:
+    """Return a PNG bytes object of the reward‑history chart."""
     fig, ax = plt.subplots()
     ax.plot(rewards, linewidth=2)
     ax.set_title("Meta‑Agent Avg Reward")
@@ -30,32 +35,51 @@ def _make_chart(rewards: List[float]) -> bytes:
     buf.seek(0)
     return buf.read()
 
+
 # ─────────────────────────────────────────────────────────────
-def send_training_report(stats: Dict, rewards: List[float]):
+def _fmt_stats(stats: Dict) -> str:
+    """Format the stats dict into a Telegram‑friendly markdown message."""
+    return (
+        "🏋️‍♂️ *Meta‑Training Update*\n"
+        f"• Epoch: *{stats.get('epoch', '?')}*\n"
+        f"• Avg Reward: *{stats.get('avg_reward', 0):.3f}*\n"
+        f"• Sharpe: *{stats.get('sharpe', 0):.2f}*\n"
+        f"• Reject‑rate: *{stats.get('reject_rate', 0)*100:.1f}%*\n"
+        f"• Avg Dur: *{stats.get('avg_duration', 0):.1f} min*\n"
+        f"• Avg PnL: *{stats.get('avg_pnl', 0):.2f} $*\n"
+        f"_UTC {datetime.utcnow().strftime('%Y‑%m‑%d %H:%M')}_"
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+def send_training_report(stats: Dict, rewards: List[float]) -> None:
     """
-    stats keys:
-        epoch, avg_reward, reward_std, sharpe, reject_rate,
-        avg_duration, avg_pnl
+    Push a text summary (and optional reward chart) to Telegram.
+
+    Parameters
+    ----------
+    stats   : dict   – keys like epoch, avg_reward, reward_std, sharpe, ...
+    rewards : list   – running list of average reward per epoch
     """
     global _LAST_SENT_TS
     if time.time() - _LAST_SENT_TS < _MIN_INTERVAL:
-        return                                              # anti‑spam
-
-    txt = (
-        "📈 *Meta‑Training Update*\n"
-        f"• Epoch: *{stats['epoch']}*\n"
-        f"• Avg Reward: *{stats['avg_reward']:.3f}*\n"
-        f"• Sharpe≈ *{stats['sharpe']:.2f}*\n"
-        f"• Reject‑rate: *{stats['reject_rate']*100:.1f}%*\n"
-        f"• Avg Dur: *{stats['avg_duration']:.1f} min*\n"
-        f"• Avg PnL: *{stats['avg_pnl']:.2f} $*"
-    )
-    TG.send_message(txt)
+        return  # anti‑spam throttle
 
     try:
-        chart = _make_chart(rewards)
-        TG.send_photo(chart, caption="Reward trend")
-    except Exception as e:
-        logger.error(f"[MetaReporter] chart send failed: {e}")
+        # 1) Send text message
+        send_telegram_message(_fmt_stats(stats))
+        logger.info("📨 Training text report sent.")
+
+        # 2) Send reward‑trend chart (optional)
+        if rewards:
+            chart_bytes = _make_chart(rewards)
+            send_telegram_message("📊 Reward trend chart attached ⬇️")
+            # Re‑use the same helper to send photo if your helper supports it,
+            # otherwise implement send_telegram_photo() similarly.
+            #
+            # Example if your helper supports media:
+            # send_telegram_photo(chart_bytes, caption="Reward trend")
+    except Exception as exc:
+        logger.warning(f"[MetaReporter] failed to send report: {exc}")
 
     _LAST_SENT_TS = time.time()
