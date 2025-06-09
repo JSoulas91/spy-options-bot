@@ -97,3 +97,14 @@ SIM_MAX_FILL_DELAY_MS  = int(os.getenv("SIM_MAX_FILL_DELAY_MS", 150))
 
 # === EXIT SETTINGS ===
 HARD_CLOSE_DAYTRADES_ONLY = os.getenv("HARD_CLOSE_DAYTRADES_ONLY", "false").lower() == "true"
+
+# ───── Economic Event Filters ─────
+ECONOMIC_EVENTS = [
+    "CPI", "PPI", "Jobs Report", "FOMC", "GDP", "Unemployment",
+    "NFP", "Core PCE", "Retail Sales", "Fed Decision"
+]
+
+FED_SPEECH_KEYWORDS = [
+    "Powell", "FOMC", "Federal Reserve", "interest rate",
+    "monetary policy", "inflation", "hawkish", "dovish"
+]
