@@ -7,10 +7,10 @@ from typing import Dict, Any, List
 import requests
 from utils.logger import bot_logger
 
-TRADIER_API_KEY   = os.getenv("TRADIER_API_KEY")
+TRADIER_API_TOKEN   = os.getenv("TRADIER_API_TOKEN")
 TRADIER_BASE_URL  = "https://api.tradier.com/v1"
 HEADERS = {
-    "Authorization": f"Bearer {TRADIER_API_KEY}",
+    "Authorization": f"Bearer {TRADIER_API_TOKEN}",
     "Accept":        "application/json",
 }
 
