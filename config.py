@@ -25,6 +25,7 @@ CONFIDENCE_THRESHOLD      = float(os.getenv("CONFIDENCE_THRESHOLD", 0.75))
 STOP_LOSS_ATR_MULTIPLIER  = float(os.getenv("STOP_LOSS_ATR_MULTIPLIER", 1.5))
 TRAILING_STOP_PERCENT     = float(os.getenv("TRAILING_STOP_PERCENT", 0.10))
 PREFERS_LIQUID_OPTIONS    = os.getenv("PREFERS_LIQUID_OPTIONS", "true").lower() == "true"
+MIN_META_CONFIDENCE = float(os.getenv("MIN_META_CONFIDENCE", 0.6))
 
 # === TIME ===
 MARKET_OPEN         = os.getenv("MARKET_OPEN", "09:30")
