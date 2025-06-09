@@ -48,3 +48,16 @@ def meta_agent_dims_exist() -> bool:
         return state_dim > 0 and action_dim > 0
     except Exception:
         return False
+
+def load_agent_info():
+    """Load raw agent info dictionary from meta_agent_info.json."""
+    if not os.path.exists(META_INFO_PATH):
+        raise FileNotFoundError(f"Meta info file not found at {META_INFO_PATH}")
+
+    try:
+        with open(META_INFO_PATH, 'r') as f:
+            info = json.load(f)
+            return info
+    except Exception as e:
+        logger.error(f"❌ Failed to load raw agent info from {META_INFO_PATH}: {e}")
+        raise
