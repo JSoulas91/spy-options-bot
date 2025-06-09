@@ -1,17 +1,11 @@
-# data/tradier_client.py
-
 import requests
-import os
-from config import TRADIER_ACCESS_TOKEN, USE_TRADIER_SANDBOX
+from config import TRADIER_API_TOKEN, TRADIER_ACCOUNT_ID, TRADIER_BASE_URL
 from utils.logger import bot_logger
 
-TRADIER_BASE_URL = "https://sandbox.tradier.com/v1" if USE_TRADIER_SANDBOX else "https://api.tradier.com/v1"
-
 HEADERS = {
-    "Authorization": f"Bearer {TRADIER_ACCESS_TOKEN}",
+    "Authorization": f"Bearer {TRADIER_API_TOKEN}",
     "Accept": "application/json"
 }
-
 
 def get_option_chain(symbol, expiry, option_type="call"):
     url = f"{TRADIER_BASE_URL}/markets/options/chains"
@@ -28,24 +22,19 @@ def get_option_chain(symbol, expiry, option_type="call"):
         bot_logger.error(f"Failed to get option chain: {response.text}")
         return []
 
-
 def get_option_quote(symbol):
     url = f"{TRADIER_BASE_URL}/markets/quotes"
     params = {"symbols": symbol}
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code == 200:
         quotes = response.json().get("quotes", {}).get("quote")
-        if isinstance(quotes, list):
-            return quotes
-        else:
-            return [quotes]
+        return quotes if isinstance(quotes, list) else [quotes]
     else:
         bot_logger.error(f"Failed to get option quote: {response.text}")
         return []
 
-
-def place_option_order(account_id, symbol, quantity, action, order_type="market", duration="day"):
-    url = f"{TRADIER_BASE_URL}/accounts/{account_id}/orders"
+def place_option_order(symbol, quantity, action, order_type="market", duration="day"):
+    url = f"{TRADIER_BASE_URL}/accounts/{TRADIER_ACCOUNT_ID}/orders"
     payload = {
         "class": "option",
         "symbol": symbol,
@@ -61,19 +50,15 @@ def place_option_order(account_id, symbol, quantity, action, order_type="market"
         bot_logger.error(f"Failed to place order: {response.text}")
         return None
 
-
 def get_account_id():
     url = f"{TRADIER_BASE_URL}/user/profile"
     response = requests.get(url, headers=HEADERS)
     if response.status_code == 200:
         accounts = response.json().get("profile", {}).get("accounts", {}).get("account", [])
-        if isinstance(accounts, list):
-            return accounts[0].get("account_number") if accounts else None
-        return accounts.get("account_number")
+        return accounts[0].get("account_number") if isinstance(accounts, list) and accounts else accounts.get("account_number")
     else:
         bot_logger.error(f"Failed to retrieve account ID: {response.text}")
         return None
-
 
 def get_market_clock():
     url = f"{TRADIER_BASE_URL}/markets/clock"
