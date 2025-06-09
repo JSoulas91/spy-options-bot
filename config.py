@@ -80,6 +80,7 @@ META_LOG_PATH        = os.getenv("META_LOG_PATH", "meta/meta_log.jsonl")
 ENTROPY_COEF_START   = float(os.getenv("ENTROPY_COEF_START", 0.01))
 ENTROPY_COEF_END     = float(os.getenv("ENTROPY_COEF_END", 0.001))
 ENTROPY_DECAY_STEPS  = int(os.getenv("ENTROPY_DECAY_STEPS", 5000))
+META_MODEL_PATH = os.getenv("META_MODEL_PATH", "meta/models/ppo_agent.pth")
 
 # === DYNAMIC SIZING ===
 ENABLE_DYNAMIC_SIZING = os.getenv("ENABLE_DYNAMIC_SIZING", "true").lower() == "true"
