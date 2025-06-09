@@ -2,7 +2,7 @@
 
 import time
 from typing import Optional
-from data.tradier_api import fetch_spy_quote  # Reuse your existing quote call
+from data.tradier_api import get_equity_quote as fetch_spy_quote
 
 # Cache settings
 QUOTE_CACHE_SECONDS = 6
