@@ -1,9 +1,15 @@
 # live_runner.py  —  real‑time loop  +  background meta‑update scheduler
-import os, sys, time, traceback, threading
+
+import os
+from dotenv import load_dotenv   # <-- ADD THIS
+import sys, time, traceback, threading
 from datetime import datetime, timezone
 from functools  import wraps
 from threading import Lock
 from collections import deque
+
+# Load environment variables from .env in project root (early!)
+load_dotenv()
 
 from utils.logger   import bot_logger as logger
 from utils.telegram_utils import send_telegram_message
@@ -135,3 +141,6 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
 
         loop_times.append(time.time() - tic)
         time.sleep(max(0.0, interval_sec - (time.time() - tic)))
+
+if __name__ == "__main__":
+    live_trading_loop()
