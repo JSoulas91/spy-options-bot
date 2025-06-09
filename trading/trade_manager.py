@@ -99,7 +99,7 @@ def evaluate_swing_hold(contract: Dict[str, Any], confidence: float) -> bool:
         _cached_vix = get_current_vix()
 
     if _cached_macro is None:
-        _cached_macro = has_monday_macro_event()
+        _cached_macro = week_has_fomc_or_cpi()
 
     decision = should_hold_swing_trade(confidence, _cached_vix, _cached_macro)
 
@@ -112,3 +112,23 @@ def evaluate_swing_hold(contract: Dict[str, Any], confidence: float) -> bool:
     send_telegram_message(msg)
 
     return decision
+
+# ──────────────────────────────────────────────────────────────────────────────
+def close_trade(trade: dict) -> None:
+    """
+    Closes an open trade.
+    Here, implement actual closing logic (e.g. market sell orders).
+    This is a placeholder for integration with Tradier or Alpaca order APIs.
+    """
+    try:
+        # Example placeholder logic:
+        # symbol = trade.get("symbol")
+        # qty = trade.get("qty")
+        # place a market order to close position
+        logger.info(f"[TradeManager] Closing trade {trade.get('id')} for {trade.get('symbol')}")
+        # TODO: add actual close order logic here
+        # e.g. call place_option_order or Alpaca API with side='sell' and qty
+        time.sleep(0.5)  # simulate latency
+    except Exception as exc:
+        logger.error(f"[TradeManager] Error closing trade {trade.get('id')}: {exc}")
+        raise
