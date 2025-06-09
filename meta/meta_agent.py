@@ -67,3 +67,26 @@ class MetaAgent:
 
     def save(self):
         self._model.save()
+
+# ───────────────────────────────────────────────
+def should_retry_trade(trade_info: dict) -> bool:
+    """
+    Decide whether to retry a trade based on trade_info dict.
+    Customize this logic based on your meta-agent's retry policy.
+
+    Parameters
+    ----------
+    trade_info : dict
+        Information about the trade attempt, e.g. {"retry_count": int, ...}
+
+    Returns
+    -------
+    bool
+        True if trade should be retried, False otherwise.
+    """
+    max_retries = 3
+    retries = trade_info.get("retry_count", 0)
+    # For example, retry only if retries < max_retries
+    if retries < max_retries:
+        return True
+    return False
