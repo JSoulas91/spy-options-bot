@@ -8,7 +8,7 @@ from utils.logger import bot_logger as logger
 # ─────────────────────────────────────────────
 # ░▒▓  Environment / Globals  ▓▒░
 # ─────────────────────────────────────────────
-TRADIER_API_KEY     = os.getenv("TRADIER_API_KEY")
+TRADIER_API_KEY     = os.getenv("TRADIER_API_TOKEN")
 TRADIER_ACCOUNT_ID  = os.getenv("TRADIER_ACCOUNT_ID")
 USE_LIVE_TRADIER    = os.getenv("USE_LIVE_TRADIER", "false").lower() == "true"
 
