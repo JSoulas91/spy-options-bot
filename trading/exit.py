@@ -7,7 +7,7 @@ from utils.logger            import bot_logger
 from utils.telegram_utils    import send_telegram_message
 from utils.trade_tracker     import trade_tracker
 from utils.trade_logger      import log_trade_exit
-from trade_manager           import close_trade
+from trading.trade_manager   import close_trade
 from meta.meta_state         import build_meta_state_for_exit
 from meta.meta_agent         import evaluate_exit_decision
 from meta.reward_shaper      import compute_shaped_reward
