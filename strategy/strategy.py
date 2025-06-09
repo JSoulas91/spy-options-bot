@@ -20,7 +20,7 @@ from config  import (
 )
 from utils.logger          import bot_logger as logger
 from utils.telegram_utils  import send_telegram_message
-from event_filter          import is_high_risk_event_active
+from strategy.event_filter          import is_high_risk_event_active
 from utils.vix_utils       import get_current_vix
 from data.multi_timeframe_fetcher import fetch_long_term_features
 from data.options_fetcher  import get_option_metrics
