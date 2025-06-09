@@ -83,3 +83,9 @@ def is_vix_moderately_high(vix_value: float | None) -> bool:
     bool
     """
     return vix_value is not None and vix_value >= VIX_MODERATE_THRESHOLD
+    
+    def get_current_vix() -> float | None:
+    """
+    Simple alias to fetch current VIX value.
+    """
+    return fetch_vix_price()
