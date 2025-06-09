@@ -3,10 +3,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# === TRADIER KEYS ===
+# === TRADIER KEYS AND URLS ===
 TRADIER_API_TOKEN    = os.getenv("TRADIER_API_TOKEN", "")
 TRADIER_ACCOUNT_ID   = os.getenv("TRADIER_ACCOUNT_ID", "")
 USE_LIVE_TRADIER     = os.getenv("USE_LIVE_TRADIER", "false").lower() == "true"
+
+if USE_LIVE_TRADIER:
+    TRADIER_BASE_URL = "https://api.tradier.com/v1"
+else:
+    TRADIER_BASE_URL = "https://sandbox.tradier.com/v1"
 
 # === TELEGRAM ===
 TELEGRAM_BOT_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
