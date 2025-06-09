@@ -1,16 +1,15 @@
-# strategy/strategy.py
 """
-In‑position evaluation logic.
+Signal‑generation and in‑position evaluation logic.
 
-• Merges multi‑time‑frame indicators + option Greeks
-• Uses meta‑agent override + market‑regime filter
-• Confidence/VIX‑aware gates + multi‑action scaling
-• Returns "hold" | "exit"
+• `evaluate_trade_signal()` – produces a trade signal for entry.py
+• `evaluate_trade()`        – decides hold / exit for open positions
+• Uses meta‑agent overrides + market‑regime filters
 """
 
+from __future__ import annotations
 import traceback
 from datetime import datetime, time
-from typing   import Dict, Any
+from typing import Dict, Any
 
 from strategy.helpers          import is_day_trade, is_swing_trade
 from config                    import (
@@ -35,12 +34,44 @@ from meta.meta_state           import normalize_meta_state
 meta_agent = MetaAgent()
 meta_agent.load_model()
 
+# ─────────────────────────────────────────────────────────
+# ----------   1.  Trade‑Signal (entry side)   ------------
+# ─────────────────────────────────────────────────────────
+def evaluate_trade_signal(market_snap: Dict) -> Dict[str, Any]:
+    """
+    Very lightweight stub – always returns 'no trade'.
+    Extend with your full feature heuristics.
+
+    Returns a dict with keys:
+        should_trade (bool)
+        confidence   (float)
+        trade_type   (int)   0 = day, 1 = swing
+        trade_setup  (dict)  arbitrary order params
+        tf_1m / 5m / 15m / 1h / 1d  – raw indicator DataFrames
+        long_term_data (dict) – optional long‑term indicator dict
+    """
+    return {
+        "should_trade"  : False,      # change to True when conditions met
+        "confidence"    : 0.0,
+        "trade_type"    : 0,          # default to day‑trade
+        "trade_setup"   : {},
+        "tf_1m"         : None,
+        "tf_5m"         : None,
+        "tf_15m"        : None,
+        "tf_1h"         : None,
+        "tf_1d"         : None,
+        "long_term_data": {},
+    }
+
+# ─────────────────────────────────────────────────────────
+# ----------   2.  In‑Position Evaluation   ---------------
+# ─────────────────────────────────────────────────────────
 IND_KEYS = [
     "rsi","atr","vwap","bb_upper","bb_lower","ema_50","ema_200",
     "macd","macd_signal","support","resistance",
     "implied_volatility","delta","gamma","theta","vega"
 ]
-def _extract(ind: Dict[str, Any]):
+def _extract(ind: Dict[str, Any]) -> Dict[str, Any]:
     return {k: ind.get(k) for k in IND_KEYS}
 
 def _is_close_to_close(ts: str) -> bool:
@@ -63,7 +94,11 @@ def classify_regime(one_day: dict, vix_val: float) -> str:
         return "bear"
     return "vol_cluster"
 
+# ─────────────────────────────────────────────────────────
 def evaluate_trade(position: Dict, market_data: Dict) -> str:
+    """
+    Decide whether an open trade should be 'hold' or 'exit'.
+    """
     try:
         symbol      = position.get("symbol", "SPY")
         entry_px    = position.get("entry_price")
@@ -75,6 +110,7 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
         if entry_px is None or price is None:
             raise ValueError("entry_price or price missing.")
 
+        # --- merge indicators with multi‑time‑frame features ----
         try:
             mtf = fetch_long_term_features(symbol)
             ind = _merge(indics, mtf.get("merged", {}))
@@ -82,6 +118,7 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
             logger.error(f"[MTF] {e}")
             ind = indics
 
+        # --- add option greeks if available --------------------
         try:
             greeks = get_option_metrics(symbol)
             if greeks:
@@ -89,10 +126,12 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
         except Exception as e:
             logger.error(f"[Greeks] {e}")
 
+        # --- market regime & VIX ------------------------------
         one_day = mtf["intraday"].get("1d_6mo", {}) if isinstance(mtf, dict) else {}
         vix_val = get_current_vix() or 20
         regime  = classify_regime(one_day, vix_val)
 
+        # --- immediate global risk exits ----------------------
         if is_high_risk_event_active():
             send_telegram_message("🚨 Econ event — exit all positions")
             return "exit"
@@ -101,6 +140,7 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
             logger.info(f"⚠️ VIX {vix_val:.2f} above max — exiting.")
             return "exit"
 
+        # --- meta‑agent context vector -------------------------
         trade_type = "day" if is_day_trade(position) else "swing"
         hour       = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").hour if ts else 12
         atr        = ind.get("atr", 0)
@@ -115,15 +155,17 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
         meta_action = meta_agent.select_action(meta_state)
         meta_params = meta_agent.interpret_action(meta_action)
 
+        # --- reward logging (for analysis) --------------------
         shaped = compute_shaped_reward(position, ind, market_data)
-        sharpe = compute_sharpe_style_reward(entry_px, price, atr)
+        sharpe = compute_sharpe_style_reward([shaped])  # single‑point call
         log_reward_trend({
-            "meta_state": meta_state,
+            "meta_state": meta_state.tolist(),
             "meta_action": meta_action,
             "shaped_reward": shaped,
             "sharpe_reward": sharpe,
         })
 
+        # --- meta‑agent veto or confidence floor --------------
         if meta_action == 0:
             return "exit"
 
@@ -131,6 +173,7 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
         if agent_conf is not None and agent_conf < MIN_META_CONFIDENCE:
             return "exit"
 
+        # --- confidence + regime + VIX filter -----------------
         thr = meta_params.get("confidence_threshold", CONFIDENCE_THRESHOLD)
         if regime in {"bear", "vol_cluster"}:
             thr += 0.05
@@ -139,32 +182,39 @@ def evaluate_trade(position: Dict, market_data: Dict) -> str:
         if confidence < thr:
             return "exit"
 
+        # --- extra risk checks -------------------------------
         iv = ind.get("implied_volatility")
         if vix_val > 22 and iv and iv > 0.5:
             return "exit"
 
+        # --- meta‑agent scale / tighten flags ----------------
         scale   = meta_params.get("scale_factor", 1.0)
         tighten = meta_params.get("tighten_exit", False)
 
+        # ------------- day‑trade specific exits --------------
         if is_day_trade(position):
             if _is_close_to_close(ts):
                 return "exit"
+
             high_mark = position.get("high_since_entry", entry_px)
             if price > high_mark:
                 position["high_since_entry"] = price
                 high_mark = price
+
             trail_base = atr * 1.2 if atr else price * 0.015
             trail = trail_base / scale
             if tighten:
                 trail *= 0.8
             if price <= high_mark - trail:
                 return "exit"
+
             stop_dist = atr * STOP_LOSS_ATR_MULTIPLIER / scale
             if tighten:
                 stop_dist *= 0.8
             if atr and price <= entry_px - stop_dist:
                 return "exit"
 
+        # ------------- swing‑trade exits ----------------------
         elif is_swing_trade(position):
             stop_dist = atr * STOP_LOSS_ATR_MULTIPLIER * 1.5 / scale
             if tighten:
