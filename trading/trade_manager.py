@@ -7,7 +7,7 @@ from utils.logger import bot_logger as logger
 from utils.telegram_utils import send_telegram_message
 from utils.trade_tracker import TradeTracker
 from utils.vix_utils import get_current_vix
-from utils.economic_calendar import has_monday_macro_event
+from utils.economic_calendar import week_has_fomc_or_cpi
 from meta.meta_agent import should_retry_trade
 from data.tradier_api import place_option_order
 
