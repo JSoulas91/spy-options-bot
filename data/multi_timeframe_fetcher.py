@@ -218,3 +218,8 @@ def get_multi_timeframe_data(symbol: str = "SPY") -> Dict[str, Any]:
 
 # For backward compatibility
 fetch_long_term_features = get_multi_timeframe_data
+
+# ───────────────────────────────────────────────────────────
+# Alias for external usage
+# ───────────────────────────────────────────────────────────
+get_spy_latest_quote = get_spy_quote  # for meta_state compatibility
