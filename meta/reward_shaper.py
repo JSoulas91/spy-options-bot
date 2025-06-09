@@ -66,6 +66,26 @@ def compute_reward(trade, market_data, exit_reason=None):
     return reward
 
 
+def compute_sharpe_style_reward(returns, risk_free_rate=0.0, epsilon=1e-8):
+    """
+    Compute a Sharpe-style risk-adjusted reward from a sequence of returns.
+
+    Args:
+        returns (list or np.array): Sequence of raw reward values.
+        risk_free_rate (float): Risk free rate baseline (default 0).
+        epsilon (float): Small constant to prevent division by zero.
+
+    Returns:
+        float: Sharpe ratio style reward.
+    """
+    returns = np.array(returns)
+    excess_returns = returns - risk_free_rate
+    mean_return = np.mean(excess_returns)
+    std_return = np.std(excess_returns) + epsilon
+    sharpe_ratio = mean_return / std_return
+    return sharpe_ratio
+
+
 def compute_shaped_reward(log_entry):
     """
     Compute final risk-adjusted reward using Sharpe-style normalization.
