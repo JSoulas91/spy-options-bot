@@ -72,3 +72,5 @@ class TradeTracker:
                     trade["close_date"] = date.today().isoformat()
                     self.save_trades()
                     break
+
+trade_tracker = TradeTracker()
