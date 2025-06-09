@@ -2,7 +2,8 @@
 import os, sys, time, traceback, threading
 from datetime import datetime, timezone
 from functools  import wraps
-from threading  import Lock, deque
+from threading import Lock
+from collections import deque
 
 from utils.logger   import bot_logger as logger
 from utils.telegram import send_telegram_message
