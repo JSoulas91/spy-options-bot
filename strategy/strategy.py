@@ -32,7 +32,6 @@ from meta.meta_state           import normalize_meta_state
 
 # ─────────────────────────────────────────────────────────
 meta_agent = MetaAgent()
-meta_agent.load_model()
 
 # ─────────────────────────────────────────────────────────
 # ----------   1.  Trade‑Signal (entry side)   ------------
