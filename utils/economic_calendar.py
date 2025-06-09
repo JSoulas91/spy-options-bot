@@ -3,6 +3,7 @@
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+from typing import Optional
 
 def get_upcoming_week_dates():
     """Return list of dates (datetime.date) for the next Monday through Friday."""
@@ -113,13 +114,13 @@ def week_has_fomc_or_cpi():
     return False
 
 
-def is_blackout_day(date_to_check: datetime.date | None = None) -> bool:
+def is_blackout_day(date_to_check: Optional[datetime.date] = None) -> bool:
     """
     Returns True if the provided date (or today if None) has a high-impact US event.
 
     Parameters
     ----------
-    date_to_check : datetime.date | None
+    date_to_check : Optional[datetime.date]
         The date to check. Defaults to today (UTC).
 
     Returns
