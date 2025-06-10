@@ -10,8 +10,8 @@ from utils.logger import bot_logger
 from utils.logs import clean_old_logs, backup_logs
 from utils.telegram_notifier import TelegramNotifier
 from utils.trade_logger import get_daily_trade_summary
-from retrain import retrain_model
-from main import run_market_open_tasks
+from ml.retrain import retrain_model
+from live_runner import run_market_open_tasks
 
 # Health‑check
 from monitor.health_check import update_status
@@ -90,7 +90,7 @@ def run_simulation_training_task():
     bot_logger.info("🏋️‍♂️ Running simulation training …")
     try:
         result = subprocess.run(
-            ["python", "sim_train_full.py"],
+            ["python", "simulation/sim_train_full.py"],
             capture_output=True,
             text=True,
             timeout=600,
@@ -105,6 +105,46 @@ def run_simulation_training_task():
         telegram.send_message("⚠️ Simulation training timed out after 10 minutes.")
     except Exception as e:
         bot_logger.error(f"Simulation training failed: {e}")
+
+def run_weekend_training_tasks():
+    bot_logger.info("🏋️‍♂️ Starting weekend simulation + training sequence ...")
+    telegram.send_message("🏋️‍♂️ Weekend simulation training started.")
+
+    try:
+        # 1️⃣ Run simulation training
+        result = subprocess.run(
+            ["python", "simulation/sim_train_full.py"],
+            capture_output=True,
+            text=True,
+            timeout=1800,  # 30 minutes timeout
+            check=False,
+        )
+        bot_logger.info("Simulation training completed.")
+        if result.stderr:
+            bot_logger.warning(f"Simulation training stderr:\n{result.stderr}")
+
+        # 2️⃣ Run ML retrain (ml/retrain.py)
+        bot_logger.info("Starting ML retraining after simulation …")
+        retrain_model()
+        bot_logger.info("ML retraining completed.")
+
+        # 3️⃣ Run PPO training (meta/train_meta_agent.py)
+        bot_logger.info("Starting PPO training after ML retrain …")
+        result = subprocess.run(
+            ["python", "meta/train_meta_agent.py"],
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minutes timeout
+            check=False,
+        )
+        bot_logger.info("PPO training completed.")
+        if result.stderr:
+            bot_logger.warning(f"PPO training stderr:\n{result.stderr}")
+
+        telegram.send_message("✅ Weekend simulation and training completed successfully.")
+    except Exception as e:
+        bot_logger.error(f"Weekend training sequence failed: {e}")
+        telegram.send_message(f"⚠️ Weekend training sequence failed: {e}")
 
 # ─── Main scheduler loop ───────────────────────────────────────
 def run_scheduler_loop():
@@ -122,9 +162,9 @@ def run_scheduler_loop():
     schedule.every().day.at("17:40").do(online_meta_update_task)
     schedule.every().day.at("17:50").do(train_meta_agent_task)
 
-    # 🔁 Simulation training: Sat + Sun at noon ET
-    schedule.every().saturday.at("12:00").do(run_simulation_training_task)
-    schedule.every().sunday.at("12:00").do(run_simulation_training_task)
+    # 🔁 Weekend combined simulation + ML + PPO training
+    schedule.every().saturday.at("12:00").do(run_weekend_training_tasks)
+    schedule.every().sunday.at("12:00").do(run_weekend_training_tasks)
 
     # Hourly health‑check runner
     schedule.every().hour.at(":30").do(
