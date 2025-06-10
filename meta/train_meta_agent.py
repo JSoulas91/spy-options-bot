@@ -39,9 +39,10 @@ def _prep_buffer(rows):
         st  = build_meta_state_from_log(cur)
         nxt = build_meta_state_from_log(cur)
         rew = compute_shaped_reward(cur)
-        act = cur.get("meta_action", {"dir": 1, "conf": 0.5})
-        # <-- Added error=1.0 to fix missing argument error
-        buf.add(st, act, rew, nxt, True, error=1.0)
+        act_dict = cur.get("meta_action", {"dir": 1, "conf": 0.5})
+        # Store action as tuple (dir, conf)
+        act = (act_dict.get("dir", 1), act_dict.get("conf", 0.5))
+        buf.add(st, act, rew, nxt, True, error=1.0)  # error initialized to 1.0
     return buf
 
 def _append_csv(ep, val):
@@ -75,14 +76,17 @@ def train():
     for ep in range(1, EPOCHS + 1):
         all_r = []
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
-            # <-- Added [:3] to fix too many values to unpack error
-            batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)[:3]
+            batch, idxs, weights, *_ = buffer.sample(BATCH_SIZE, beta)  # accommodate extra values if any
+
+            # Uncomment to debug batch content:
+            # print("DEBUG batch example action:", batch[0][1])
 
             states = torch.tensor([b[0] for b in batch], dtype=torch.float32)
             next_s = torch.tensor([b[3] for b in batch], dtype=torch.float32)
 
-            actions_dir  = torch.tensor([b[1]["dir"]  for b in batch], dtype=torch.long)
-            actions_conf = torch.tensor([b[1]["conf"] for b in batch], dtype=torch.float32)
+            # Unpack actions as tuples
+            actions_dir  = torch.tensor([b[1][0] for b in batch], dtype=torch.long)
+            actions_conf = torch.tensor([b[1][1] for b in batch], dtype=torch.float32)
 
             rewards = [b[2] for b in batch]
             dones   = [b[4] for b in batch]
