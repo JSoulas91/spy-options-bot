@@ -1,8 +1,5 @@
 # meta/train_meta_agent.py
-import os
-import sys
-import json
-import csv
+import os, sys, json, csv
 from typing import List, Dict
 
 import numpy as np
@@ -46,8 +43,8 @@ def _prep_buffer(rows):
         if isinstance(act_dict, dict):
             act = (act_dict.get("dir", 1), act_dict.get("conf", 0.5))
         else:
+            # fallback in case action is int scalar
             act = (int(act_dict), 0.5)
-        # Add with initial error 1.0 for prioritization
         buf.add(st, act, rew, nxt, True, error=1.0)
     return buf
 
@@ -87,8 +84,9 @@ def train():
             states = torch.tensor([b[0] for b in batch], dtype=torch.float32)
             next_s = torch.tensor([b[3] for b in batch], dtype=torch.float32)
 
-            actions_dir  = torch.tensor([b[1][0] for b in batch], dtype=torch.long)
-            actions_conf = torch.tensor([b[1][1] for b in batch], dtype=torch.float32)
+            raw_actions = [b[1] for b in batch]
+            actions_dir = torch.tensor([a[0] if isinstance(a, (list, tuple)) else a for a in raw_actions], dtype=torch.long)
+            actions_conf = torch.tensor([a[1] if isinstance(a, (list, tuple)) else 0.5 for a in raw_actions], dtype=torch.float32)
 
             rewards = [b[2] for b in batch]
             dones   = [b[4] for b in batch]
