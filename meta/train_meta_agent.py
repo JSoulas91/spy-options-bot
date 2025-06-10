@@ -1,5 +1,8 @@
 # meta/train_meta_agent.py
-import os, sys, json, csv
+import os
+import sys
+import json
+import csv
 from typing import List, Dict
 
 import numpy as np
@@ -24,7 +27,7 @@ from config import (
 
 CSV_PATH       = "meta/reward_history.csv"
 NOTIFY_EVERY   = 10
-ACTION_DIM     = 3                      # categorical actions 0/1/2
+ACTION_DIM     = 3  # categorical actions 0/1/2
 
 # ── helpers ────────────────────────────────────────────────
 def _load_rows() -> List[Dict]:
@@ -40,9 +43,12 @@ def _prep_buffer(rows):
         nxt = build_meta_state_from_log(cur)
         rew = compute_shaped_reward(cur)
         act_dict = cur.get("meta_action", {"dir": 1, "conf": 0.5})
-        # Store action as tuple (dir, conf)
-        act = (act_dict.get("dir", 1), act_dict.get("conf", 0.5))
-        buf.add(st, act, rew, nxt, True, error=1.0)  # error initialized to 1.0
+        if isinstance(act_dict, dict):
+            act = (act_dict.get("dir", 1), act_dict.get("conf", 0.5))
+        else:
+            act = (int(act_dict), 0.5)
+        # Add with initial error 1.0 for prioritization
+        buf.add(st, act, rew, nxt, True, error=1.0)
     return buf
 
 def _append_csv(ep, val):
@@ -76,15 +82,11 @@ def train():
     for ep in range(1, EPOCHS + 1):
         all_r = []
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
-            batch, idxs, weights, *_ = buffer.sample(BATCH_SIZE, beta)  # accommodate extra values if any
-
-            # Uncomment to debug batch content:
-            # print("DEBUG batch example action:", batch[0][1])
+            batch, idxs, weights, *_ = buffer.sample(BATCH_SIZE, beta)
 
             states = torch.tensor([b[0] for b in batch], dtype=torch.float32)
             next_s = torch.tensor([b[3] for b in batch], dtype=torch.float32)
 
-            # Unpack actions as tuples
             actions_dir  = torch.tensor([b[1][0] for b in batch], dtype=torch.long)
             actions_conf = torch.tensor([b[1][1] for b in batch], dtype=torch.float32)
 
