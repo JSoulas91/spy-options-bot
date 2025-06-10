@@ -19,6 +19,10 @@ from config import MAX_POSITION_SIZE
 # ───────────────────────────────────────────────
 eastern = pytz.timezone("US/Eastern")
 
+STATE_DIM = 73                      # 👈  global constant
+PAD_VAL   = 0.50                    # neutral padding value
+
+# ───── static + dynamic ranges ─────────────────
 DEFAULT_RANGES: Dict[str, Tuple[float, float]] = {
     "RSI": (0, 100),
     "MACD": (-5, 5),
@@ -38,8 +42,7 @@ def normalize(val: float, rng: Tuple[float, float]) -> float:
     lo, hi = rng
     return 0.5 if hi - lo == 0 else float(max(0, min(1, (val - lo) / (hi - lo))))
 
-# ───────────────────────────────────────────────
-# Dynamic range cache
+# ───── dynamic range cache ─────────────────────
 _DYNAMIC: Dict[str, Tuple[Tuple[float, float], float]] = {}
 _DYN_TTL = 3600  # 1 hour
 
@@ -72,8 +75,15 @@ def summarise_past(trades, rng_p, rng_d):
     return [normalize(np.mean(prof), rng_p),
             normalize(np.mean(dur),  rng_d)]
 
-# ───────────────────────────────────────────────
-# Simple regime classifier (rule‑based)
+# ───── helper: pad / trim to STATE_DIM ─────────
+def _pad(vec: List[float]) -> np.ndarray:
+    if len(vec) > STATE_DIM:
+        vec = vec[:STATE_DIM]
+    else:
+        vec += [PAD_VAL] * (STATE_DIM - len(vec))
+    return np.asarray(vec, dtype=np.float32)
+
+# ───── simple regime classifier ────────────────
 def _classify_regime(one_day: dict, vix_val: float) -> str:
     price   = one_day.get("price", 0)
     ema200  = one_day.get("ema_200", price)
@@ -100,8 +110,8 @@ def build_meta_state_for_entry(
     long_term_data=None,
     position_size: float = 0.0,
 ) -> np.ndarray:
-    past_trades = past_trades or []
-    long_term_data = long_term_data or {}
+    past_trades   = past_trades or []
+    long_term_data= long_term_data or {}
 
     try:
         # Dynamic ranges
@@ -122,16 +132,15 @@ def build_meta_state_for_entry(
             ]
 
         vix_val = fetch_vix_price() or 20.0
-        regime = _classify_regime(data_1d.iloc[-1], vix_val)
-        regime_vect = _regime_one_hot(regime)
+        regime  = _classify_regime(data_1d.iloc[-1], vix_val)
 
-        state = [
+        state: List[float] = [
             normalize(confidence_score, DEFAULT_RANGES["CONF"]),
             1.0 if trade_type == 1 else 0.0,
             normalize(get_minutes_since_open(), dur_rng),
             normalize(vix_val, DEFAULT_RANGES["VIX"]),
             normalize(position_size, DEFAULT_RANGES["SIZE"]),
-            *regime_vect,
+            *_regime_one_hot(regime),
             *summarise_past(past_trades, prof_rng, dur_rng),
             *tf_feats(data_1m), *tf_feats(data_5m),
             *tf_feats(data_15m), *tf_feats(data_1h), *tf_feats(data_1d),
@@ -147,13 +156,13 @@ def build_meta_state_for_entry(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                 ]
             else:
-                state += [0.5, 0.5, 0.5]
+                state += [PAD_VAL, PAD_VAL, PAD_VAL]
 
-        return np.asarray(state, dtype=np.float32)
+        return _pad(state)
 
     except Exception as e:
         logger.error(f"[MetaState] entry build error: {e}")
-        return np.zeros(73, dtype=np.float32)
+        return np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
 
 # ───────────────────────────────────────────────
 _OPTION_CACHE: Dict[str, Tuple[dict, float]] = {}
@@ -170,15 +179,15 @@ def build_meta_state_for_exit(
     past_trades=None,
     long_term_data=None,
 ) -> np.ndarray:
-    past_trades = past_trades or []
-    long_term_data = long_term_data or {}
+    past_trades   = past_trades or []
+    long_term_data= long_term_data or {}
 
     try:
         spy_q     = get_spy_latest_quote() or {}
         spy_price = spy_q.get("price", 0)
 
-        opt_sym = trade.get("option_symbol")
-        opt_q   = _cached_option_quote(opt_sym) if opt_sym else {}
+        opt_sym   = trade.get("option_symbol")
+        opt_q     = _cached_option_quote(opt_sym) if opt_sym else {}
         iv, delta = float(opt_q.get("iv", 0) or 0), float(opt_q.get("delta", 0) or 0)
 
         dur_rng   = DEFAULT_RANGES["DURATION"]
@@ -190,40 +199,39 @@ def build_meta_state_for_exit(
         entry      = trade.get("entry_price", 0)
         pnl_pct    = (spy_price - entry) / max(entry, 1e-9)
 
-        # Fix timedelta conversion
         try:
-            entry_time = datetime.fromisoformat(trade.get("timestamp")).astimezone(eastern)
+            entry_time   = datetime.fromisoformat(trade.get("timestamp")).astimezone(eastern)
             minutes_open = (datetime.now(eastern) - entry_time).total_seconds() // 60
         except Exception:
             minutes_open = 0
 
-        state = [
+        state: List[float] = [
             normalize(confidence, DEFAULT_RANGES["CONF"]),
             1.0 if t_type == 1 else 0.0,
             normalize(get_minutes_since_open(), dur_rng),
             normalize(minutes_open, dur_rng),
             normalize(pnl_pct, prof_rng),
             normalize(fetch_vix_price() or 20.0, DEFAULT_RANGES["VIX"]),
-            *summarise_past(trades=past_trades, rng_p=prof_rng, rng_d=dur_rng),
+            *summarise_past(past_trades, prof_rng, dur_rng),
             normalize(spy_price - entry, DEFAULT_RANGES["EMA_DIST"]),
             normalize(spy_price, spy_abs),
             normalize(iv, DEFAULT_RANGES["IV"]),
             normalize(delta, DEFAULT_RANGES["DELTA"]),
         ]
-        return np.asarray(state, dtype=np.float32)
+        return _pad(state)
     except Exception as e:
         logger.error(f"[MetaState] exit build error: {e}")
-        return np.zeros(43, dtype=np.float32)
+        return np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
 
 # ───────────────────────────────────────────────
 def build_meta_state_from_log(row: dict) -> np.ndarray:
     vec = row.get("meta_state")
     if vec is not None:
-        return np.asarray(vec, dtype=np.float32)
-    return np.zeros(73, dtype=np.float32)
+        return _pad(list(vec))
+    return np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
 
 # ───────────────────────────────────────────────
-# Simple 5‑feature normaliser used by strategy.py
+# 5‑feature normaliser used by strategy.py – padded to 73
 _SIMPLE_BOUNDS = {
     "confidence": (0, 1),
     "vix":        (10, 40),
@@ -238,11 +246,9 @@ def _to_unit(val: float, lo: float, hi: float) -> float:
     return float(np.clip(2 * (val - lo) / (hi - lo) - 1, -1, 1))
 
 def normalize_meta_state(feat: dict) -> np.ndarray:
-    """
-    Normalise {confidence, vix, hour, is_swing, atr} → np.ndarray[5] in [-1,1].
-    """
+    """Normalise {confidence, vix, hour, is_swing, atr} → 73‑dim vector."""
     vals = []
     for key in ("confidence", "vix", "hour", "is_swing", "atr"):
         lo, hi = _SIMPLE_BOUNDS.get(key, (0, 1))
         vals.append(_to_unit(float(feat.get(key, 0)), lo, hi))
-    return np.asarray(vals, dtype=np.float32)
+    return _pad(vals)
