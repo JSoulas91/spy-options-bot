@@ -62,8 +62,9 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
         "atr": atr,
     })
 
-    meta_action = meta_agent.select_action(meta_state)
-    meta_param  = meta_agent.interpret_action(meta_action, confidence)  # Pass confidence here
+    # Unpack the tuple returned by select_action
+    meta_action, meta_confidence = meta_agent.select_action(meta_state)
+    meta_param  = meta_agent.interpret_action(meta_action, meta_confidence)
 
     # ───────── realism: delay/slippage/partial
     fill_delay = RNG.randint(1, 5)
