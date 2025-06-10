@@ -22,9 +22,9 @@ from config import (
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
 )
 
-CSV_PATH       = "meta/reward_history.csv"
-NOTIFY_EVERY   = 10
-ACTION_DIM     = 3  # categorical actions 0/1/2
+CSV_PATH     = "meta/reward_history.csv"
+NOTIFY_EVERY = 10
+ACTION_DIM   = 3   # categorical actions 0/1/2
 
 # ── helpers ────────────────────────────────────────────────
 def _load_rows() -> List[Dict]:
@@ -34,27 +34,32 @@ def _load_rows() -> List[Dict]:
         return [json.loads(l) for l in f if l.strip()]
 
 def _prep_buffer(rows):
+    """
+    Fill a PrioritizedReplayBuffer. Each action stored as (dir:int, conf:float).
+    """
     buf = PrioritizedReplayBuffer(alpha=BUFFER_ALPHA)
     for cur in rows:
-        st  = build_meta_state_from_log(cur)
-        nxt = build_meta_state_from_log(cur)
-        rew = compute_shaped_reward(cur)
-        act_dict = cur.get("meta_action", {"dir": 1, "conf": 0.5})
-        if isinstance(act_dict, dict):
-            act = (act_dict.get("dir", 1), act_dict.get("conf", 0.5))
-        else:
-            # fallback in case action is int scalar
-            act = (int(act_dict), 0.5)
+        st   = build_meta_state_from_log(cur)
+        nxt  = build_meta_state_from_log(cur)
+        rew  = float(cur.get("reward", 0))
+        a    = cur.get("meta_action", {"dir": 1, "conf": 0.5})
+
+        # Ensure tuple (int_dir, float_conf)
+        if isinstance(a, dict):
+            act = (int(a.get("dir", 1)), float(a.get("conf", 0.5)))
+        else:  # scalar fallback
+            act = (int(a), 0.5)
+
         buf.add(st, act, rew, nxt, True, error=1.0)
     return buf
 
-def _append_csv(ep, val):
+def _append_csv(epoch_idx: int, avg_reward: float):
     new = not os.path.exists(CSV_PATH)
     with open(CSV_PATH, "a", newline="") as f:
         w = csv.writer(f)
         if new:
             w.writerow(["epoch", "avg_reward"])
-        w.writerow([ep, val])
+        w.writerow([epoch_idx, avg_reward])
 
 # ── main ───────────────────────────────────────────────────
 def train():
@@ -67,8 +72,7 @@ def train():
         return
 
     # determine state_dim from first row
-    sample_state = build_meta_state_from_log(rows[0])
-    state_dim    = sample_state.shape[-1]
+    state_dim = build_meta_state_from_log(rows[0]).shape[-1]
     save_meta_agent_dims(state_dim, ACTION_DIM)
 
     buffer = _prep_buffer(rows)
@@ -77,7 +81,8 @@ def train():
 
     history = []
     for ep in range(1, EPOCHS + 1):
-        all_r = []
+        all_rewards = []
+
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch, idxs, weights, *_ = buffer.sample(BATCH_SIZE, beta)
 
@@ -85,14 +90,20 @@ def train():
             next_s = torch.tensor([b[3] for b in batch], dtype=torch.float32)
 
             raw_actions = [b[1] for b in batch]
-            actions_dir = torch.tensor([a[0] if isinstance(a, (list, tuple)) else a for a in raw_actions], dtype=torch.long)
-            actions_conf = torch.tensor([a[1] if isinstance(a, (list, tuple)) else 0.5 for a in raw_actions], dtype=torch.float32)
+            actions_dir  = torch.tensor(
+                [int(a[0]) if isinstance(a, (list, tuple)) else int(a) for a in raw_actions],
+                dtype=torch.long
+            )
+            actions_conf = torch.tensor(
+                [float(a[1]) if isinstance(a, (list, tuple)) else 0.5 for a in raw_actions],
+                dtype=torch.float32
+            )
 
             rewards = [b[2] for b in batch]
             dones   = [b[4] for b in batch]
             old_log = torch.zeros(len(batch))
 
-            td = agent.train_step(
+            td_errors = agent.train_step(
                 states,
                 actions_dir,
                 actions_conf,
@@ -102,18 +113,18 @@ def train():
                 old_log,
                 torch.tensor(weights, dtype=torch.float32)
             )
-            buffer.update_priorities(idxs, td)
-            all_r.extend(rewards)
+            buffer.update_priorities(idxs, td_errors)
+            all_rewards.extend(rewards)
 
-        avg = float(np.mean(all_r))
-        history.append(avg)
-        _append_csv(ep, avg)
-        logger.info(f"Epoch {ep}/{EPOCHS}  avg_reward={avg:.4f}")
+        avg_r = float(np.mean(all_rewards))
+        history.append(avg_r)
+        _append_csv(ep, avg_r)
+        logger.info(f"Epoch {ep}/{EPOCHS}  avg_reward={avg_r:.4f}")
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
         if ep % NOTIFY_EVERY == 0:
             send_training_report(
-                {"epoch": ep, "avg_reward": avg, "reward_std": float(np.std(all_r))},
+                {"epoch": ep, "avg_reward": avg_r, "reward_std": float(np.std(all_rewards))},
                 history
             )
 
