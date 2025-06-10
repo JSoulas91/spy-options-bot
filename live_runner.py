@@ -1,41 +1,34 @@
-# live_runner.py  — real‑time loop + background meta‑update scheduler
+# live_runner.py
 import os, sys, time, traceback, threading
 from datetime import datetime, timezone
 from functools import wraps
 from threading import Lock
 from collections import deque
-
-from dotenv import load_dotenv          # ← load .env very early
+from dotenv import load_dotenv
 load_dotenv()
 
 from utils.logger            import bot_logger as logger
 from utils.telegram_utils    import send_telegram_message
 from monitor.health_check    import update_status
-
+from utils.trade_tracker     import trade_tracker, purge_old_trades
 from data.multi_timeframe_fetcher import fetch_long_term_features
-from data.quote_utils            import get_spy_quote as original_get_spy_quote
+from data.quote_utils        import get_spy_quote as original_get_spy_quote
+from trading.exit            import handle_exit
+from trading.entry           import handle_entry
+from strategy.strategy       import evaluate_trade
+from meta.online_meta_update import online_update
 
-from trading.exit               import handle_exit
-from trading.entry              import handle_entry
-from strategy.strategy          import evaluate_trade
-from meta.online_meta_update    import online_update
-
-from utils.trade_tracker        import trade_tracker     # NEW 🟢
-
-# ──────────────────────────── API throttling helper
-_last_call   = 0.0
-_lock        = Lock()
-API_MIN_DELAY = 1.0        # ≥ 1 s between raw Tradier calls
-
-# ──────────────────────────── cache / stats
+# ──────────────────────────── Constants / Globals
+_last_call = 0.0
+_lock = Lock()
+API_MIN_DELAY = 1.0
+FEATURE_TTL = 15
+loop_times = deque(maxlen=100)
+crash_path = "logs/crash.log"
 _cached_feat, _cached_ts = None, 0.0
-FEATURE_TTL   = 15         # seconds
-loop_times    = deque(maxlen=100)
-crash_path    = "logs/crash.log"
 
-# ──────────────────────────── retry decorator
-def retry_with_backoff(max_attempts=5, initial_wait=1.0, backoff_factor=2.0,
-                       exceptions=(Exception,)):
+# ──────────────────────────── Retry + Throttle
+def retry_with_backoff(max_attempts=5, initial_wait=1.0, backoff_factor=2.0, exceptions=(Exception,)):
     def deco(fn):
         @wraps(fn)
         def wrapper(*a, **kw):
@@ -47,10 +40,7 @@ def retry_with_backoff(max_attempts=5, initial_wait=1.0, backoff_factor=2.0,
                     if attempt == max_attempts:
                         logger.error(f"[Retry] {fn.__name__} failed after {attempt} tries: {e}")
                         raise
-                    logger.warning(
-                        f"[Retry] {fn.__name__} error: {e} – retry in {wait:.1f}s "
-                        f"({attempt}/{max_attempts})"
-                    )
+                    logger.warning(f"[Retry] {fn.__name__} error: {e} – retry in {wait:.1f}s ({attempt}/{max_attempts})")
                     time.sleep(wait)
                     wait *= backoff_factor
         return wrapper
@@ -81,9 +71,8 @@ def get_features(symbol: str):
     _cached_feat, _cached_ts = fetch_features_with_retry(symbol), now
     return _cached_feat
 
-# ──────────────────────────── background meta‑update
+# ──────────────────────────── Meta-agent background update
 def schedule_online_update(interval_hours: int = 24):
-    """Launch a daemon thread that calls `online_update()` every N hours."""
     def worker():
         while True:
             logger.info("[MetaScheduler] Running online PPO update …")
@@ -96,13 +85,9 @@ def schedule_online_update(interval_hours: int = 24):
             logger.info(f"[MetaScheduler] Sleeping {interval_hours} h …")
             time.sleep(interval_hours * 3600)
 
-    threading.Thread(
-        target=worker,
-        daemon=True,
-        name="MetaUpdateScheduler"
-    ).start()
+    threading.Thread(target=worker, daemon=True, name="MetaUpdateScheduler").start()
 
-# ──────────────────────────── main live loop
+# ──────────────────────────── Live trading loop
 def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
     logger.info(f"[LiveRunner] Started for {symbol}, {interval_sec}s cadence")
     try:
@@ -110,23 +95,20 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
     except Exception as tg_err:
         logger.warning(f"[LiveRunner] Telegram start message failed: {tg_err}")
 
-    schedule_online_update(interval_hours=24)    # start background updater once
+    schedule_online_update(interval_hours=24)
     kill_switch_path = "/home/ubuntu/kill_switch.txt"
 
     while True:
         tic = time.time()
 
-        # ── kill‑switch file
         if os.path.exists(kill_switch_path):
             logger.warning("[LiveRunner] Kill‑switch file detected → shutting down")
-            try:
-                send_telegram_message("⏹️ Bot stopped via kill‑switch.")
+            try: send_telegram_message("⏹️ Bot stopped via kill‑switch.")
             except: pass
             sys.exit(0)
 
         try:
-            update_status("heartbeat")                          # health ping
-
+            update_status("heartbeat")
             features   = get_features(symbol)
             last_price = get_spy_quote_with_retry()
 
@@ -137,13 +119,10 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
                 "features":  features,
             }
 
-            handle_exit(snapshot)                               # risk first
-
-            # evaluate every open trade against current snapshot
+            handle_exit(snapshot)
             for tr in trade_tracker.get_open_trades():
                 evaluate_trade(tr, snapshot)
-
-            handle_entry(snapshot)                              # maybe open new one
+            handle_entry(snapshot)
 
         except Exception as e:
             logger.error(f"[LiveRunner] {e}")
@@ -155,6 +134,17 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
         loop_times.append(time.time() - tic)
         time.sleep(max(0.0, interval_sec - (time.time() - tic)))
 
-# ──────────────────────────── entrypoint
+# ──────────────────────────── Unified main (merged from main.py)
+def main():
+    logger.info("🚀 SPY Options Trading Bot is launching…")
+    send_telegram_message("🚀 *Bot Online*\nLive trading loop is starting.")
+    purge_old_trades()                          # From main.py
+    live_trading_loop()                         # Replaces thread-based launch
+
 if __name__ == "__main__":
-    live_trading_loop()
+    try:
+        main()
+    except Exception as exc:
+        logger.critical(f"💀 [Startup Fatal Error] {exc}")
+        logger.debug(traceback.format_exc())
+        send_telegram_message(f"💥 *Fatal Error in startup*\n\n```{exc}```")
