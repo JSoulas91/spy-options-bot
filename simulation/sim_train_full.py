@@ -1,53 +1,32 @@
-"""
-End‑to‑end synthetic back‑test + meta‑training pipeline.
-
-✓ Generates 60 simulated market‑days of SPY trades (calls & puts)
-✓ Realistic price path via geometric Brownian motion
-✓ Randomised bid/ask‑spread, fill‑latency & slippage
-✓ Logs every trade to  meta/meta_log.jsonl   (schema your PPO expects)
-✓ Pops a Telegram alert when simulation is finished
-✓ Immediately launches PPO training  (meta/train_meta_agent.py)
-
-Run with:
-    python3 simulation/sim_train_full.py
-"""
-
-from __future__ import annotations
+# sim_train_full.py
 
 import os, json, math, time, random
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List
 
 import numpy as np
 
-# ───────── project bits
-from meta.meta_state      import normalize_meta_state           # tiny helper
-from meta.meta_agent      import MetaAgent
-from meta.reward_shaper   import compute_shaped_reward
+from meta.meta_state   import normalize_meta_state
+from meta.meta_agent   import MetaAgent
+from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_utils import send_telegram_message
-from utils.logger         import bot_logger as logger
+from utils.logger       import bot_logger as logger
 
-# ───────── tunables  (tweak freely)
-SIM_DAYS            = 60          # simulated trading days
-TRADES_PER_DAY      = 10          # trades generated per day
-GBM_MU              = 0.08        # μ annual drift  (≈8 %)
-GBM_SIGMA           = 0.22        # σ annual vol   (≈22 %)
-START_PRICE         = 450.0       # SPY starting price
-IV_BASE             = 0.18        # base implied‑vol for option pricing toy model
+# ───────── simulation params
+SIM_DAYS            = 60
+TRADES_PER_DAY      = 10
+GBM_MU              = 0.08
+GBM_SIGMA           = 0.22
+START_PRICE         = 450.0
+IV_BASE             = 0.18
 
 META_LOG_PATH       = Path("meta/meta_log.jsonl")
 RNG                 = random.Random(42)
-np.random.seed(42)                # reproducible NumPy draws
 
-meta_agent = MetaAgent()          # loads latest PPO policy
+meta_agent = MetaAgent()
 
 
-# ╭──────────────────────────────────────────────────────────╮
-# │  helpers                                                │
-# ╰──────────────────────────────────────────────────────────╯
-def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float) -> List[float]:
-    """Generate a geometric Brownian‑motion price path."""
+def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
     for _ in range(1, n_steps):
         shock = RNG.normalvariate(0, 1)
@@ -57,130 +36,119 @@ def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float) -> Lis
     return prices
 
 
-def make_option_symbol(day: datetime, strike: float, c_or_p: str, uid: str) -> str:
-    """
-    Very rough OCC‑style code with an extra UID for uniqueness:
-    SPYyyyymmddC########.UID
-    """
-    return (
-        f"SPY{day.strftime('%y%m%d')}{c_or_p}"
-        f"{int(strike*100):08d}.{uid}"
-    )
+def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
+    return f"SPY{day.strftime('%y%m%d')}{c_or_p}{int(strike*100):08d}"
 
 
 def random_confidence() -> float:
-    """Beta‑distributed confidence skewed high."""
-    return round(np.random.beta(5, 2), 2)   # 0‑1
+    return round(np.random.beta(5, 2), 2)
 
 
-def simulate_trade(day_idx: int, step_idx: int, price_today: float, vix: float) -> dict:
-    """
-    Create a synthetic trade dict matching live‑trade schema.
-    """
+def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float):
     option_type = RNG.choice(["C", "P"])
-    strike      = round(price_today + RNG.uniform(-6, 6), 1)
-    option_sym  = make_option_symbol(
-        datetime.utcnow() + timedelta(days=day_idx),
-        strike,
-        option_type,
-        uid=f"{day_idx}{step_idx}{RNG.randint(1000,9999)}",
-    )
+    start_idx   = RNG.randint(30, len(prices) - 30)
+    price_at_signal = prices[start_idx]
+    strike      = round(price_at_signal + RNG.uniform(-6, 6), 1)
+    option_sym  = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
 
-    # ── meta‑state for entry (confidence + vix + hour + swing/ATR)
-    hour   = RNG.randint(10, 15)
-    conf   = random_confidence()
-    meta_s = normalize_meta_state({
-        "confidence": conf,
+    hour        = RNG.randint(10, 15)
+    confidence  = random_confidence()
+    atr         = RNG.uniform(2, 6)
+    meta_state  = normalize_meta_state({
+        "confidence": confidence,
         "vix": vix,
         "hour": hour,
         "is_swing": 0,
-        "atr": RNG.uniform(2, 6),
+        "atr": atr,
     })
 
-    action_idx, agent_conf = meta_agent.select_action(meta_s)
-    meta_param             = meta_agent.interpret_action(action_idx, agent_conf)
+    meta_action = meta_agent.select_action(meta_state)
+    meta_param  = meta_agent.interpret_action(meta_action)
 
-    # basic PnL toy formula using option delta ≈ 0.3 and random noise
-    pct_move_underlying = RNG.uniform(-0.6, 0.6)  # up/down 0.6 %
-    pnl_pct = pct_move_underlying * RNG.uniform(0.8, 1.2) * 0.3
+    # ───────── realism: delay/slippage/partial
+    fill_delay = RNG.randint(1, 5)
+    fill_idx   = min(start_idx + fill_delay, len(prices) - 1)
+    fill_price = prices[fill_idx]
 
-    # bias wins by confidence
-    pnl_pct = abs(pnl_pct) if RNG.random() < conf else -abs(pnl_pct)
-    pnl_pct = max(min(pnl_pct, 1.8), -0.9)  # –90 % … +180 %
+    # slippage adjustment
+    slippage_pct = (fill_price - price_at_signal) / price_at_signal
+    slippage_pct += RNG.gauss(0, 0.001)  # ±0.1% extra noise
 
-    trade_dict = {
-        "id":           f"SIM.{day_idx}-{step_idx}",
-        "timestamp":    datetime.utcnow().isoformat(timespec="seconds"),
-        "symbol":       "SPY",
+    # simulate final price movement
+    pct_move_underlying = RNG.uniform(-0.6, 0.6)
+    raw_pnl_pct = pct_move_underlying * RNG.uniform(80, 120) * 0.3
+
+    # bias toward correct side if confidence is high
+    if RNG.random() < confidence:
+        raw_pnl_pct = abs(raw_pnl_pct)
+    else:
+        raw_pnl_pct = -abs(raw_pnl_pct)
+
+    raw_pnl_pct = max(min(raw_pnl_pct, 1.8), -0.9)
+
+    # realism: partial fill
+    fill_ratio = round(RNG.uniform(0.6, 1.0), 2)
+
+    trade = {
+        "id":     f"SIM.{day_idx}-{step_idx}",
+        "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
+        "symbol": "SPY",
         "option_symbol": option_sym,
-        "trade_type":   0,                         # treat as day‑trade
-        "confidence":   conf,
-        "entry_price":  price_today,
-        "exit_price":   round(price_today * (1 + pct_move_underlying / 100), 2),
-        "pnl":          round(pnl_pct * 100, 2),   # as %
-        "meta_state":   meta_s.tolist(),
-        "meta_action":  {"dir": action_idx, "conf": agent_conf},
+        "trade_type": 0,
+        "confidence": confidence,
+        "entry_price": fill_price,
+        "slippage_pct": round(slippage_pct * 100, 3),
+        "fill_delay_min": fill_delay,
+        "fill_ratio": fill_ratio,
+        "exit_price":  round(fill_price * (1 + pct_move_underlying / 100), 2),
+        "pnl": round(raw_pnl_pct * 100 * fill_ratio, 2),
+        "meta_state": meta_state.tolist(),
+        "meta_action": int(meta_action),
     }
-    return trade_dict
+    return trade
 
 
-def append_meta_log(trade: dict, vix_value: float) -> None:
-    """Append single experience to JSONL log with shaped reward."""
+def append_meta_log(trade: dict, vix: float):
+    market = { "vix": vix }
     META_LOG_PATH.parent.mkdir(exist_ok=True)
-
-    payload = {
-        "trade":        trade,
-        "market":       {"vix": vix_value},
-        "exit_reason":  "sim_exit",
-        "meta_state":   trade["meta_state"],
-        "meta_action":  trade["meta_action"],
-        "reward":       compute_shaped_reward({
-                            "trade": trade,
-                            "market": {"vix": vix_value},
-                            "exit_reason": "sim_exit",
-                        }),
-        "done": True
-    }
     with META_LOG_PATH.open("a") as fh:
-        fh.write(json.dumps(payload) + "\n")
+        fh.write(json.dumps({
+            "trade":      trade,
+            "market":     market,
+            "exit_reason": "sim_exit",
+            "meta_state":  trade["meta_state"],
+            "meta_action": trade["meta_action"],
+            "reward":      compute_shaped_reward({
+                                "trade": trade,
+                                "market": market,
+                                "exit_reason": "sim_exit"
+                            }),
+            "done": True
+        }) + "\n")
 
 
-# ╭──────────────────────────────────────────────────────────╮
-# │  main simulation loop                                    │
-# ╰──────────────────────────────────────────────────────────╯
-def simulate() -> None:
-    logger.info("🧪 Starting synthetic back‑test …")
+def simulate():
+    logger.info("🧪 Starting synthetic back‑test with realism …")
     current_price = START_PRICE
 
     for day in range(SIM_DAYS):
         logger.info(f"── Day {day+1}/{SIM_DAYS}")
         minutes_per_day = 390
-        prices = gbm_path(
-            minutes_per_day,
-            current_price,
-            GBM_MU / 252,
-            GBM_SIGMA / np.sqrt(252),
-            dt=1 / 390,
-        )
-        current_price = prices[-1]  # last close = next open
-        vix_today     = RNG.uniform(14, 28)
+        prices = gbm_path(minutes_per_day, current_price,
+                          GBM_MU/252, GBM_SIGMA/np.sqrt(252), dt=1/390)
+        current_price = prices[-1]
+        vix_today = RNG.uniform(14, 28)
 
         for step in range(TRADES_PER_DAY):
-            px = RNG.choice(prices)           # random trade entry price
-            trade = simulate_trade(day, step, px, vix_today)
+            trade = simulate_trade(day, step, prices, vix_today)
             append_meta_log(trade, vix_today)
-            time.sleep(0.05)                  # slight delay for Ctrl‑C breaks
+            time.sleep(0.05)
 
     logger.info("✅ Simulation finished.")
     send_telegram_message("✅ Simulation finished – launching PPO training …")
-
-    # Kick off PPO training (blocking)
-    os.system("python3 meta/train_meta_agent.py")
+    os.system("python3 train_meta_agent.py")
 
 
-# ╭──────────────────────────────────────────────────────────╮
-# │  entry‑point                                            │
-# ╰──────────────────────────────────────────────────────────╯
 if __name__ == "__main__":
     try:
         simulate()
