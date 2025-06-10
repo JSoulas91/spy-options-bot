@@ -116,19 +116,30 @@ def evaluate_swing_hold(contract: Dict[str, Any], confidence: float) -> bool:
 # ──────────────────────────────────────────────────────────────────────────────
 def close_trade(trade: dict) -> None:
     """
-    Closes an open trade.
-    Here, implement actual closing logic (e.g. market sell orders).
-    This is a placeholder for integration with Tradier or Alpaca order APIs.
+    Closes an open trade using Tradier by placing a market sell order.
     """
     try:
-        # Example placeholder logic:
-        # symbol = trade.get("symbol")
-        # qty = trade.get("qty")
-        # place a market order to close position
-        logger.info(f"[TradeManager] Closing trade {trade.get('id')} for {trade.get('symbol')}")
-        # TODO: add actual close order logic here
-        # e.g. call place_option_order or Alpaca API with side='sell' and qty
-        time.sleep(0.5)  # simulate latency
+        option_symbol = trade.get("symbol")
+        qty = trade.get("qty")
+
+        if not option_symbol or not qty:
+            raise ValueError("Trade is missing symbol or qty.")
+
+        logger.info(f"[TradeManager] Closing trade {trade.get('id')} — SELL {qty} of {option_symbol}")
+
+        response = place_option_order(
+            option_symbol=option_symbol,
+            quantity=qty,
+            side="sell",             # close trade
+            order_type="market",
+            duration="day"
+        )
+
+        if response and response.get("status", "").lower() in VALID_ORDER_STATUSES:
+            logger.info(f"✅ Trade {trade.get('id')} closed successfully.")
+        else:
+            logger.warning(f"⚠️ Close order may have failed: {response}")
+
     except Exception as exc:
         logger.error(f"[TradeManager] Error closing trade {trade.get('id')}: {exc}")
         raise
