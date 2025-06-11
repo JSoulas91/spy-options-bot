@@ -37,7 +37,7 @@ class PrioritizedReplayBuffer:
 
     def update_priorities(self, indices, errors):
         for i in range(len(indices)):
-            idx = int(indices[i])  # force scalar integer
+            idx = indices[i].item() if hasattr(indices[i], "item") else int(indices[i])
             err = errors[i]
             priority = (abs(err) + self.epsilon) ** self.alpha
             self.priorities[idx] = priority
