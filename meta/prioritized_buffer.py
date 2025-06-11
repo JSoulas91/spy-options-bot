@@ -16,15 +16,18 @@ class PrioritizedReplayBuffer:
         self.buffer.append((state, action, reward, next_state, done))
         self.priorities.append(priority)
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, beta=None):
         if len(self.buffer) == 0:
             return [], [], [], [], [], [], []
+
+        if beta is None:
+            beta = self.beta
 
         priorities = np.array(self.priorities, dtype=np.float32)
         probs = priorities / priorities.sum()
         indices = np.random.choice(len(self.buffer), batch_size, p=probs)
 
-        weights = (len(self.buffer) * probs[indices]) ** (-self.beta)
+        weights = (len(self.buffer) * probs[indices]) ** (-beta)
         weights /= weights.max()
 
         batch = [self.buffer[idx] for idx in indices]
