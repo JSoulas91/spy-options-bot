@@ -16,4 +16,4 @@ def send_telegram_message(message):
         if response.status_code != 200:
             print("❌ Failed to send Telegram message:", response.text)
     except Exception as e:
-        print("❌ Telegram send error:", str(e))
+        print("❌ Telegram send error:", str(e)) 
