@@ -1,3 +1,4 @@
+# meta/train_meta_agent.py  – unchanged logic + safe CSV folder creation
 import os, sys, json, csv
 from typing import List, Dict
 
@@ -18,8 +19,9 @@ from config import (
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
 )
 
-CSV_PATH, NOTIFY_EVERY = "meta/reward_history.csv", 10
-BUFFER_CAPACITY = 10000  # ✅ Set your preferred capacity
+CSV_PATH, NOTIFY_EVERY   = "meta/reward_history.csv", 10
+BUFFER_CAPACITY          = 10_000        # replay buffer size
+ACTION_DIM               = 3             # categorical actions 0/1/2
 
 # ╭──────────────────────────────────────────────────────────╮
 # │ Helpers                                                 │
@@ -41,7 +43,7 @@ def _pad_or_trim(vec, dim):
     if not isinstance(vec, (list, np.ndarray)):
         return [0.0] * dim
     lst = list(vec)
-    return lst[:dim] if len(lst) >= dim else lst + [0.0]*(dim - len(lst))
+    return lst[:dim] if len(lst) >= dim else lst + [0.0] * (dim - len(lst))
 
 def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
@@ -52,15 +54,14 @@ def _prep_buffer(rows, dim):
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
-        if isinstance(act_raw, dict):
-            act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5)))
-        else:
-            act = (int(act_raw), 0.5)
-        buf.add(st, act, rew, st, True, error=1.0)
+        act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5))) \
+              if isinstance(act_raw, dict) else (int(act_raw), 0.5)
+        buf.add(st, act, rew, st, True)
     logger.info("Replay buffer populated: %d samples", len(buf))
     return buf
 
 def _append_csv(epoch_idx, avg_r):
+    os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)   # NEW 🟢
     new = not os.path.exists(CSV_PATH)
     with open(CSV_PATH, "a", newline="") as f:
         w = csv.writer(f)
@@ -83,69 +84,68 @@ def train():
     if state_dim <= 0:
         logger.error("Cannot infer state_dim."); return
 
-    save_meta_agent_dims(state_dim, 3)
+    save_meta_agent_dims(state_dim, ACTION_DIM)
     buffer = _prep_buffer(rows, state_dim)
     if len(buffer) < BATCH_SIZE:
         logger.error("Buffer too small."); return
 
-    agent = PPOAgent(state_dim=state_dim)
-    beta, history = BUFFER_BETA_START, []
+    agent  = PPOAgent(state_dim=state_dim)
+    beta   = BUFFER_BETA_START
+    hist   = []
 
     for ep in range(1, EPOCHS + 1):
         ep_rewards = []
 
-        for _ in range(max(1, len(buffer)//BATCH_SIZE)):
+        for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
 
-            states, next_s, dirs, confs, rewards, dones = [], [], [], [], [], []
-            for s, a, r, ns, done, *_ in batch:
+            states, dirs, confs, rewards, dones = [], [], [], [], []
+            for idx, (s, a, r, _, done) in enumerate(batch):
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
-                next_s.append(s_vec)
+
                 if isinstance(a, (list, tuple)):
                     dirs.append(int(a[0])); confs.append(float(a[1]))
                 else:
                     dirs.append(int(a));    confs.append(0.5)
                 rewards.append(float(r));  dones.append(int(bool(done)))
 
-            if not states: continue
+            if not states:
+                continue
 
-            # numpy then tensor
-            states_np  = np.array(states, dtype=np.float32)
-            next_np    = np.array(next_s, dtype=np.float32)
-            dirs_np    = np.array(dirs, dtype=np.int64)
-            confs_np   = np.array(confs, dtype=np.float32)
-            weights_np = np.array(weights[:len(states)], dtype=np.float32)
-            rewards_np = np.array(rewards, dtype=np.float32)
-            dones_np   = np.array(dones, dtype=np.float32)
-
-            states_t   = torch.tensor(states_np)
-            next_t     = torch.tensor(next_np)
-            dirs_t     = torch.tensor(dirs_np)
-            confs_t    = torch.tensor(confs_np)
-            weights_t  = torch.tensor(weights_np)
-            old_logp   = torch.zeros(len(states))
+            # numpy → tensor
+            states_t  = torch.tensor(np.array(states, dtype=np.float32))
+            next_t    = states_t.clone()  # 1‑step bootstrap
+            dirs_t    = torch.tensor(np.array(dirs, dtype=np.int64))
+            confs_t   = torch.tensor(np.array(confs, dtype=np.float32))
+            weights_t = torch.tensor(np.array(weights, dtype=np.float32))
+            old_logp  = torch.zeros(len(states_t))
 
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
-                rewards=rewards_np.tolist(),
-                dones=dones_np.tolist(),
+                rewards=rewards,
+                dones=dones,
                 next_states=next_t,
                 old_logp=old_logp,
                 weights=weights_t
             )
-            buffer.update_priorities(idxs[:len(states)], td_err.cpu().tolist())
-            ep_rewards.extend(rewards_np.tolist())
+
+            buffer.update_priorities(idxs, td_err.cpu().tolist())
+            ep_rewards.extend(rewards)
 
         avg_r = float(np.mean(ep_rewards)) if ep_rewards else 0.0
-        history.append(avg_r); _append_csv(ep, avg_r)
+        hist.append(avg_r)
+        _append_csv(ep, avg_r)
         logger.info("Epoch %d/%d – avg_reward = %.4f", ep, EPOCHS, avg_r)
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
         if ep % NOTIFY_EVERY == 0:
             send_training_report(
-                {"epoch": ep, "avg_reward": avg_r,
-                 "reward_std": float(np.std(ep_rewards)) if ep_rewards else 0}, history)
+                {"epoch": ep,
+                 "avg_reward": avg_r,
+                 "reward_std": float(np.std(ep_rewards)) if ep_rewards else 0},
+                hist
+            )
 
     agent.save()
     update_status("last_ppo")
