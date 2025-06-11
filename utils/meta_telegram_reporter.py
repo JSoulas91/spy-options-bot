@@ -1,4 +1,3 @@
-# utils/meta_telegram_reporter.py
 """
 Send concise meta‑agent training summaries (text + reward chart) to Telegram.
 """
@@ -67,19 +66,4 @@ def send_training_report(stats: Dict, rewards: List[float]) -> None:
 
     try:
         # 1) Send text message
-        send_telegram_message(_fmt_stats(stats))
-        logger.info("📨 Training text report sent.")
-
-        # 2) Send reward‑trend chart (optional)
-        if rewards:
-            chart_bytes = _make_chart(rewards)
-            send_telegram_message("📊 Reward trend chart attached ⬇️")
-            # Re‑use the same helper to send photo if your helper supports it,
-            # otherwise implement send_telegram_photo() similarly.
-            #
-            # Example if your helper supports media:
-            # send_telegram_photo(chart_bytes, caption="Reward trend")
-    except Exception as exc:
-        logger.warning(f"[MetaReporter] failed to send report: {exc}")
-
-    _LAST_SENT_TS = time.time()
+        send
