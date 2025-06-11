@@ -33,24 +33,36 @@ def _load_rows() -> List[Dict]:
     with open(META_LOG_PATH) as f:
         return [json.loads(l) for l in f if l.strip()]
 
-def _prep_buffer(rows):
-    """
-    Fill a PrioritizedReplayBuffer. Each action stored as (dir:int, conf:float).
-    """
-    buf = PrioritizedReplayBuffer(alpha=BUFFER_ALPHA)
-    for cur in rows:
-        st   = build_meta_state_from_log(cur)
-        nxt  = build_meta_state_from_log(cur)
-        rew  = float(cur.get("reward", 0))
-        a    = cur.get("meta_action", {"dir": 1, "conf": 0.5})
+def _discover_state_dim(rows: List[Dict]) -> int:
+    """Return first consistent meta_state length found, else -1."""
+    for r in rows:
+        ms = r.get("meta_state")
+        if isinstance(ms, list) and len(ms) > 0:
+            return len(ms)
+    return -1
 
-        # Ensure tuple (int_dir, float_conf)
+def _prep_buffer(rows, state_dim: int):
+    buf = PrioritizedReplayBuffer(alpha=BUFFER_ALPHA)
+    skipped = 0
+    for cur in rows:
+        raw_state = cur.get("meta_state")
+        if not raw_state or len(raw_state) != state_dim:
+            skipped += 1
+            continue  # incompatible dimension -> skip
+
+        st  = np.asarray(raw_state, dtype=np.float32)
+        nxt = st  # 1‑step boot‑strap is fine
+        rew = float(cur.get("reward", 0))
+
+        a = cur.get("meta_action", {"dir": 1, "conf": 0.5})
         if isinstance(a, dict):
             act = (int(a.get("dir", 1)), float(a.get("conf", 0.5)))
-        else:  # scalar fallback
+        else:
             act = (int(a), 0.5)
 
         buf.add(st, act, rew, nxt, True, error=1.0)
+
+    logger.info(f"Prepared buffer: kept {len(buf)} rows, skipped {skipped}.")
     return buf
 
 def _append_csv(epoch_idx: int, avg_reward: float):
@@ -71,11 +83,17 @@ def train():
         logger.warning("No training data found.")
         return
 
-    # determine state_dim from first row
-    state_dim = build_meta_state_from_log(rows[0]).shape[-1]
-    save_meta_agent_dims(state_dim, ACTION_DIM)
+    state_dim = _discover_state_dim(rows)
+    if state_dim <= 0:
+        logger.error("Could not infer consistent state_dim. Abort.")
+        return
 
-    buffer = _prep_buffer(rows)
+    save_meta_agent_dims(state_dim, ACTION_DIM)
+    buffer = _prep_buffer(rows, state_dim)
+    if len(buffer) < BATCH_SIZE:
+        logger.error("Not enough compatible samples after filtering. Abort.")
+        return
+
     agent  = PPOAgent(state_dim=state_dim)
     beta   = BUFFER_BETA_START
 
@@ -86,24 +104,18 @@ def train():
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch, idxs, weights, *_ = buffer.sample(BATCH_SIZE, beta)
 
-            states = torch.tensor([b[0] for b in batch], dtype=torch.float32)
-            next_s = torch.tensor([b[3] for b in batch], dtype=torch.float32)
+            states  = torch.tensor([b[0] for b in batch], dtype=torch.float32)
+            next_s  = torch.tensor([b[3] for b in batch], dtype=torch.float32)
+            actions = [b[1] for b in batch]
 
-            raw_actions = [b[1] for b in batch]
-            actions_dir  = torch.tensor(
-                [int(a[0]) if isinstance(a, (list, tuple)) else int(a) for a in raw_actions],
-                dtype=torch.long
-            )
-            actions_conf = torch.tensor(
-                [float(a[1]) if isinstance(a, (list, tuple)) else 0.5 for a in raw_actions],
-                dtype=torch.float32
-            )
+            actions_dir  = torch.tensor([int(a[0]) for a in actions], dtype=torch.long)
+            actions_conf = torch.tensor([float(a[1]) for a in actions], dtype=torch.float32)
 
             rewards = [b[2] for b in batch]
             dones   = [b[4] for b in batch]
             old_log = torch.zeros(len(batch))
 
-            td_errors = agent.train_step(
+            td_err = agent.train_step(
                 states,
                 actions_dir,
                 actions_conf,
@@ -113,7 +125,7 @@ def train():
                 old_log,
                 torch.tensor(weights, dtype=torch.float32)
             )
-            buffer.update_priorities(idxs, td_errors)
+            buffer.update_priorities(idxs, td_err)
             all_rewards.extend(rewards)
 
         avg_r = float(np.mean(all_rewards))
