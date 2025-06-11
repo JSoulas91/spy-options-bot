@@ -6,23 +6,23 @@ import torch
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from meta.ppo import PPOAgent
-from meta.meta_agent_info import save_meta_agent_dims
-from meta.prioritized_buffer import PrioritizedReplayBuffer
-from utils.logger import bot_logger as logger
+from meta.ppo                   import PPOAgent
+from meta.meta_agent_info       import save_meta_agent_dims
+from meta.prioritized_buffer    import PrioritizedReplayBuffer
+from utils.logger               import bot_logger as logger
 from utils.meta_telegram_reporter import send_training_report
-from utils.telegram_utils import send_telegram_message
-from monitor.health_check import update_status
+from utils.telegram_utils       import send_telegram_message
+from monitor.health_check       import update_status
 from config import (
     META_LOG_PATH, EPOCHS, BATCH_SIZE,
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
 )
 
-CSV_PATH = "meta/reward_history.csv"
-NOTIFY_EVERY = 10
+CSV_PATH, NOTIFY_EVERY = "meta/reward_history.csv", 10
+BUFFER_CAPACITY = 10000  # ✅ Set your preferred capacity
 
 # ╭──────────────────────────────────────────────────────────╮
-# │ Helpers                                                  │
+# │ Helpers                                                 │
 # ╰──────────────────────────────────────────────────────────╯
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
@@ -41,22 +41,22 @@ def _pad_or_trim(vec, dim):
     if not isinstance(vec, (list, np.ndarray)):
         return [0.0] * dim
     lst = list(vec)
-    return lst[:dim] if len(lst) >= dim else lst + [0.0] * (dim - len(lst))
+    return lst[:dim] if len(lst) >= dim else lst + [0.0]*(dim - len(lst))
 
 def _prep_buffer(rows, dim):
-    buf = PrioritizedReplayBuffer(alpha=BUFFER_ALPHA)
+    buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
     for row in rows:
         ms = row.get("meta_state")
         if not isinstance(ms, (list, np.ndarray)):
             continue
-        state = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
-        reward = float(row.get("reward", 0))
+        st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
+        rew = float(row.get("reward", 0))
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         if isinstance(act_raw, dict):
-            action = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5)))
+            act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5)))
         else:
-            action = (int(act_raw), 0.5)
-        buf.add(state, action, reward, state, True, error=1.0)
+            act = (int(act_raw), 0.5)
+        buf.add(st, act, rew, st, True, error=1.0)
     logger.info("Replay buffer populated: %d samples", len(buf))
     return buf
 
@@ -69,7 +69,7 @@ def _append_csv(epoch_idx, avg_r):
         w.writerow([epoch_idx, avg_r])
 
 # ╭──────────────────────────────────────────────────────────╮
-# │ Main Training                                            │
+# │ Main training loop                                      │
 # ╰──────────────────────────────────────────────────────────╯
 def train():
     logger.info("🚀 PPO meta‑agent training started")
@@ -77,88 +77,75 @@ def train():
 
     rows = _load_rows()
     if not rows:
-        logger.warning("No training data found.")
-        return
+        logger.warning("No training data."); return
 
     state_dim = _discover_state_dim(rows)
     if state_dim <= 0:
-        logger.error("❌ Could not determine state_dim from data.")
-        return
+        logger.error("Cannot infer state_dim."); return
 
     save_meta_agent_dims(state_dim, 3)
     buffer = _prep_buffer(rows, state_dim)
     if len(buffer) < BATCH_SIZE:
-        logger.error("❌ Not enough data in replay buffer.")
-        return
+        logger.error("Buffer too small."); return
 
     agent = PPOAgent(state_dim=state_dim)
-    beta = BUFFER_BETA_START
-    history = []
+    beta, history = BUFFER_BETA_START, []
 
     for ep in range(1, EPOCHS + 1):
         ep_rewards = []
 
-        for _ in range(max(1, len(buffer) // BATCH_SIZE)):
-            batch, idxs, weights, *_ = buffer.sample(BATCH_SIZE, beta)
+        for _ in range(max(1, len(buffer)//BATCH_SIZE)):
+            batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
 
-            states, dirs, confs, rewards, dones = [], [], [], [], []
-
+            states, next_s, dirs, confs, rewards, dones = [], [], [], [], [], []
             for s, a, r, ns, done, *_ in batch:
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
-                dirs.append(int(a[0]) if isinstance(a, (tuple, list)) else int(a))
-                confs.append(float(a[1]) if isinstance(a, (tuple, list)) else 0.5)
-                rewards.append(float(r))
-                dones.append(int(bool(done)))
+                next_s.append(s_vec)
+                if isinstance(a, (list, tuple)):
+                    dirs.append(int(a[0])); confs.append(float(a[1]))
+                else:
+                    dirs.append(int(a));    confs.append(0.5)
+                rewards.append(float(r));  dones.append(int(bool(done)))
 
-            if not states:
-                continue
+            if not states: continue
 
-            # Efficient conversion to tensors
-            states_np = np.array(states, dtype=np.float32)
-            dirs_np   = np.array(dirs, dtype=np.int64)
-            confs_np  = np.array(confs, dtype=np.float32)
-            rewards_np= np.array(rewards, dtype=np.float32)
-            dones_np  = np.array(dones, dtype=np.int64)
-            weights_np= np.array(weights[:len(states)], dtype=np.float32)
+            # numpy then tensor
+            states_np  = np.array(states, dtype=np.float32)
+            next_np    = np.array(next_s, dtype=np.float32)
+            dirs_np    = np.array(dirs, dtype=np.int64)
+            confs_np   = np.array(confs, dtype=np.float32)
+            weights_np = np.array(weights[:len(states)], dtype=np.float32)
+            rewards_np = np.array(rewards, dtype=np.float32)
+            dones_np   = np.array(dones, dtype=np.float32)
 
-            states_t  = torch.tensor(states_np, dtype=torch.float32)
-            next_t    = torch.tensor(states_np, dtype=torch.float32)  # same as states for now
-            dirs_t    = torch.tensor(dirs_np, dtype=torch.long)
-            confs_t   = torch.tensor(confs_np, dtype=torch.float32)
-            rewards_t = torch.tensor(rewards_np, dtype=torch.float32)
-            dones_t   = torch.tensor(dones_np, dtype=torch.float32)
-            weights_t = torch.tensor(weights_np, dtype=torch.float32)
-            old_logp  = torch.zeros(len(states), dtype=torch.float32)
+            states_t   = torch.tensor(states_np)
+            next_t     = torch.tensor(next_np)
+            dirs_t     = torch.tensor(dirs_np)
+            confs_t    = torch.tensor(confs_np)
+            weights_t  = torch.tensor(weights_np)
+            old_logp   = torch.zeros(len(states))
 
-            td_errors = agent.train_step(
+            td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
-                rewards=rewards_np,
-                dones=dones_np,
+                rewards=rewards_np.tolist(),
+                dones=dones_np.tolist(),
                 next_states=next_t,
-                old_log_probs=old_logp,
+                old_logp=old_logp,
                 weights=weights_t
             )
-
-            buffer.update_priorities(idxs[:len(states)], td_errors.cpu().tolist())
+            buffer.update_priorities(idxs[:len(states)], td_err.cpu().tolist())
             ep_rewards.extend(rewards_np.tolist())
 
         avg_r = float(np.mean(ep_rewards)) if ep_rewards else 0.0
-        history.append(avg_r)
-        _append_csv(ep, avg_r)
+        history.append(avg_r); _append_csv(ep, avg_r)
         logger.info("Epoch %d/%d – avg_reward = %.4f", ep, EPOCHS, avg_r)
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
-
         if ep % NOTIFY_EVERY == 0:
             send_training_report(
-                {
-                    "epoch": ep,
-                    "avg_reward": avg_r,
-                    "reward_std": float(np.std(ep_rewards)) if ep_rewards else 0.0
-                },
-                history
-            )
+                {"epoch": ep, "avg_reward": avg_r,
+                 "reward_std": float(np.std(ep_rewards)) if ep_rewards else 0}, history)
 
     agent.save()
     update_status("last_ppo")
