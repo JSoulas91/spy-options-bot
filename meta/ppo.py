@@ -12,12 +12,10 @@ from utils.logger          import bot_logger as logger
 # ──────────────────────────────────────────────────────────────
 class DualHeadLSTM(nn.Module):
     """
-    Mini‑architecture
-       state(feat) → LSTM(32) → Dropout(0.1) → shared FC
-                                    ├── dir_head  (3‑logits)
-                                    ├── conf_head (sigmoid 0‑1)
-                                    └── value_head
-    Extremely light: ≤ 45 k params.
+    state(feat) → LSTM → Dropout → shared FC
+                     ├── dir_head  (3 logits)
+                     ├── conf_head (sigmoid 0‑1)
+                     └── value_head
     """
     def __init__(self, state_dim: int, hidden: int = 64, lstm_hid: int = 32):
         super().__init__()
@@ -27,7 +25,7 @@ class DualHeadLSTM(nn.Module):
             num_layers=1,
             batch_first=True,
         )
-        self.dropout = nn.Dropout(p=0.1)          # NEW 🟢
+        self.dropout = nn.Dropout(p=0.1)
         self.shared  = nn.Sequential(
             nn.Linear(lstm_hid, hidden),
             nn.ReLU()
@@ -35,7 +33,7 @@ class DualHeadLSTM(nn.Module):
         self.dir_head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, 3)                  # logits
+            nn.Linear(hidden, 3)          # logits
         )
         self.conf_head = nn.Sequential(
             nn.Linear(hidden, hidden),
@@ -50,23 +48,22 @@ class DualHeadLSTM(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        # x: (batch, feat)  →  (batch, 1, feat)
+        # x: (batch, feat) → (batch, 1, feat)
         out, _ = self.lstm(x.unsqueeze(1))
-        h = self.dropout(out[:, -1, :])           # take last step
+        h = self.dropout(out[:, -1, :])
         h = self.shared(h)
         return (
-            self.dir_head(h),          # logits
-            self.conf_head(h).squeeze(-1),   # scalar
-            self.value_head(h)         # critic value
+            self.dir_head(h),             # logits
+            self.conf_head(h).squeeze(-1),  # scalar
+            self.value_head(h)            # critic value
         )
 
 # ──────────────────────────────────────────────────────────────
 class PPOAgent:
     """
     Dual‑output PPO agent:
-        • Direction (categorical 0/1/2)
-        • Confidence (regression 0‑1)
-    Now with gradient‑clipping & dropout for VPS‑friendly stability.
+      • Direction (categorical 0/1/2)
+      • Confidence (regression 0‑1)
     """
     def __init__(
         self,
@@ -78,7 +75,7 @@ class PPOAgent:
         conf_loss_w: float = 0.20,
         entropy_coef_start: float = 1e-2,
         target_entropy: float | None = None,
-        grad_clip_norm: float = 1.0,          # NEW 🟢
+        grad_clip_norm: float = 1.0,
     ):
         if state_dim is None:
             state_dim, _ = get_meta_agent_dims()
@@ -88,10 +85,11 @@ class PPOAgent:
         self.entropy_coef = torch.tensor(entropy_coef_start, requires_grad=True)
         self.entropy_opt  = optim.Adam([self.entropy_coef], lr=1e-3)
 
-        self.gamma, self.eps_clip, self.k_epochs = gamma, eps_clip, k_epochs
+        self.gamma, self.eps_clip = gamma, eps_clip
+        self.k_epochs = k_epochs
         self.conf_loss_w   = conf_loss_w
         self.grad_clip_norm = grad_clip_norm
-        self.tgt_entropy   = target_entropy or -1.0 * 3   # 3‑class
+        self.tgt_entropy   = target_entropy or -1.0 * 3   # 3‑class action space
         self._load()
 
     # ───────── persistence ────────────────────────────────
@@ -104,7 +102,7 @@ class PPOAgent:
         self.opt.load_state_dict(ckpt["opt"])
         self.entropy_coef.data = torch.tensor(ckpt.get("ent_coef", 1e-2))
         self.entropy_opt.load_state_dict(ckpt["ent_opt"])
-        logger.info("📥 PPO dual‑head + LSTM model loaded.")
+        logger.info("📥 PPO model loaded.")
 
     def save(self):
         torch.save(
@@ -133,11 +131,23 @@ class PPOAgent:
 
     # ───────── PPO internals ──────────────────────────────
     @staticmethod
-    def _returns(rewards, dones, last_v, γ):
-        ret, out = last_v, []
+    def _returns(rewards, dones, last_v, gamma):
+        """
+        Compute discounted returns. Ensures outputs are floats → tensor.
+        rewards: list[float]
+        dones  : list[int|float] (0 or 1)
+        last_v : scalar float or 0‑D tensor
+        """
+        if isinstance(last_v, torch.Tensor):
+            last_v = last_v.item()
+
+        out = []
+        R = float(last_v)
         for r, d in zip(reversed(rewards), reversed(dones)):
-            ret = r + γ * ret * (1 - int(d))
-            out.insert(0, ret)
+            r = float(r)
+            d = float(d)
+            R = r + gamma * R * (1 - d)
+            out.insert(0, R)
         return torch.tensor(out, dtype=torch.float32)
 
     def _entropy_update(self, entropy_mean: torch.Tensor):
@@ -161,13 +171,13 @@ class PPOAgent:
         weights: torch.Tensor | None = None,
     ):
         """
-        All tensors are already on CPU.
+        All tensors expected on CPU.
         """
         with torch.no_grad():
             _, _, v_next = self.net(next_states)
         _, _, v = self.net(states)
 
-        returns = self._returns(rewards, dones, v_next.squeeze(), self.gamma)
+        returns = self._returns(rewards, dones, v_next.squeeze(), self.gamma).to(states.device)
         adv     = returns - v.squeeze().detach()
 
         dir_logits, conf_pred, _ = self.net(states)
@@ -188,7 +198,6 @@ class PPOAgent:
 
         self.opt.zero_grad()
         loss.backward()
-        # 🔒 Grad‑clip so VPS can’t explode RAM / NaNs
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.opt.step()
 
