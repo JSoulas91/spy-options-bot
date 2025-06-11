@@ -1,62 +1,41 @@
 import random
 import numpy as np
-
+from collections import deque
 
 class PrioritizedReplayBuffer:
-    def __init__(self, capacity, alpha=0.6, epsilon=1e-5):
+    def __init__(self, capacity, alpha=0.6):
         self.capacity = capacity
         self.alpha = alpha
-        self.epsilon = epsilon
+        self.buffer = deque(maxlen=capacity)
+        self.priorities = deque(maxlen=capacity)
+        self.position = 0
 
-        self.buffer = []
-        self.priorities = np.zeros((capacity,), dtype=np.float32)
-        self.pos = 0
-
-    def add(self, state, action, reward, next_state, done):
-        max_prio = self.priorities.max() if self.buffer else 1.0
-        data = (state, action, reward, next_state, done)
-
-        if len(self.buffer) < self.capacity:
-            self.buffer.append(data)
-        else:
-            self.buffer[self.pos] = data
-
-        self.priorities[self.pos] = max_prio
-        self.pos = (self.pos + 1) % self.capacity
+    def add(self, state, action, reward, next_state, done, error=1.0):
+        priority = (abs(error) + 1e-5) ** self.alpha
+        self.buffer.append((state, action, reward, next_state, done))
+        self.priorities.append(priority)
 
     def sample(self, batch_size, beta=0.4):
-        if len(self.buffer) == self.capacity:
-            prios = self.priorities
-        else:
-            prios = self.priorities[:len(self.buffer)]
+        if len(self.buffer) == 0:
+            raise ValueError("Replay buffer is empty!")
 
-        probs = prios ** self.alpha
-        probs /= probs.sum()
-
+        priorities = np.array(self.priorities, dtype=np.float32)
+        probs = priorities / priorities.sum()
         indices = np.random.choice(len(self.buffer), batch_size, p=probs)
+
         samples = [self.buffer[idx] for idx in indices]
 
         total = len(self.buffer)
         weights = (total * probs[indices]) ** (-beta)
-        weights /= weights.max()
-        weights = np.array(weights, dtype=np.float32)
+        weights /= weights.max()  # normalize
 
-        states, actions, rewards, next_states, dones = zip(*samples)
-        return (states, actions, rewards, next_states, dones), indices, weights
+        return samples, indices, weights
 
     def update_priorities(self, indices, errors):
-        for i in range(len(indices)):
-            val = indices[i]
-            if isinstance(val, (np.ndarray, list)):
-                if np.size(val) != 1:
-                    raise ValueError(f"Cannot convert index of shape {np.shape(val)} to scalar")
-                idx = val.item()
-            else:
-                idx = int(val)
-
-            err = errors[i]
-            priority = (abs(err) + self.epsilon) ** self.alpha
-            self.priorities[idx] = priority
+        for idx, err in zip(indices, errors):
+            new_priority = (abs(err) + 1e-5) ** self.alpha
+            if idx < len(self.priorities):
+                self.priorities[idx] = new_priority
 
     def __len__(self):
         return len(self.buffer)
