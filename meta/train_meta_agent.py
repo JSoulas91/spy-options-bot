@@ -1,4 +1,3 @@
-# meta/train_meta_agent.py
 import os, sys, json, csv
 from typing import List, Dict
 
@@ -38,9 +37,11 @@ def _discover_state_dim(rows) -> int:
     return -1
 
 def _pad_or_trim(vec, dim):
-    """Return list with exact length dim."""
-    if not isinstance(vec, list):
-        vec = []
+    """Ensure vec is a list of length dim. Return zeros if scalar or malformed."""
+    if not isinstance(vec, (list, np.ndarray)):
+        logger.warning(f"Non-iterable state detected: {type(vec)} — replacing with zeros.")
+        return [0.0] * dim
+    vec = list(vec)
     if len(vec) >= dim:
         return vec[:dim]
     return vec + [0.0] * (dim - len(vec))
@@ -49,6 +50,8 @@ def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(alpha=BUFFER_ALPHA)
     for cur in rows:
         ms = cur.get("meta_state")
+        if not isinstance(ms, (list, np.ndarray)):
+            continue  # skip malformed state
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
 
         rew = float(cur.get("reward", 0))
@@ -67,7 +70,8 @@ def _append_csv(ep, val):
     hdr_needed = not os.path.exists(CSV_PATH)
     with open(CSV_PATH, "a", newline="") as f:
         w = csv.writer(f)
-        if hdr_needed: w.writerow(["epoch", "avg_reward"])
+        if hdr_needed:
+            w.writerow(["epoch", "avg_reward"])
         w.writerow([ep, val])
 
 # ── main ───────────────────────────────────────────────────
@@ -97,29 +101,23 @@ def train():
 
     for ep in range(1, EPOCHS + 1):
         all_r = []
-
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch, idxs, weights, *_ = buffer.sample(BATCH_SIZE, beta)
 
-            fixed_states, next_states = [], []
-            dirs, confs, rewards, dones = [], [], [], []
-
-            for sample in batch:
-                s, a, r, ns, dflag = sample[:5]
-                vec = _pad_or_trim(s.tolist() if isinstance(s, np.ndarray) else list(s), state_dim)
+            fixed_states, next_states, dirs, confs, rewards, dones = [], [], [], [], [], []
+            for s, a, r, ns, dflag, *_ in batch:
+                vec = _pad_or_trim(s.tolist() if isinstance(s, np.ndarray) else s, state_dim)
                 if len(vec) != state_dim:
                     continue
                 fixed_states.append(vec)
-                next_states.append(vec)
-
+                next_states.append(vec)  # current design uses s == next_s
                 if isinstance(a, (list, tuple)) and len(a) >= 2:
                     dirs.append(int(a[0]))
                     confs.append(float(a[1]))
                 else:
                     dirs.append(int(float(a)))
                     confs.append(0.5)
-
-                rewards.append(float(r))
+                rewards.append(r)
                 dones.append(dflag)
 
             if not fixed_states:
@@ -129,16 +127,12 @@ def train():
             next_t   = torch.tensor(next_states, dtype=torch.float32)
             dirs_t   = torch.tensor(dirs, dtype=torch.long)
             confs_t  = torch.tensor(confs, dtype=torch.float32)
-            weights_t = torch.tensor(weights[:len(rewards)], dtype=torch.float32)
-            dones_t   = torch.tensor(dones, dtype=torch.float32)
-
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
-                rewards, dones_t, next_t,
-                torch.zeros(len(rewards)),  # dummy values for advantages
-                weights_t
+                rewards, dones, next_t,
+                torch.zeros(len(rewards)),
+                torch.tensor(weights[:len(rewards)], dtype=torch.float32)
             )
-
             buffer.update_priorities(idxs[:len(rewards)], td_err)
             all_r.extend(rewards)
 
@@ -150,7 +144,12 @@ def train():
 
         if ep % NOTIFY_EVERY == 0:
             send_training_report(
-                {"epoch": ep, "avg_reward": avg, "reward_std": float(np.std(all_r) if all_r else 0)}, hist
+                {
+                    "epoch": ep,
+                    "avg_reward": avg,
+                    "reward_std": float(np.std(all_r) if all_r else 0)
+                },
+                hist
             )
 
     agent.save()
