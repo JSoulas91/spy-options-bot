@@ -30,13 +30,15 @@ class PrioritizedReplayBuffer:
         weights = (len(self.buffer) * probs[indices]) ** (-beta)
         weights /= weights.max()
 
-        batch = [self.buffer[idx] for idx in indices]
+        batch = [self.buffer[int(idx)] for idx in indices]
         states, actions, rewards, next_states, dones = map(np.array, zip(*batch))
 
         return states, actions, rewards, next_states, dones, weights, indices
 
     def update_priorities(self, indices, errors):
-        for idx, err in zip(indices, errors):
+        for i in range(len(indices)):
+            idx = int(indices[i])  # force scalar integer
+            err = errors[i]
             priority = (abs(err) + self.epsilon) ** self.alpha
             self.priorities[idx] = priority
 
