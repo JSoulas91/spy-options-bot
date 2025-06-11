@@ -44,7 +44,7 @@ class DualHeadLSTM(nn.Module):
         self.value_head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, 1)
+            nn.Linear(hidden, 1)          # scalar value
         )
 
     def forward(self, x: torch.Tensor):
@@ -53,17 +53,17 @@ class DualHeadLSTM(nn.Module):
         h = self.dropout(out[:, -1, :])
         h = self.shared(h)
         return (
-            self.dir_head(h),             # logits
-            self.conf_head(h).squeeze(-1),  # scalar
-            self.value_head(h)            # critic value
+            self.dir_head(h),              # logits
+            self.conf_head(h).squeeze(-1), # scalar conf
+            self.value_head(h)             # critic value
         )
 
 # ──────────────────────────────────────────────────────────────
 class PPOAgent:
     """
     Dual‑output PPO agent:
-      • Direction (categorical 0/1/2)
-      • Confidence (regression 0‑1)
+      • Direction (categorical 0,1,2)
+      • Confidence (regression 0–1)
     """
     def __init__(
         self,
@@ -86,10 +86,10 @@ class PPOAgent:
         self.entropy_opt  = optim.Adam([self.entropy_coef], lr=1e-3)
 
         self.gamma, self.eps_clip = gamma, eps_clip
-        self.k_epochs = k_epochs
-        self.conf_loss_w   = conf_loss_w
+        self.k_epochs     = k_epochs
+        self.conf_loss_w  = conf_loss_w
         self.grad_clip_norm = grad_clip_norm
-        self.tgt_entropy   = target_entropy or -1.0 * 3   # 3‑class action space
+        self.tgt_entropy  = target_entropy or -1.0 * 3  # action space=3
         self._load()
 
     # ───────── persistence ────────────────────────────────
@@ -102,7 +102,7 @@ class PPOAgent:
         self.opt.load_state_dict(ckpt["opt"])
         self.entropy_coef.data = torch.tensor(ckpt.get("ent_coef", 1e-2))
         self.entropy_opt.load_state_dict(ckpt["ent_opt"])
-        logger.info("📥 PPO model loaded.")
+        logger.info("📥 PPO model loaded from disk.")
 
     def save(self):
         torch.save(
@@ -133,22 +133,20 @@ class PPOAgent:
     @staticmethod
     def _returns(rewards, dones, last_v, gamma):
         """
-        Compute discounted returns. Ensures outputs are floats → tensor.
-        rewards: list[float]
-        dones  : list[int|float] (0 or 1)
-        last_v : scalar float or 0‑D tensor
+        Vectorised discounted return per batch element.
+        rewards, dones: list[float/int] length T
+        last_v: tensor shape [B] (B=batch size)
+        Returns: tensor shape [T, B]
         """
-        if isinstance(last_v, torch.Tensor):
-            last_v = last_v.item()
-
-        out = []
-        R = float(last_v)
+        # Convert scalars to tensors on CPU
+        R = last_v.clone()  # shape [B]
+        returns = []
         for r, d in zip(reversed(rewards), reversed(dones)):
-            r = float(r)
-            d = float(d)
+            r = torch.tensor(r, dtype=torch.float32)
+            d = torch.tensor(d, dtype=torch.float32)
             R = r + gamma * R * (1 - d)
-            out.insert(0, R)
-        return torch.tensor(out, dtype=torch.float32)
+            returns.insert(0, R)
+        return torch.stack(returns)        # shape [T, B]
 
     def _entropy_update(self, entropy_mean: torch.Tensor):
         loss = -(self.entropy_coef * (entropy_mean - self.tgt_entropy).detach())
@@ -156,9 +154,7 @@ class PPOAgent:
         loss.backward()
         self.entropy_opt.step()
 
-    # ====================================================================== #
-    # Public training step (called from train_meta_agent.py)
-    # ====================================================================== #
+    # ───────────────────────────────────────────────────────
     def train_step(
         self,
         states: torch.Tensor,
@@ -171,14 +167,17 @@ class PPOAgent:
         weights: torch.Tensor | None = None,
     ):
         """
-        All tensors expected on CPU.
+        Single gradient update on CPU tensors.
         """
         with torch.no_grad():
-            _, _, v_next = self.net(next_states)
-        _, _, v = self.net(states)
+            _, _, v_next = self.net(next_states)          # shape [B,1]
+        _, _, v = self.net(states)                        # shape [B,1]
 
-        returns = self._returns(rewards, dones, v_next.squeeze(), self.gamma).to(states.device)
-        adv     = returns - v.squeeze().detach()
+        # returns shape [T,B], squeeze to [B] because T==1 for 1‑step returns
+        returns = self._returns(rewards, dones, v_next.squeeze(), self.gamma)
+        returns = returns.squeeze()                       # shape [B]
+
+        adv = returns - v.squeeze().detach()
 
         dir_logits, conf_pred, _ = self.net(states)
         dist   = Categorical(logits=dir_logits)
@@ -203,6 +202,5 @@ class PPOAgent:
 
         self._entropy_update(entropy_term)
 
-        # TD‑error for PER
-        td_err = (returns - v.detach().squeeze()).cpu().numpy().tolist()
-        return td_err
+        td_error = (returns - v.detach().squeeze()).cpu().numpy().tolist()
+        return td_error
