@@ -3,46 +3,39 @@ import numpy as np
 from collections import deque
 
 class PrioritizedReplayBuffer:
-    """
-    Simple Prioritized Experience Replay (PER) buffer using proportional prioritization.
-    Stores tuples of (state, action_dir, target_conf, reward, done, next_state, log_prob).
-    """
-
     def __init__(self, capacity=10000, alpha=0.6, beta=0.4):
         self.capacity = capacity
-        self.alpha = alpha
-        self.beta = beta
         self.buffer = deque(maxlen=capacity)
         self.priorities = deque(maxlen=capacity)
+        self.alpha = alpha
+        self.beta = beta
+        self.epsilon = 1e-5
 
-    def add(self, transition, priority=1.0):
-        self.buffer.append(transition)
-        self.priorities.append(priority ** self.alpha)
+    def add(self, state, action, reward, next_state, done, error=1.0):
+        priority = (abs(error) + self.epsilon) ** self.alpha
+        self.buffer.append((state, action, reward, next_state, done))
+        self.priorities.append(priority)
 
     def sample(self, batch_size):
         if len(self.buffer) == 0:
-            raise ValueError("PER buffer is empty!")
+            return [], [], [], [], [], [], []
 
-        priorities = np.array(self.priorities)
+        priorities = np.array(self.priorities, dtype=np.float32)
         probs = priorities / priorities.sum()
-
         indices = np.random.choice(len(self.buffer), batch_size, p=probs)
-        samples = [self.buffer[i] for i in indices]
 
-        total = len(self.buffer)
-        weights = (total * probs[indices]) ** -self.beta
+        weights = (len(self.buffer) * probs[indices]) ** (-self.beta)
         weights /= weights.max()
-        weights = np.array(weights, dtype=np.float32)
 
-        return samples, indices, weights
+        batch = [self.buffer[idx] for idx in indices]
+        states, actions, rewards, next_states, dones = map(np.array, zip(*batch))
+
+        return states, actions, rewards, next_states, dones, weights, indices
 
     def update_priorities(self, indices, errors):
-        """
-        Update sample priorities after training step.
-        """
-        for i, error in zip(indices, errors):
-            priority = (abs(error) + 1e-5) ** self.alpha
-            self.priorities[i] = priority
+        for idx, err in zip(indices, errors):
+            priority = (abs(err) + self.epsilon) ** self.alpha
+            self.priorities[idx] = priority
 
     def __len__(self):
         return len(self.buffer)
