@@ -95,10 +95,10 @@ def train():
 
             # HARD enforce correct dim again at runtime
             fixed_states, next_states, dirs, confs, rewards, dones = [], [], [], [], [], []
-            for s, a, r, ns, dflag in batch:
-                vec = _pad_or_trim(list(s), state_dim)
-                if len(vec) != state_dim: continue  # skip malformed
-                fixed_states.append(vec); next_states.append(vec)
+            for s, a, r, ns, dflag, *_ in batch:
+    vec = _pad_or_trim(list(s), state_dim)
+    if len(vec) != state_dim: continue
+    fixed_states.append(vec); next_states.append(vec)
                 if isinstance(a, (list, tuple)) and len(a) >= 2:
                     dirs.append(int(a[0])); confs.append(float(a[1]))
                 else:
