@@ -1,13 +1,10 @@
-# ml/model_handler
-
 import os
 import joblib
 import traceback
-from sklearn.ensemble import RandomForestClassifier
+import xgboost as xgb
 from sklearn.calibration import CalibratedClassifierCV
 from utils.logger import bot_logger
 
-# Save directly inside ml/
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "spy_model.pkl")
 
 def load_model():
@@ -38,14 +35,21 @@ def predict(model, features):
         return 0
 
 def retrain_model(data, labels):
-    """Train a new model with the given features and labels."""
+    """Train a new model using XGBoost and calibrated probability."""
     try:
-        base_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        base_model = xgb.XGBClassifier(
+            n_estimators=100,
+            learning_rate=0.1,
+            max_depth=4,
+            random_state=42,
+            use_label_encoder=False,
+            eval_metric='logloss'
+        )
         model = CalibratedClassifierCV(base_model, method="sigmoid", cv=5)
         model.fit(data, labels)
         joblib.dump(model, MODEL_PATH)
 
-        bot_logger.info("🔁 [Retrain] Model retrained and saved successfully.")
+        bot_logger.info("🔁 [Retrain] XGBoost model retrained and saved successfully.")
         return model
     except Exception as e:
         bot_logger.error(f"[Retrain Error] {e}")
