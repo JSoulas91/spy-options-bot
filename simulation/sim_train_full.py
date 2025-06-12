@@ -1,4 +1,4 @@
-# simulation/sim_train_full.py
+#simulation/sim_train_full
 
 import os, json, math, time, random, subprocess
 from datetime import datetime, timedelta
@@ -6,11 +6,12 @@ from pathlib import Path
 
 import numpy as np
 
-from meta.meta_state   import normalize_meta_state
-from meta.meta_agent   import MetaAgent
+from meta.meta_state    import normalize_meta_state
+from meta.meta_agent    import MetaAgent
 from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_utils import send_telegram_message
-from utils.logger       import bot_logger as logger
+from utils.logger        import bot_logger as logger
+from ml.logger           import log_training_example  # ← ML logger import
 
 # ───────── simulation params
 SIM_DAYS            = 60
@@ -26,7 +27,7 @@ meta_agent = MetaAgent()
 
 
 # ╭──────────────────────────────────────────────────────────╮
-# │  helpers                                                │
+# │  helpers                                                 │
 # ╰──────────────────────────────────────────────────────────╯
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
@@ -47,7 +48,6 @@ def random_confidence() -> float:
 
 
 def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float):
-    # ---- basic trade meta -------------------------------
     option_type = RNG.choice(["C", "P"])
     start_idx   = RNG.randint(30, len(prices) - 30)
     price_sig   = prices[start_idx]
@@ -55,7 +55,6 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
     option_sym  = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx),
                                      strike, option_type)
 
-    # ---- meta‑state for agent ----------------------------
     hour        = RNG.randint(10, 15)
     confidence  = random_confidence()
     atr         = RNG.uniform(2, 6)
@@ -67,23 +66,21 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
         "atr": atr,
     })
 
-    # ---- meta‑agent action -------------------------------
     action_idx, agent_conf = meta_agent.select_action(meta_state)
-    meta_agent.interpret_action(action_idx, agent_conf)  # (unused params for now)
+    meta_agent.interpret_action(action_idx, agent_conf)
 
-    # ---- realism: delay / slippage / partial fill --------
     fill_delay  = RNG.randint(1, 5)
     fill_idx    = min(start_idx + fill_delay, len(prices) - 1)
     fill_price  = prices[fill_idx]
 
     slippage_pct = (fill_price - price_sig) / price_sig + RNG.gauss(0, 0.001)
 
-    move_pct   = RNG.uniform(-0.6, 0.6)
-    raw_pnl_pct = move_pct * RNG.uniform(0.8, 1.2) * 0.3
-    raw_pnl_pct = abs(raw_pnl_pct) if RNG.random() < confidence else -abs(raw_pnl_pct)
-    raw_pnl_pct = max(min(raw_pnl_pct, 1.8), -0.9)
+    move_pct     = RNG.uniform(-0.6, 0.6)
+    raw_pnl_pct  = move_pct * RNG.uniform(0.8, 1.2) * 0.3
+    raw_pnl_pct  = abs(raw_pnl_pct) if RNG.random() < confidence else -abs(raw_pnl_pct)
+    raw_pnl_pct  = max(min(raw_pnl_pct, 1.8), -0.9)
 
-    fill_ratio = round(RNG.uniform(0.6, 1.0), 2)
+    fill_ratio   = round(RNG.uniform(0.6, 1.0), 2)
 
     trade = {
         "id":            f"SIM.{day_idx}-{step_idx}",
@@ -141,12 +138,26 @@ def simulate():
         for step in range(TRADES_PER_DAY):
             trade = simulate_trade(day, step, prices, vix_today)
             append_meta_log(trade, vix_today)
+
+            # ML logging
+            label = 1 if trade["pnl"] > 0 else 0
+            try:
+                features = {
+                    "confidence": trade["confidence"],
+                    "hour": int(trade["timestamp"][11:13]),
+                    "vix": vix_today,
+                    "atr": trade["meta_state"][3] if len(trade["meta_state"]) > 3 else 4.0,
+                    "pnl": trade["pnl"]
+                }
+                log_training_example(features, label)
+            except Exception as e:
+                logger.warning(f"Failed to log training example: {e}")
+
             time.sleep(0.05)
 
     logger.info("✅ Simulation finished.")
     send_telegram_message("✅ Simulation finished – launching PPO training …")
 
-    # ---- launch PPO training with error handling ---------
     try:
         subprocess.run(["python3", "meta/train_meta_agent.py"], check=True)
         logger.info("PPO training completed successfully.")
