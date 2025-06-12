@@ -1,4 +1,4 @@
-# sim_train_full.py
+# simulation/sim_train_full.py
 
 import os, json, math, time, random, subprocess
 from datetime import datetime, timedelta
