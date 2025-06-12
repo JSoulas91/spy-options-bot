@@ -28,3 +28,20 @@ def calculate_atr(data, period=14):
 
 def calculate_adx(data, period=14):
     return talib.ADX(data['high'], data['low'], data['close'], timeperiod=period)
+
+def calculate_indicators(data):
+    df = data.copy()
+    df['EMA_20'] = calculate_ema(df, 20)
+    df['RSI_14'] = calculate_rsi(df, 14)
+    macd, signal, hist = calculate_macd(df)
+    df['MACD'] = macd
+    df['MACD_signal'] = signal
+    df['MACD_hist'] = hist
+    upper, middle, lower = calculate_bollinger_bands(df, 20)
+    df['BB_upper'] = upper
+    df['BB_middle'] = middle
+    df['BB_lower'] = lower
+    df['VWAP'] = calculate_vwap(df)
+    df['ATR_14'] = calculate_atr(df, 14)
+    df['ADX_14'] = calculate_adx(df, 14)
+    return df
