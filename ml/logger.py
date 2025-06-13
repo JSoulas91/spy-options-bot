@@ -1,9 +1,12 @@
 import os
 import csv
+import json
 from datetime import datetime
-from collections import deque
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), "spy_data.csv")
+# Paths for data logging
+BASE_DIR = os.path.dirname(__file__)
+DATA_PATH = os.path.join(BASE_DIR, "spy_data.csv")
+TRAINING_LOG_PATH = os.path.join(BASE_DIR, "training_log.jsonl")
 
 # Define the feature schema
 DEFAULT_FEATURES = [
@@ -27,6 +30,7 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
     """
     Appends a single training example to spy_data.csv.
     Ensures consistent header and trims file if it grows too large.
+    Also logs JSONL version to training_log.jsonl.
     """
     fieldnames = ['timestamp', 'close'] + DEFAULT_FEATURES + ['label']
     row = {
@@ -47,13 +51,36 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
                 writer.writeheader()
             writer.writerow(row)
     except Exception as e:
-        print(f"[logger.py] Failed to write training example: {e}")
+        print(f"[logger.py] Failed to write training example to CSV: {e}")
         return
 
     try:
         _prune_if_necessary(fieldnames)
     except Exception as e:
         print(f"[logger.py] Failed to prune spy_data.csv: {e}")
+
+    # Also log JSONL version
+    try:
+        log_training_jsonl(timestamp, close, features, label)
+    except Exception as e:
+        print(f"[logger.py] JSONL logging failed: {e}")
+
+
+def log_training_jsonl(timestamp, close, features: dict, label: int = None):
+    """
+    Optionally logs the training data as JSONL to training_log.jsonl for ML tracking/debugging.
+    """
+    payload = {
+        "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        "close": close,
+        "features": features,
+        "label": label,
+    }
+    try:
+        with open(TRAINING_LOG_PATH, "a") as f:
+            f.write(json.dumps(payload) + "\n")
+    except Exception as e:
+        print(f"[logger.py] Failed to write to training_log.jsonl: {e}")
 
 
 def _prune_if_necessary(fieldnames: list):
