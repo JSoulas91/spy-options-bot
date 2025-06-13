@@ -1,4 +1,3 @@
-# meta/ppo.py  – PPO agent with directory‑safe saving
 import os
 import torch
 import torch.nn as nn
@@ -60,10 +59,10 @@ class PPOAgent:
         self.grad_clip_norm  = grad_clip_norm
         self.tgt_entropy     = target_entropy or -3.0   # 3‑way categorical
 
-        self._load()
+        self.load()
 
     # ───────── persistence ─────────────────────────────────
-    def _load(self):
+    def load(self):
         if not os.path.exists(META_MODEL_PATH):
             logger.warning("⚠️ No saved PPO model found – starting fresh.")
             return
@@ -75,9 +74,7 @@ class PPOAgent:
         logger.info("📥 PPO model loaded.")
 
     def save(self):
-        # NEW 🟢 — make sure target directory exists
         os.makedirs(os.path.dirname(META_MODEL_PATH), exist_ok=True)
-
         torch.save(
             {
                 "net":       self.net.state_dict(),
@@ -134,9 +131,8 @@ class PPOAgent:
         logp  = dist.log_prob(actions_dir)
 
         ratio = torch.exp(logp - old_logp)
-        surr1, surr2 = ratio * adv, torch.clamp(ratio,
-                                               1 - self.eps_clip,
-                                               1 + self.eps_clip) * adv
+        surr1 = ratio * adv
+        surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * adv
 
         actor_loss  = -torch.min(surr1, surr2).mean()
         critic_loss = nn.MSELoss()(v.squeeze(-1), returns)
