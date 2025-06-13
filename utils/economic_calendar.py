@@ -5,22 +5,32 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from typing import Optional
 
+# In-memory cache
+_cached_events = None
+_cache_timestamp = None
+CACHE_TTL_MINUTES = 60
+
+
 def get_upcoming_week_dates():
     """Return list of dates (datetime.date) for the next Monday through Friday."""
     today = datetime.utcnow().date()
     days_until_monday = (7 - today.weekday()) % 7
     monday = today + timedelta(days=days_until_monday)
-    return [monday + timedelta(days=i) for i in range(5)]  # Mon to Fri
+    return [monday + timedelta(days=i) for i in range(5)]
+
 
 def scrape_forexfactory_calendar():
     """
-    Scrape ForexFactory calendar page and return a list of events.
-    Each event is a dict with keys:
-    - date (datetime.date)
-    - impact ('low', 'medium', 'high')
-    - country (str)
-    - event_name (str)
+    Scrape ForexFactory calendar and return list of economic events.
+    Each event is a dict with: date, impact, country, event_name.
     """
+    global _cached_events, _cache_timestamp
+
+    # Check if cache is valid
+    now = datetime.utcnow()
+    if _cached_events and _cache_timestamp and (now - _cache_timestamp < timedelta(minutes=CACHE_TTL_MINUTES)):
+        return _cached_events
+
     url = "https://www.forexfactory.com/calendar"
     headers = {"User-Agent": "Mozilla/5.0"}
     resp = requests.get(url, headers=headers, timeout=10)
@@ -29,24 +39,19 @@ def scrape_forexfactory_calendar():
 
     events = []
     current_date = None
-
     rows = soup.select("tr.calendar__row")
+
     for row in rows:
-        # Check if row has a date cell — some rows group events by date
         date_cell = row.find("td", class_="calendar__date")
         if date_cell and date_cell.get_text(strip=True):
-            # Parse the date (e.g. "Jun 10")
             raw_date = date_cell.get_text(strip=True)
             try:
                 current_date = datetime.strptime(raw_date + f".{datetime.utcnow().year}", "%b %d.%Y").date()
             except:
                 current_date = None
-
-        # Skip if no valid date found yet
         if current_date is None:
             continue
 
-        # Impact: check cell with class 'impact' that may have 'red', 'orange', or 'yellow'
         impact_cell = row.find("td", class_="impact")
         impact_level = "low"
         if impact_cell:
@@ -58,7 +63,6 @@ def scrape_forexfactory_calendar():
             elif "yellow" in classes:
                 impact_level = "low"
 
-        # Country: check 'flag' class and country code in class list
         country_cell = row.find("td", class_="flag")
         country_code = ""
         if country_cell:
@@ -67,7 +71,6 @@ def scrape_forexfactory_calendar():
                     country_code = c.lower()
                     break
 
-        # Event name
         event_cell = row.find("td", class_="calendar__event")
         event_name = event_cell.get_text(strip=True) if event_cell else ""
 
@@ -78,30 +81,25 @@ def scrape_forexfactory_calendar():
             "event_name": event_name,
         })
 
+    _cached_events = events
+    _cache_timestamp = now
     return events
 
 
 def get_high_impact_us_events_for_week():
-    """
-    Return list of dates for upcoming week (Mon-Fri) that have high-impact US events.
-    """
+    """Return sorted list of dates with high-impact US events this week."""
     week_dates = get_upcoming_week_dates()
     events = scrape_forexfactory_calendar()
-    blackout_dates = set()
-
-    for event in events:
-        if event["date"] in week_dates and event["country"] == "us" and event["impact"] == "high":
-            blackout_dates.add(event["date"])
-
+    blackout_dates = {
+        event["date"]
+        for event in events
+        if event["date"] in week_dates and event["country"] == "us" and event["impact"] == "high"
+    }
     return sorted(blackout_dates)
 
 
 def week_has_fomc_or_cpi():
-    """
-    Checks if upcoming week contains FOMC meeting or CPI release in US calendar.
-
-    Returns True if either event appears as a high-impact event.
-    """
+    """Returns True if the upcoming week includes FOMC or CPI-related high-impact US events."""
     week_dates = get_upcoming_week_dates()
     events = scrape_forexfactory_calendar()
     keywords = ["FOMC", "Federal Reserve", "CPI"]
@@ -115,22 +113,11 @@ def week_has_fomc_or_cpi():
 
 
 def is_blackout_day(date_to_check: Optional[datetime.date] = None) -> bool:
-    """
-    Returns True if the provided date (or today if None) has a high-impact US event.
-
-    Parameters
-    ----------
-    date_to_check : Optional[datetime.date]
-        The date to check. Defaults to today (UTC).
-
-    Returns
-    -------
-    bool
-    """
+    """Returns True if the given date (or today) is a high-impact US economic event day."""
     if date_to_check is None:
         date_to_check = datetime.utcnow().date()
     events = scrape_forexfactory_calendar()
-    for event in events:
-        if event["date"] == date_to_check and event["country"] == "us" and event["impact"] == "high":
-            return True
-    return False
+    return any(
+        event["date"] == date_to_check and event["country"] == "us" and event["impact"] == "high"
+        for event in events
+    )
