@@ -1,9 +1,9 @@
 import os
 import time
 import pytz
+import argparse
 import schedule
 import subprocess
-import argparse
 from utils.logger import bot_logger
 from utils.log_cleanup import cleanup_logs_and_backups
 from utils.telegram_notifier import TelegramNotifier
@@ -123,16 +123,20 @@ def run_weekend_training_tasks():
 
 # ─── Schedule setup ────────────────────────────────────────────
 def run_scheduler_loop(debug=False):
+    if debug:
+        bot_logger.debug("🔍 Debug mode enabled.")
+
     bot_logger.info("🕒 Scheduler started.")
     update_status("last_scheduler_start")
 
-    # Weekday-only tasks
-    schedule.every().monday.to.friday.at("09:30").do(run_market_open_tasks)
-    schedule.every().monday.to.friday.at("16:45").do(send_daily_summary_task)
-    schedule.every().monday.to.friday.at("17:00").do(retrain_model_task)
-    schedule.every().monday.to.friday.at("17:20").do(clean_logs_task)
-    schedule.every().monday.to.friday.at("17:40").do(online_meta_update_task)
-    schedule.every().monday.to.friday.at("17:50").do(train_meta_agent_task)
+    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    for day in weekdays:
+        getattr(schedule.every(), day).at("09:30").do(run_market_open_tasks)
+        getattr(schedule.every(), day).at("16:45").do(send_daily_summary_task)
+        getattr(schedule.every(), day).at("17:00").do(retrain_model_task)
+        getattr(schedule.every(), day).at("17:20").do(clean_logs_task)
+        getattr(schedule.every(), day).at("17:40").do(online_meta_update_task)
+        getattr(schedule.every(), day).at("17:50").do(train_meta_agent_task)
 
     # Weekend simulation + training
     schedule.every().saturday.at("12:00").do(run_weekend_training_tasks)
@@ -143,24 +147,17 @@ def run_scheduler_loop(debug=False):
         lambda: subprocess.run(["python", "monitor/run_monitor.py"])
     )
 
-    # Main loop
+    # Loop execution
     while True:
         try:
             schedule.run_pending()
-            if debug:
-                bot_logger.debug("⏳ Waiting for next scheduled task …")
             time.sleep(1)
         except Exception as e:
             bot_logger.error(f"❌ Scheduler error: {e}")
 
-# ─── CLI entrypoint ────────────────────────────────────────────
+# ─── Entrypoint ────────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="SPY Options Bot Scheduler")
-    parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging.")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode logging.")
     args = parser.parse_args()
-
-    if args.debug:
-        bot_logger.setLevel("DEBUG")
-        bot_logger.debug("🔍 Debug mode enabled.")
-
     run_scheduler_loop(debug=args.debug)
