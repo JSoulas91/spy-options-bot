@@ -1,29 +1,24 @@
-# event_filter.py
+# strategy/event_filter.py
 
 import datetime
 import pytz
-from config import ECONOMIC_EVENTS, FED_SPEECH_KEYWORDS
 from utils.logger import bot_logger as logger
+from utils.economic_calendar import is_blackout_day, week_has_fomc_or_cpi
 
 eastern = pytz.timezone("US/Eastern")
 
+FED_SPEECH_KEYWORDS = ["Fed", "FOMC", "Federal Reserve", "Powell", "Treasury"]
+
 def is_blackout_time(now=None):
     """
-    Check if the current time falls within any high-risk economic event blackout window.
+    Checks if the current date is a blackout day due to a high-impact economic event.
     """
     if now is None:
         now = datetime.datetime.now(eastern)
-
-    for event in ECONOMIC_EVENTS:
-        start_dt = datetime.datetime.combine(now.date(), event["start"])
-        end_dt = datetime.datetime.combine(now.date(), event["end"])
-        start = eastern.localize(start_dt)
-        end = eastern.localize(end_dt)
-
-        if start <= now <= end:
-            logger.warning(f"🛑 Blackout active — Economic Event: {event['name']}")
-            return True, event["name"]
-    return False, None
+    is_blackout = is_blackout_day(now.date())
+    if is_blackout:
+        logger.warning(f"🛑 Blackout active — High-impact US economic event on {now.date()}")
+    return is_blackout, str(now.date()) if is_blackout else None
 
 
 def is_fed_event_today(now=None):
@@ -32,38 +27,28 @@ def is_fed_event_today(now=None):
     """
     if now is None:
         now = datetime.datetime.now(eastern)
-
-    for event in ECONOMIC_EVENTS:
-        if event["date"] == now.date():
-            if any(keyword.lower() in event["name"].lower() for keyword in FED_SPEECH_KEYWORDS):
-                logger.warning(f"📢 Fed Speech Event Today: {event['name']}")
-                return True, event["name"]
+    events = week_has_fomc_or_cpi()
+    if events:
+        logger.warning("📢 Fed-related event (FOMC or CPI) this week — caution advised.")
+        return True, "FOMC/CPI this week"
     return False, None
 
 
 def is_high_risk_event_active(now=None):
     """
-    Combined utility to check if either a blackout or Fed speech is active.
+    Combined utility to check if today is a blackout day or if a Fed-related event is in the week.
     """
     blackout_active, _ = is_blackout_time(now)
     if blackout_active:
         return True
-
-    fed_event, _ = is_fed_event_today(now)
-    if fed_event:
+    fed_event_active, _ = is_fed_event_today(now)
+    if fed_event_active:
         return True
-
     return False
 
 
 def has_major_event_on(target_date):
     """
-    Check if a major economic event (e.g. Fed speech, high-impact event) occurs on the given date.
+    Returns True if target_date is a high-impact US economic event day.
     """
-    for event in ECONOMIC_EVENTS:
-        if event["date"] == target_date:
-            if any(keyword.lower() in event["name"].lower() for keyword in FED_SPEECH_KEYWORDS) \
-               or event.get("high_impact", False):
-                logger.warning(f"📅 Major event on {target_date}: {event['name']}")
-                return True
-    return False
+    return is_blackout_day(target_date)
