@@ -8,8 +8,12 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "spy_data.csv")
 TRAINING_LOG_PATH = os.path.join(BASE_DIR, "training_log.jsonl")
 
-# Define the feature schema
+# Define the feature schema including OHLCV and engineered features
 DEFAULT_FEATURES = [
+    'open',
+    'high',
+    'low',
+    'volume',
     'vix',
     'rsi',
     'macd',
@@ -23,7 +27,7 @@ DEFAULT_FEATURES = [
     'pnl'
 ]
 
-# Limit for how many rows to retain (oldest removed when exceeded)
+# Limit for how many rows to retain
 MAX_ROWS = 5000
 
 def log_training_example(timestamp, close, features: dict, label: int = None):
@@ -32,14 +36,21 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
     Ensures consistent header and trims file if it grows too large.
     Also logs JSONL version to training_log.jsonl.
     """
-    fieldnames = ['timestamp', 'close'] + DEFAULT_FEATURES + ['label']
+    fieldnames = ['timestamp', 'open', 'high', 'low', 'close', 'volume'] + DEFAULT_FEATURES[4:] + ['label']
+
+    # Build row for CSV
     row = {
         'timestamp': timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        'open': features.get('open', ''),
+        'high': features.get('high', ''),
+        'low': features.get('low', ''),
         'close': close,
+        'volume': features.get('volume', ''),
         'label': label if label is not None else ''
     }
 
-    for key in DEFAULT_FEATURES:
+    # Add remaining features
+    for key in DEFAULT_FEATURES[4:]:
         row[key] = features.get(key, '')
 
     file_exists = os.path.exists(DATA_PATH)
@@ -68,7 +79,7 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
 
 def log_training_jsonl(timestamp, close, features: dict, label: int = None):
     """
-    Optionally logs the training data as JSONL to training_log.jsonl for ML tracking/debugging.
+    Logs the training data as JSONL to training_log.jsonl for ML tracking/debugging.
     """
     payload = {
         "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
