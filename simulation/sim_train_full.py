@@ -1,5 +1,3 @@
-#simulation/sim_train_full
-
 import os, json, math, time, random, subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,7 +9,7 @@ from meta.meta_agent    import MetaAgent
 from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_utils import send_telegram_message
 from utils.logger        import bot_logger as logger
-from ml.logger           import log_training_example  # ← ML logger import
+from ml.logger           import log_training_example  # ML logger import
 
 # ───────── simulation params
 SIM_DAYS            = 60
@@ -24,7 +22,6 @@ META_LOG_PATH       = Path("meta/meta_log.jsonl")
 RNG                 = random.Random(42)
 
 meta_agent = MetaAgent()
-
 
 # ╭──────────────────────────────────────────────────────────╮
 # │  helpers                                                 │
@@ -142,14 +139,18 @@ def simulate():
             # ML logging
             label = 1 if trade["pnl"] > 0 else 0
             try:
-                features = {
+                timestamp = datetime.strptime(trade["timestamp"], "%Y-%m-%dT%H:%M:%S")
+                close     = trade["entry_price"]
+                features  = {
                     "confidence": trade["confidence"],
                     "hour": int(trade["timestamp"][11:13]),
                     "vix": vix_today,
                     "atr": trade["meta_state"][3] if len(trade["meta_state"]) > 3 else 4.0,
-                    "pnl": trade["pnl"]
+                    "pnl": trade["pnl"],
+                    "regime_bull": 1 if vix_today < 18 else 0,
+                    "regime_bear": 1 if vix_today >= 18 else 0
                 }
-                log_training_example(features, label)
+                log_training_example(timestamp, close, features, label)
             except Exception as e:
                 logger.warning(f"Failed to log training example: {e}")
 
