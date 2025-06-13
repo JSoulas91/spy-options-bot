@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from functools   import wraps
 from threading   import Lock
 from dotenv      import load_dotenv
+import argparse
+import logging
 
 load_dotenv()  # load environment early
 
@@ -172,16 +174,63 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
 
 # ───────────────────────────────────────────────
 # Single‑file entry‑point (merges responsibilities of old main.py)
-def main():
+def main(debug=False):
+    if debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("🐞 Debug mode enabled for live_runner.py")
+        try:
+            send_telegram_message("🐞 Bot starting in debug mode...")
+        except Exception as exc:
+            logger.warning(f"Telegram debug start message failed: {exc}")
+
     logger.info("🚀 SPY Options Trading Bot is launching …")
-    send_telegram_message("🚀 *Bot Online*\nLive trading loop starting.")
+    if not debug:
+        try:
+            send_telegram_message("🚀 *Bot Online*\nLive trading loop starting.")
+        except Exception as exc:
+            logger.warning(f"Telegram start message failed: {exc}")
     run_market_open_tasks()
-    live_trading_loop()  # blocks forever
+
+    if debug:
+        # Run limited iterations in debug mode, then exit
+        for i in range(3):
+            logger.debug(f"[Debug Loop] Iteration {i+1}/3")
+            try:
+                update_status("heartbeat")
+
+                features   = _get_features("SPY")
+                last_price = _fetch_spy_quote()
+
+                snapshot = {
+                    "symbol":    "SPY",
+                    "price":     last_price,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "features":  features,
+                }
+
+                handle_exit(snapshot)
+                for tr in trade_tracker.get_open_trades():
+                    evaluate_trade(tr, snapshot)
+                handle_entry(snapshot)
+
+            except Exception as exc:
+                logger.error(f"[Debug Loop] {exc}")
+                logger.debug(traceback.format_exc())
+
+            time.sleep(1)  # short sleep for debug pacing
+
+        logger.info("🐞 Debug mode complete. Exiting.")
+    else:
+        live_trading_loop()  # normal blocking infinite loop
 
 # ───────────────────────────────────────────────
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run SPY Options Bot live_runner")
+    parser.add_argument("--debug", action="store_true", help="Run in debug mode for limited iterations")
+    args = parser.parse_args()
+
     try:
-        main()
+        main(debug=args.debug)
     except Exception as exc:
         logger.critical(f"💀 [Startup Fatal Error] {exc}")
         logger.debug(traceback.format_exc())
