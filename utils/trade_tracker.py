@@ -71,6 +71,13 @@ class TradeTracker:
         with self.lock:
             return sum(1 for t in self.trades if t.get("status") == "open")
 
+    def get_open_trades(self):
+        """
+        Returns a list of currently open trades.
+        """
+        with self.lock:
+            return [t for t in self.trades if t.get("status") == "open"]
+
     def can_place_trade(self):
         """
         Returns True if a new trade can be placed without exceeding MAX_OPEN_TRADES.
