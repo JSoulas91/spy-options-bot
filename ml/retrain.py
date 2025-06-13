@@ -39,12 +39,30 @@ def send_telegram_message(message: str, photo_path: str = None):
     except Exception as e:
         logger.error(f"[Telegram Error] {e}")
 
-def load_data():
+def load_data(clean=True):
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"{DATA_PATH} not found.")
+
     df = pd.read_csv(DATA_PATH, parse_dates=["timestamp"])
-    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
-    return df.sort_values("timestamp").dropna().reset_index(drop=True)
+    initial_len = len(df)
+    logger.info(f"[Load Data] Loaded {initial_len} rows with columns: {list(df.columns)}")
+
+    if clean:
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        df.dropna(subset=required_cols, inplace=True)
+        df = df[df['high'] >= df['low']]
+        df = df[df['volume'] >= 0]
+
+        numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'vix', 'rsi', 'macd', 'sma_ratio',
+                        'volume_zscore', 'confidence', 'atr', 'pnl']
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        df.dropna(subset=numeric_cols, inplace=True)
+        cleaned_len = len(df)
+        logger.info(f"[Clean Data] Dropped {initial_len - cleaned_len} corrupted rows. Remaining: {cleaned_len}")
+
+    return df.sort_values("timestamp").reset_index(drop=True)
 
 def create_labels(df: pd.DataFrame) -> pd.DataFrame:
     df["future_close"] = df["close"].shift(-1)
@@ -96,7 +114,7 @@ def retrain_model():
         logger.info("[ML Retraining] Starting warm-start XGBoost retraining with calibration …")
         update_status("last_retrain_attempt")
 
-        df = load_data()
+        df = load_data(clean=True)
         df = calculate_indicators(df)
 
         expected_cols = {"open", "high", "low", "close", "volume"}
