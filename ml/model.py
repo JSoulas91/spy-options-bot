@@ -1,10 +1,11 @@
+# ml/model.py
 import os
-import joblib
 import numpy as np
 import traceback
+import xgboost as xgb
 from utils.logger import bot_logger
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'spy_model.pkl')
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'xgb_raw.json')
 
 class SPYModel:
     def __init__(self):
@@ -12,11 +13,12 @@ class SPYModel:
         self.load_model()
 
     def load_model(self):
-        """Load the ML model from disk."""
+        """Load XGBoost model from disk (raw JSON format)."""
         if os.path.exists(MODEL_PATH):
             try:
-                self.model = joblib.load(MODEL_PATH)
-                bot_logger.info("🧠 [Model] Model loaded successfully.")
+                self.model = xgb.XGBClassifier()
+                self.model.load_model(MODEL_PATH)
+                bot_logger.info("🧠 [Model] XGBoost model loaded successfully.")
             except Exception as e:
                 bot_logger.error(f"[Model Load Error] {e}")
                 bot_logger.debug(traceback.format_exc())
@@ -31,7 +33,7 @@ class SPYModel:
             bot_logger.warning("[Model] No model loaded. Returning neutral confidence (0.5).")
             return 0.5
         try:
-            prob = self.model.predict_proba([features])[0][1]
+            prob = self.model.predict_proba(np.array([features]))[0][1]
             return float(round(prob, 4))
         except Exception as e:
             bot_logger.error(f"[Model Prediction Error] {e}")
