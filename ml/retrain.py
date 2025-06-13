@@ -44,7 +44,7 @@ def load_data():
         raise FileNotFoundError(f"{DATA_PATH} not found.")
     df = pd.read_csv(DATA_PATH, parse_dates=["timestamp"])
     logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
-    return df.sort_values("timestamp").reset_index(drop=True)
+    return df.sort_values("timestamp")
 
 def create_labels(df: pd.DataFrame) -> pd.DataFrame:
     df["future_close"] = df["close"].shift(-1)
@@ -98,9 +98,13 @@ def retrain_model():
 
         df = load_data()
         df = calculate_indicators(df)
+
+        expected_cols = {"open", "high", "low", "close", "volume"}
+        if not expected_cols.issubset(set(df.columns)):
+            raise ValueError(f"Missing required columns in data: {expected_cols - set(df.columns)}")
+
         df = create_labels(df)
 
-        # Drop corrupted rows only after indicator + label creation
         before = len(df)
         df = df.dropna().reset_index(drop=True)
         after = len(df)
@@ -109,17 +113,10 @@ def retrain_model():
         if after < 50:
             raise ValueError(f"Not enough data to train. Need at least 50 rows, found {after}.")
 
-        expected_cols = {"open", "high", "low", "close", "volume"}
-        if not expected_cols.issubset(set(df.columns)):
-            raise ValueError(f"Missing required columns in data: {expected_cols - set(df.columns)}")
-
         df = prune_training_data(df)
 
         X = df.drop(columns=["timestamp", "future_close", "label"])
         y = df["label"]
-
-        if X.isnull().any().any():
-            raise ValueError("NaNs detected in feature matrix after indicator calculation.")
 
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, test_size=0.2, random_state=42, stratify=y
