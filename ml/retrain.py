@@ -89,22 +89,27 @@ class XGBWrapper:
         probs = self.booster.predict(dmatrix)
         return np.vstack([1 - probs, probs]).T
     def fit(self, X, y):
-        pass  # Required by CalibratedClassifierCV
+        pass  # Required by CalibratedClassifierCV but not used because cv="prefit"
 
 def retrain_model():
     try:
         logger.info("[ML Retraining] Starting warm-start XGBoost retraining with calibration …")
         update_status("last_retrain_attempt")
 
+        # Load and prepare data
         df = load_data()
         df = calculate_indicators(df)
 
+        # Check required columns
         expected_cols = {"open", "high", "low", "close", "volume"}
-        if not expected_cols.issubset(set(df.columns)):
-            raise ValueError(f"Missing required columns in data: {expected_cols - set(df.columns)}")
+        missing_cols = expected_cols - set(df.columns)
+        if missing_cols:
+            raise ValueError(f"Missing required columns in data: {missing_cols}")
 
+        # Create labels
         df = create_labels(df)
 
+        # Drop rows with NaNs (from indicators or shifting)
         before = len(df)
         df = df.dropna().reset_index(drop=True)
         after = len(df)
@@ -113,15 +118,19 @@ def retrain_model():
         if after < 50:
             raise ValueError(f"Not enough data to train. Need at least 50 rows, found {after}.")
 
+        # Prune data if too large
         df = prune_training_data(df)
 
+        # Prepare training data
         X = df.drop(columns=["timestamp", "future_close", "label"])
         y = df["label"]
 
+        # Split train/validation sets
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, test_size=0.2, random_state=42, stratify=y
         )
 
+        # Convert to DMatrix for XGBoost
         dtrain = xgb.DMatrix(X_train, label=y_train)
         params = {
             "objective": "binary:logistic",
@@ -132,6 +141,7 @@ def retrain_model():
             "seed": 42,
         }
 
+        # Warm start or cold start training
         if os.path.exists(RAW_MODEL_PATH):
             logger.info("[Warm Start] Loading previous model …")
             booster = xgb.Booster()
@@ -141,17 +151,24 @@ def retrain_model():
             logger.info("[Cold Start] No previous model found — training new …")
             booster = xgb.train(params, dtrain, num_boost_round=100)
 
+        # Save raw booster
         booster.save_model(RAW_MODEL_PATH)
+
+        # Calibrate with sklearn wrapper
         calibrator = CalibratedClassifierCV(base_estimator=XGBWrapper(booster), method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
+        # Predict & evaluate on validation set
         y_val_pred = calibrator.predict(X_val)
         y_val_proba = calibrator.predict_proba(X_val)[:, 1]
 
         acc = accuracy_score(y_val, y_val_pred)
         brier = brier_score_loss(y_val, y_val_proba)
+
+        # Plot calibration curve
         plot_calibration(y_val, y_val_proba, CAL_PLOT_PATH)
 
+        # Logging
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_exists = os.path.exists(LOG_PATH)
         with open(LOG_PATH, "a") as f:
@@ -162,6 +179,10 @@ def retrain_model():
         prev_acc = get_last_accuracy()
         comparison = f"Compared to last: *{float(prev_acc):.2%}*" if prev_acc else "First run or previous accuracy unavailable"
 
+        # Save calibrated model
+        joblib.dump(calibrator, CAL_MODEL_PATH)
+
+        # Telegram message
         message = (
             f"📊 *ML Warm Retraining + Calibration Complete*\n"
             f"🗓️  Date: {now.split()[0]}\n"
@@ -175,7 +196,6 @@ def retrain_model():
             f"📊 Calibration plot attached."
         )
 
-        joblib.dump(calibrator, CAL_MODEL_PATH)
         logger.info(f"[ML Retraining] Success — Accuracy: {acc:.2%}, Brier: {brier:.4f}")
         send_telegram_message(message, photo_path=CAL_PLOT_PATH)
         update_status("last_retrain")
