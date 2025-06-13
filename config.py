@@ -90,6 +90,11 @@ META_MODEL_PATH = os.getenv("META_MODEL_PATH", "meta/models/ppo_agent.pth")
 META_INFO_PATH = "meta/meta_agent_info.json"
 META_STATE_LOOKBACK_MINUTES = 60
 
+# === MACHINE LEARNING ===
+CLASSIFIER_MODEL_PATH = "models/xgb_raw.json"
+CLASSIFIER_LOG_PATH = "logs/classifier/"
+CLASSIFIER_RETRAIN_THRESHOLD = 200  # retrain after 200 new samples
+
 # === DYNAMIC SIZING ===
 ENABLE_DYNAMIC_SIZING = os.getenv("ENABLE_DYNAMIC_SIZING", "true").lower() == "true"
 MIN_POSITION_SIZE     = float(os.getenv("MIN_POSITION_SIZE", 0.05))
