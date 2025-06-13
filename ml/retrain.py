@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.model_selection import train_test_split
@@ -9,6 +10,7 @@ import joblib
 import matplotlib.pyplot as plt
 import traceback
 import requests
+
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from utils.logger import bot_logger as logger
 from technical_analysis.indicators import calculate_indicators
@@ -17,8 +19,8 @@ from monitor.health_check import update_status
 # === Paths ===
 BASE_DIR        = os.path.dirname(__file__)
 DATA_PATH       = os.path.join(BASE_DIR, "spy_data.csv")
-RAW_MODEL_PATH  = os.path.join(BASE_DIR, "xgb_raw.json")            # XGBoost raw booster
-CAL_MODEL_PATH  = os.path.join(BASE_DIR, "xgb_calibrated.pkl")      # Calibrated sklearn wrapper
+RAW_MODEL_PATH  = os.path.join(BASE_DIR, "xgb_raw.json")
+CAL_MODEL_PATH  = os.path.join(BASE_DIR, "xgb_calibrated.pkl")
 LOG_PATH        = os.path.join(BASE_DIR, "retrain_log.csv")
 CAL_PLOT_PATH   = os.path.join(BASE_DIR, "calibration_plot.png")
 
@@ -41,6 +43,7 @@ def load_data():
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"{DATA_PATH} not found.")
     df = pd.read_csv(DATA_PATH, parse_dates=["timestamp"])
+    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
     return df.sort_values("timestamp").dropna().reset_index(drop=True)
 
 def create_labels(df: pd.DataFrame) -> pd.DataFrame:
@@ -78,18 +81,40 @@ def plot_calibration(y_true, prob_pos, filename):
     plt.savefig(filename)
     plt.close()
 
+class XGBWrapper:
+    def __init__(self, booster):
+        self.booster = booster
+    def predict_proba(self, X):
+        dmatrix = xgb.DMatrix(X)
+        probs = self.booster.predict(dmatrix)
+        return np.vstack([1 - probs, probs]).T
+    def fit(self, X, y):
+        pass  # Required by CalibratedClassifierCV
+
 def retrain_model():
     try:
         logger.info("[ML Retraining] Starting warm-start XGBoost retraining with calibration …")
         update_status("last_retrain_attempt")
 
-        df = calculate_indicators(load_data())
+        df = load_data()
+        df = calculate_indicators(df)
+
+        expected_cols = {"open", "high", "low", "close", "volume"}
+        if not expected_cols.issubset(set(df.columns)):
+            raise ValueError(f"Missing required columns in data: {expected_cols - set(df.columns)}")
+
         df = create_labels(df)
         df = prune_training_data(df)
 
         X = df.drop(columns=["timestamp", "future_close", "label"])
         y = df["label"]
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+        if X.isnull().any().any():
+            raise ValueError("NaNs detected in feature matrix after indicator calculation.")
+
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
 
         dtrain = xgb.DMatrix(X_train, label=y_train)
         params = {
@@ -110,37 +135,15 @@ def retrain_model():
             logger.info("[Cold Start] No previous model found — training new …")
             booster = xgb.train(params, dtrain, num_boost_round=100)
 
-        # Save raw booster
         booster.save_model(RAW_MODEL_PATH)
-
-        # Prepare data for calibration: use raw booster predict as base estimator
-        # We use sklearn wrapper for calibration - create a wrapper first
-        class XGBWrapper:
-            def __init__(self, booster):
-                self.booster = booster
-            def predict_proba(self, X):
-                dmatrix = xgb.DMatrix(X)
-                probs = self.booster.predict(dmatrix)
-                # Return probability for [class 0, class 1]
-                return np.vstack([1 - probs, probs]).T
-            def fit(self, X, y):
-                pass  # Dummy to allow CalibratedClassifierCV usage
-
-        import numpy as np
-        base_estimator = XGBWrapper(booster)
-
-        # Calibrate on validation set
-        calibrator = CalibratedClassifierCV(base_estimator=base_estimator, method='sigmoid', cv='prefit')
+        calibrator = CalibratedClassifierCV(base_estimator=XGBWrapper(booster), method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
-        # Predict on validation for metrics
         y_val_pred = calibrator.predict(X_val)
-        y_val_proba = calibrator.predict_proba(X_val)[:,1]
+        y_val_proba = calibrator.predict_proba(X_val)[:, 1]
 
         acc = accuracy_score(y_val, y_val_pred)
         brier = brier_score_loss(y_val, y_val_proba)
-
-        # Plot calibration curve
         plot_calibration(y_val, y_val_proba, CAL_PLOT_PATH)
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -166,9 +169,7 @@ def retrain_model():
             f"📊 Calibration plot attached."
         )
 
-        # Save calibrated model
         joblib.dump(calibrator, CAL_MODEL_PATH)
-
         logger.info(f"[ML Retraining] Success — Accuracy: {acc:.2%}, Brier: {brier:.4f}")
         send_telegram_message(message, photo_path=CAL_PLOT_PATH)
         update_status("last_retrain")
