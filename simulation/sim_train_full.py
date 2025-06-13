@@ -101,8 +101,9 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
 def append_meta_log(trade: dict, vix_val: float):
     META_LOG_PATH.parent.mkdir(exist_ok=True)
     payload = {
-        "trade":      trade,
-        "market":     {"vix": vix_val},
+        "timestamp":   trade["timestamp"],  # ✅ Now included for reporting
+        "trade":       trade,
+        "market":      {"vix": vix_val},
         "exit_reason": "sim_exit",
         "meta_state":  trade["meta_state"],
         "meta_action": trade["meta_action"],
