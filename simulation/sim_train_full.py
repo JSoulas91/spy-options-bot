@@ -135,6 +135,14 @@ def simulate():
 
         for step in range(TRADES_PER_DAY):
             trade = simulate_trade(day, step, prices, vix_today)
+
+            # ✅ Patch to include synthetic OHLCV so ML logger doesn't break
+            trade["open"]   = trade["entry_price"]
+            trade["high"]   = trade["entry_price"] * 1.01
+            trade["low"]    = trade["entry_price"] * 0.99
+            trade["close"]  = trade["exit_price"]
+            trade["volume"] = int(RNG.uniform(1_000_000, 10_000_000))
+
             append_meta_log(trade, vix_today)
 
             # ML logging
