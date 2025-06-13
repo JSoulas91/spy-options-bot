@@ -1,4 +1,3 @@
-# live_runner.py — unified real‑time loop + scheduler helpers
 import os
 import sys
 import time
@@ -6,32 +5,31 @@ import threading
 import traceback
 from collections import deque
 from datetime import datetime, timezone
-from functools   import wraps
-from threading   import Lock
-from dotenv      import load_dotenv
+from functools import wraps
+from threading import Lock
+from dotenv import load_dotenv
 import argparse
-import logging
 
-load_dotenv()  # load environment early
+load_dotenv()  # Load environment early
 
-from utils.logger         import bot_logger as logger
+from utils.logger import bot_logger as logger
 from utils.telegram_utils import send_telegram_message
 from monitor.health_check import update_status
 from utils.trade_tracker import trade_tracker
 
 from data.multi_timeframe_fetcher import fetch_long_term_features
-from data.quote_utils             import get_spy_quote as fetch_spy_quote
+from data.quote_utils import get_spy_quote as fetch_spy_quote
 
-from trading.exit            import handle_exit
-from trading.entry           import handle_entry
-from strategy.strategy       import evaluate_trade
+from trading.exit import handle_exit
+from trading.entry import handle_entry
+from strategy.strategy import evaluate_trade
 from meta.online_meta_update import online_update
 
 # ───────────────────────────────────────────────
 # Globals / Throttling
-_last_call      = 0.0
-_lock           = Lock()
-API_MIN_DELAY   = 1.0      # ≥1 s between raw Tradier calls
+_last_call = 0.0
+_lock = Lock()
+API_MIN_DELAY = 1.0       # ≥1 s between raw Tradier calls
 FEATURE_TTL_SEC = 15
 
 _cached_feat, _cached_ts = None, 0.0
@@ -104,14 +102,10 @@ def _schedule_online_update(interval_hours: int = 24):
     threading.Thread(target=worker, daemon=True, name="MetaUpdateScheduler").start()
 
 # ───────────────────────────────────────────────
-# Market‑open housekeeping (callable from scheduler)
+# Market‑open housekeeping
 def run_market_open_tasks() -> None:
-    """
-    House‑keeping tasks that should run once at market open
-    (or immediately on bot start if already within market hours).
-    """
     logger.info("🕘 Running market‑open housekeeping …")
-    purge_old_trades()
+    trade_tracker.cleanup_old_trades()
 
 # ───────────────────────────────────────────────
 # Live trading loop
@@ -128,7 +122,6 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
     while True:
         start_ts = time.time()
 
-        # Kill‑switch file check
         if os.path.exists(kill_switch_path):
             logger.warning("[LiveRunner] Kill‑switch detected → shutdown")
             try:
@@ -137,26 +130,26 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
                 sys.exit(0)
 
         try:
-            update_status("heartbeat")            # health‑ping
+            update_status("heartbeat")
 
-            features   = _get_features(symbol)
+            features = _get_features(symbol)
             last_price = _fetch_spy_quote()
 
             snapshot = {
-                "symbol":    symbol,
-                "price":     last_price,
+                "symbol": symbol,
+                "price": last_price,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "features":  features,
+                "features": features,
             }
 
-            # 1️⃣ exit management first
+            # 1️⃣ exit management
             handle_exit(snapshot)
 
-            # 2️⃣ evaluate each open position
+            # 2️⃣ live trade evaluation
             for tr in trade_tracker.get_open_trades():
                 evaluate_trade(tr, snapshot)
 
-            # 3️⃣ potential new entry
+            # 3️⃣ entry logic
             handle_entry(snapshot)
 
         except Exception as exc:
@@ -164,16 +157,15 @@ def live_trading_loop(symbol: str = "SPY", interval_sec: int = 20):
             logger.debug(traceback.format_exc())
             try:
                 send_telegram_message(f"⚠️ Loop error\n```{exc}```\nLog: {crash_path}")
-            except:  # noqa: E722
+            except:
                 pass
 
-        # pacing
         elapsed = time.time() - start_ts
         loop_times.append(elapsed)
         time.sleep(max(0.0, interval_sec - elapsed))
 
 # ───────────────────────────────────────────────
-# Single‑file entry‑point (merges responsibilities of old main.py)
+# Entrypoint
 def main(debug=False):
     if debug:
         logger.setLevel(logging.DEBUG)
@@ -189,23 +181,23 @@ def main(debug=False):
             send_telegram_message("🚀 *Bot Online*\nLive trading loop starting.")
         except Exception as exc:
             logger.warning(f"Telegram start message failed: {exc}")
+
     run_market_open_tasks()
 
     if debug:
-        # Run limited iterations in debug mode, then exit
         for i in range(3):
             logger.debug(f"[Debug Loop] Iteration {i+1}/3")
             try:
                 update_status("heartbeat")
 
-                features   = _get_features("SPY")
+                features = _get_features("SPY")
                 last_price = _fetch_spy_quote()
 
                 snapshot = {
-                    "symbol":    "SPY",
-                    "price":     last_price,
+                    "symbol": "SPY",
+                    "price": last_price,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "features":  features,
+                    "features": features,
                 }
 
                 handle_exit(snapshot)
@@ -217,11 +209,11 @@ def main(debug=False):
                 logger.error(f"[Debug Loop] {exc}")
                 logger.debug(traceback.format_exc())
 
-            time.sleep(1)  # short sleep for debug pacing
+            time.sleep(1)
 
         logger.info("🐞 Debug mode complete. Exiting.")
     else:
-        live_trading_loop()  # normal blocking infinite loop
+        live_trading_loop()
 
 # ───────────────────────────────────────────────
 if __name__ == "__main__":
