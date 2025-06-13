@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 
 import numpy as np
 import pytz
@@ -101,7 +101,6 @@ def _regime_one_hot(regime: str) -> List[float]:
     return [0.0, 0.0, 1.0]
 
 # ───────────────────────────────────────────────
-# ENTRY STATE
 def build_meta_state_for_entry(
     data_1m, data_5m, data_15m, data_1h, data_1d,
     confidence_score: float,
@@ -109,6 +108,7 @@ def build_meta_state_for_entry(
     past_trades=None,
     long_term_data=None,
     position_size: float = 0.0,
+    classifier_output: Optional[Dict] = None
 ) -> np.ndarray:
     past_trades   = past_trades or []
     long_term_data= long_term_data or {}
@@ -132,10 +132,19 @@ def build_meta_state_for_entry(
             ]
 
         vix_val = fetch_vix_price() or 20.0
-        regime  = _classify_regime(data_1d.iloc[-1], vix_val)
+
+        # ─────── Regime from classifier or fallback
+        if classifier_output and "regime_class" in classifier_output:
+            regime = classifier_output["regime_class"]
+        else:
+            regime = _classify_regime(data_1d.iloc[-1], vix_val)
+
+        # ─────── Confidence override from classifier
+        clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
+        norm_conf = normalize(clf_conf if clf_conf is not None else confidence_score, DEFAULT_RANGES["CONF"])
 
         state: List[float] = [
-            normalize(confidence_score, DEFAULT_RANGES["CONF"]),
+            norm_conf,
             1.0 if trade_type == 1 else 0.0,
             normalize(get_minutes_since_open(), dur_rng),
             normalize(vix_val, DEFAULT_RANGES["VIX"]),
