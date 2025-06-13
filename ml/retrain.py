@@ -1,27 +1,41 @@
 import os
 import pandas as pd
 from datetime import datetime
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.model_selection import train_test_split
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+import xgboost as xgb
 import joblib
+import matplotlib.pyplot as plt
 import traceback
 import requests
-import xgboost as xgb
-from sklearn.calibration import CalibratedClassifierCV
-
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from utils.logger import bot_logger as logger
 from technical_analysis.indicators import calculate_indicators
 from monitor.health_check import update_status
 
 # === Paths ===
-BASE_DIR   = os.path.dirname(__file__)
-DATA_PATH  = os.path.join(BASE_DIR, "spy_data.csv")
-MODEL_PATH = os.path.join(BASE_DIR, "spy_model.pkl")
-LOG_PATH   = os.path.join(BASE_DIR, "retrain_log.csv")
+BASE_DIR        = os.path.dirname(__file__)
+DATA_PATH       = os.path.join(BASE_DIR, "spy_data.csv")
+RAW_MODEL_PATH  = os.path.join(BASE_DIR, "xgb_raw.json")            # XGBoost raw booster
+CAL_MODEL_PATH  = os.path.join(BASE_DIR, "xgb_calibrated.pkl")      # Calibrated sklearn wrapper
+LOG_PATH        = os.path.join(BASE_DIR, "retrain_log.csv")
+CAL_PLOT_PATH   = os.path.join(BASE_DIR, "calibration_plot.png")
 
-# === Config ===
-MAX_ROWS = 10000  # ⛏️ Keep only last N rows of training data
+MAX_ROWS = 10000
+
+def send_telegram_message(message: str, photo_path: str = None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, data=data, timeout=10)
+        if photo_path and os.path.exists(photo_path):
+            url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+            with open(photo_path, "rb") as f:
+                files = {"photo": f}
+                requests.post(url_photo, data={"chat_id": TELEGRAM_CHAT_ID}, files=files, timeout=10)
+    except Exception as e:
+        logger.error(f"[Telegram Error] {e}")
 
 def load_data():
     if not os.path.exists(DATA_PATH):
@@ -34,13 +48,11 @@ def create_labels(df: pd.DataFrame) -> pd.DataFrame:
     df["label"] = (df["future_close"] > df["close"]).astype(int)
     return df.dropna()
 
-def send_telegram_message(message: str):
-    url  = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, data=data, timeout=10)
-    except Exception as e:
-        logger.error(f"[Telegram Error] {e}")
+def prune_training_data(df: pd.DataFrame) -> pd.DataFrame:
+    if len(df) > MAX_ROWS:
+        df = df.iloc[-MAX_ROWS:]
+        logger.info(f"[Data Prune] Training data pruned to last {MAX_ROWS} rows.")
+    return df
 
 def get_last_accuracy():
     try:
@@ -52,15 +64,23 @@ def get_last_accuracy():
         logger.warning(f"[ML Retraining] Couldn't load previous accuracy: {e}")
     return None
 
-def prune_training_data(df: pd.DataFrame):
-    if len(df) > MAX_ROWS:
-        df = df.iloc[-MAX_ROWS:]
-        logger.info(f"[Data Prune] Training data pruned to last {MAX_ROWS} rows.")
-    return df
+def plot_calibration(y_true, prob_pos, filename):
+    prob_true, prob_pred = calibration_curve(y_true, prob_pos, n_bins=10)
+    plt.figure(figsize=(6,6))
+    plt.plot(prob_pred, prob_true, marker='o', linewidth=2, label='Calibrated Model')
+    plt.plot([0,1],[0,1], linestyle='--', label='Perfectly Calibrated')
+    plt.xlabel('Mean Predicted Probability')
+    plt.ylabel('Fraction of Positives')
+    plt.title('Calibration Plot (Reliability Curve)')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(filename)
+    plt.close()
 
 def retrain_model():
     try:
-        logger.info("[ML Retraining] Starting XGBoost retraining process …")
+        logger.info("[ML Retraining] Starting warm-start XGBoost retraining with calibration …")
         update_status("last_retrain_attempt")
 
         df = calculate_indicators(load_data())
@@ -69,52 +89,88 @@ def retrain_model():
 
         X = df.drop(columns=["timestamp", "future_close", "label"])
         y = df["label"]
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
+        dtrain = xgb.DMatrix(X_train, label=y_train)
+        params = {
+            "objective": "binary:logistic",
+            "eval_metric": "logloss",
+            "learning_rate": 0.1,
+            "max_depth": 4,
+            "verbosity": 0,
+            "seed": 42,
+        }
 
-        base_model = xgb.XGBClassifier(
-            n_estimators=100,
-            learning_rate=0.1,
-            max_depth=4,
-            random_state=42,
-            use_label_encoder=False,
-            eval_metric='logloss'
-        )
-        model = CalibratedClassifierCV(base_model, method="sigmoid", cv=5)
-        model.fit(X_train, y_train)
+        if os.path.exists(RAW_MODEL_PATH):
+            logger.info("[Warm Start] Loading previous model …")
+            booster = xgb.Booster()
+            booster.load_model(RAW_MODEL_PATH)
+            booster = xgb.train(params, dtrain, num_boost_round=20, xgb_model=booster)
+        else:
+            logger.info("[Cold Start] No previous model found — training new …")
+            booster = xgb.train(params, dtrain, num_boost_round=100)
 
-        y_pred = model.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-        acc_pct = f"{acc:.2%}"
+        # Save raw booster
+        booster.save_model(RAW_MODEL_PATH)
 
-        joblib.dump(model, MODEL_PATH)
+        # Prepare data for calibration: use raw booster predict as base estimator
+        # We use sklearn wrapper for calibration - create a wrapper first
+        class XGBWrapper:
+            def __init__(self, booster):
+                self.booster = booster
+            def predict_proba(self, X):
+                dmatrix = xgb.DMatrix(X)
+                probs = self.booster.predict(dmatrix)
+                # Return probability for [class 0, class 1]
+                return np.vstack([1 - probs, probs]).T
+            def fit(self, X, y):
+                pass  # Dummy to allow CalibratedClassifierCV usage
+
+        import numpy as np
+        base_estimator = XGBWrapper(booster)
+
+        # Calibrate on validation set
+        calibrator = CalibratedClassifierCV(base_estimator=base_estimator, method='sigmoid', cv='prefit')
+        calibrator.fit(X_val, y_val)
+
+        # Predict on validation for metrics
+        y_val_pred = calibrator.predict(X_val)
+        y_val_proba = calibrator.predict_proba(X_val)[:,1]
+
+        acc = accuracy_score(y_val, y_val_pred)
+        brier = brier_score_loss(y_val, y_val_proba)
+
+        # Plot calibration curve
+        plot_calibration(y_val, y_val_proba, CAL_PLOT_PATH)
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_exists = os.path.exists(LOG_PATH)
         with open(LOG_PATH, "a") as f:
             if not log_exists:
-                f.write("timestamp,accuracy\n")
-            f.write(f"{now},{acc:.4f}\n")
+                f.write("timestamp,accuracy,brier_score\n")
+            f.write(f"{now},{acc:.4f},{brier:.4f}\n")
 
         prev_acc = get_last_accuracy()
-        comparison = (
-            f"Compared to last: *{float(prev_acc):.2%}*"
-            if prev_acc else "First run or previous accuracy unavailable"
-        )
+        comparison = f"Compared to last: *{float(prev_acc):.2%}*" if prev_acc else "First run or previous accuracy unavailable"
 
         message = (
-            f"📊 *ML Retraining Complete*\n"
+            f"📊 *ML Warm Retraining + Calibration Complete*\n"
             f"🗓️  Date: {now.split()[0]}\n"
-            f"🎯 Accuracy: *{acc_pct}*\n"
+            f"🎯 Accuracy: *{acc:.2%}*\n"
+            f"📉 Brier Score: *{brier:.4f}* (Lower is better)\n"
             f"📈 {comparison}\n"
-            f"💾 Model: `spy_model.pkl`\n"
-            f"✅ Status: Saved & Logged"
+            f"🔥 Warm Start: Enabled\n"
+            f"🎛️ Calibration: Sigmoid (Platt Scaling)\n"
+            f"💾 Models: Raw booster + Calibrated sklearn wrapper\n"
+            f"✅ Status: Saved & Logged\n"
+            f"📊 Calibration plot attached."
         )
 
-        logger.info(f"[ML Retraining] Success — Accuracy: {acc_pct}")
-        send_telegram_message(message)
+        # Save calibrated model
+        joblib.dump(calibrator, CAL_MODEL_PATH)
+
+        logger.info(f"[ML Retraining] Success — Accuracy: {acc:.2%}, Brier: {brier:.4f}")
+        send_telegram_message(message, photo_path=CAL_PLOT_PATH)
         update_status("last_retrain")
 
     except Exception as e:
