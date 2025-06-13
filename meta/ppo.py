@@ -59,14 +59,14 @@ class PPOAgent:
         self.grad_clip_norm  = grad_clip_norm
         self.tgt_entropy     = target_entropy or -3.0   # 3‑way categorical
 
-        self.load()
+        self.load()  # Load from default path unless overridden later
 
     # ───────── persistence ─────────────────────────────────
-    def load(self):
-        if not os.path.exists(META_MODEL_PATH):
+    def load(self, path: str = META_MODEL_PATH):
+        if not os.path.exists(path):
             logger.warning("⚠️ No saved PPO model found – starting fresh.")
             return
-        ckpt = torch.load(META_MODEL_PATH, map_location="cpu")
+        ckpt = torch.load(path, map_location="cpu")
         self.net.load_state_dict(ckpt["net"])
         self.opt.load_state_dict(ckpt["opt"])
         self.entropy_coef.data.copy_(torch.tensor(ckpt.get("ent_coef", 1e-2)))
@@ -131,8 +131,9 @@ class PPOAgent:
         logp  = dist.log_prob(actions_dir)
 
         ratio = torch.exp(logp - old_logp)
-        surr1 = ratio * adv
-        surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * adv
+        surr1, surr2 = ratio * adv, torch.clamp(ratio,
+                                               1 - self.eps_clip,
+                                               1 + self.eps_clip) * adv
 
         actor_loss  = -torch.min(surr1, surr2).mean()
         critic_loss = nn.MSELoss()(v.squeeze(-1), returns)
