@@ -1,4 +1,3 @@
-# data/multi_timeframe_fetcher.py
 """
 Fetches SPY price/indicator snapshots across multiple time‑frames
 with a tiny in‑memory TTL cache.   ©2025
@@ -130,7 +129,7 @@ def _tradier_get(path: str, params: dict[str, Any], retries: int = 2) -> Optiona
         try:
             r = requests.get(url, headers=HEADERS, params=params, timeout=8)
             if r.status_code in (401, 403):
-                logger.error("Tradier auth failed (%s) – check token / sandbox flag.", r.status_code)
+                bot_logger.error("Tradier auth failed (%s) – check token / sandbox flag.", r.status_code)
             r.raise_for_status()
             return r.json()
         except Exception as exc:
@@ -142,6 +141,13 @@ def _tradier_get(path: str, params: dict[str, Any], retries: int = 2) -> Optiona
 # ───────────────────────────────────────────────────────────
 # Raw data fetchers
 def _fetch_timesales(symbol, start_dt, end_dt, interval):
+    # Limit hourly data requests to max 30 days to avoid Tradier 400 errors
+    if interval == "1hour":
+        max_days = 30
+        min_start_dt = end_dt - timedelta(days=max_days)
+        if start_dt < min_start_dt:
+            start_dt = min_start_dt
+
     js = _tradier_get(
         "/markets/timesales",
         {
