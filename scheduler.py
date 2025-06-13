@@ -6,7 +6,7 @@ import subprocess
 import argparse
 from datetime import datetime
 from utils.logger import bot_logger
-from utils.logs import clean_old_logs, backup_logs
+from utils.log_cleanup import clean_old_logs, backup_logs
 from utils.telegram_notifier import TelegramNotifier
 from utils.trade_logger import get_daily_trade_summary
 from ml.retrain import retrain_model
