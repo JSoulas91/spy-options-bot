@@ -39,35 +39,17 @@ def send_telegram_message(message: str, photo_path: str = None):
     except Exception as e:
         logger.error(f"[Telegram Error] {e}")
 
-def load_data(clean=True):
+def load_data():
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"{DATA_PATH} not found.")
-
     df = pd.read_csv(DATA_PATH, parse_dates=["timestamp"])
-    initial_len = len(df)
-    logger.info(f"[Load Data] Loaded {initial_len} rows with columns: {list(df.columns)}")
-
-    if clean:
-        required_cols = ['open', 'high', 'low', 'close', 'volume']
-        df.dropna(subset=required_cols, inplace=True)
-        df = df[df['high'] >= df['low']]
-        df = df[df['volume'] >= 0]
-
-        numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'vix', 'rsi', 'macd', 'sma_ratio',
-                        'volume_zscore', 'confidence', 'atr', 'pnl']
-        for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        df.dropna(subset=numeric_cols, inplace=True)
-        cleaned_len = len(df)
-        logger.info(f"[Clean Data] Dropped {initial_len - cleaned_len} corrupted rows. Remaining: {cleaned_len}")
-
+    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
     return df.sort_values("timestamp").reset_index(drop=True)
 
 def create_labels(df: pd.DataFrame) -> pd.DataFrame:
     df["future_close"] = df["close"].shift(-1)
     df["label"] = (df["future_close"] > df["close"]).astype(int)
-    return df.dropna()
+    return df
 
 def prune_training_data(df: pd.DataFrame) -> pd.DataFrame:
     if len(df) > MAX_ROWS:
@@ -114,14 +96,23 @@ def retrain_model():
         logger.info("[ML Retraining] Starting warm-start XGBoost retraining with calibration …")
         update_status("last_retrain_attempt")
 
-        df = load_data(clean=True)
+        df = load_data()
         df = calculate_indicators(df)
+        df = create_labels(df)
+
+        # Drop corrupted rows only after indicator + label creation
+        before = len(df)
+        df = df.dropna().reset_index(drop=True)
+        after = len(df)
+        logger.info(f"[Clean Data] Dropped {before - after} corrupted rows. Remaining: {after}")
+
+        if after < 50:
+            raise ValueError(f"Not enough data to train. Need at least 50 rows, found {after}.")
 
         expected_cols = {"open", "high", "low", "close", "volume"}
         if not expected_cols.issubset(set(df.columns)):
             raise ValueError(f"Missing required columns in data: {expected_cols - set(df.columns)}")
 
-        df = create_labels(df)
         df = prune_training_data(df)
 
         X = df.drop(columns=["timestamp", "future_close", "label"])
