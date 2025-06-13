@@ -1,3 +1,5 @@
+# meta/meta_agent_info.py
+
 import os
 import json
 from config import META_INFO_PATH
@@ -21,3 +23,6 @@ def get_meta_agent_dims():
     if sd <= 0 or ad <= 0:
         raise ValueError(f"Invalid dims in meta info: {info}")
     return sd, ad
+
+# Alias for compatibility
+get_meta_agent_info = get_meta_agent_dims
