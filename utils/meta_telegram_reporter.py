@@ -1,84 +1,76 @@
+# utils/meta_telegram_reporter.py
 import os
-import io
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime
-from collections import deque
-from utils.telegram_utils import send_telegram_message
+from datetime import datetime, timedelta
 
-LOG_PATH = "meta/meta_log.jsonl"
-MAX_EPISODES = 100  # Limit to recent episodes for plotting
+from utils.telegram_utils import send_plot, send_telegram_message
+from config import META_LOG_PATH
 
-def load_meta_log():
-    if not os.path.exists(LOG_PATH):
-        return []
-    with open(LOG_PATH, "r") as f:
-        return [json.loads(line.strip()) for line in f if line.strip()]
+def load_log_as_dataframe():
+    if not os.path.exists(META_LOG_PATH):
+        return pd.DataFrame()
 
-def generate_summary(log_data):
-    df = pd.DataFrame(log_data)
+    with open(META_LOG_PATH) as f:
+        lines = [json.loads(l) for l in f if l.strip()]
+
+    if not lines:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(lines)
+    if "timestamp" not in df.columns:
+        return pd.DataFrame()  # ❌ skip if no timestamp info
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"])
+    return df.sort_values("timestamp")
+
+def generate_summary(df: pd.DataFrame):
     if df.empty:
-        return "No data available."
+        return "No valid meta-agent logs available."
 
-    df["reward"] = df["reward"].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    last_3d = df[df["timestamp"] >= datetime.now() - timedelta(days=3)]
+    avg_r = last_3d["reward"].mean() if "reward" in last_3d.columns else None
+    count = len(last_3d)
 
-    avg_reward = df["reward"].mean()
-    max_reward = df["reward"].max()
-    min_reward = df["reward"].min()
-    last_reward = df["reward"].iloc[-1]
-    n_trades = len(df)
-
-    regime_counts = df["regime"].value_counts().to_dict()
-    action_counts = df["action"].value_counts().to_dict()
-
-    summary = f"""
-📊 *Meta-Agent Training Summary*
-🗓️ Period: {df['timestamp'].min().strftime('%Y-%m-%d')} → {df['timestamp'].max().strftime('%Y-%m-%d')}
-📈 Trades: {n_trades}
-💡 Reward Avg: `{avg_reward:.2f}`, Max: `{max_reward:.2f}`, Min: `{min_reward:.2f}`, Last: `{last_reward:.2f}`
-🧠 Regimes Seen: {regime_counts}
-🎯 Actions Taken: {action_counts}
-"""
-    return summary
-
-def generate_reward_plot(log_data):
-    df = pd.DataFrame(log_data)
-    if df.empty or "reward" not in df:
-        return None
-
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df["reward"] = df["reward"].astype(float)
-
-    # Keep only the last MAX_EPISODES
-    df = df.tail(MAX_EPISODES)
-
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(df["timestamp"], df["reward"], marker="o", linestyle="-", color="teal", label="Reward")
-    ax.set_title("Meta-Agent Reward Over Time")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Reward")
-    ax.grid(True)
-    ax.legend()
-    fig.tight_layout()
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
-    plt.close(fig)
-    return buf.read()
+    return (
+        f"📊 Meta-Agent Report\n"
+        f"Records (last 3d): {count}\n"
+        f"Avg Reward: {avg_r:.4f}" if avg_r is not None else "No recent reward data."
+    )
 
 def send_meta_agent_report():
-    log_data = load_meta_log()
-    if not log_data:
-        send_telegram_message("⚠️ No meta-agent log data found.")
-        return
+    df = load_log_as_dataframe()
+    summary = generate_summary(df)
+    send_telegram_message(summary)
 
-    summary = generate_summary(log_data)
-    image_bytes = generate_reward_plot(log_data)
+    if not df.empty and "reward" in df.columns:
+        plt.figure(figsize=(10, 4))
+        plt.plot(df["timestamp"], df["reward"], label="Reward")
+        plt.title("Meta-Agent Reward Trend")
+        plt.xlabel("Time")
+        plt.ylabel("Reward")
+        plt.grid(True)
+        plt.tight_layout()
+        send_plot(plt)
+        plt.close()
 
-    send_telegram_message(summary.strip(), image_bytes=image_bytes)
+def send_training_report(stats: dict, history: list[float]):
+    msg = (
+        f"📈 PPO Epoch {stats['epoch']}\n"
+        f"Avg Reward: {stats['avg_reward']:.4f}\n"
+        f"Reward Std: {stats['reward_std']:.4f}"
+    )
+    send_telegram_message(msg)
 
-if __name__ == "__main__":
-    send_meta_agent_report()
+    if history:
+        plt.figure(figsize=(10, 3))
+        plt.plot(history, label="Avg Reward")
+        plt.title("Training Progress")
+        plt.xlabel("Epoch")
+        plt.ylabel("Reward")
+        plt.grid(True)
+        plt.tight_layout()
+        send_plot(plt)
+        plt.close()
