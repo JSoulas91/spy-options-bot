@@ -23,7 +23,7 @@ def _make_chart(rewards: List[float]) -> bytes:
     """Return a PNG bytes object of the reward‑history chart."""
     fig, ax = plt.subplots()
     ax.plot(rewards, linewidth=2)
-    ax.set_title("Meta‑Agent Avg Reward")
+    ax.set_title("Meta‑Agent Avg Reward")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Reward")
     ax.grid(True)
@@ -65,5 +65,9 @@ def send_training_report(stats: Dict, rewards: List[float]) -> None:
         return  # anti‑spam throttle
 
     try:
-        # 1) Send text message
-        send
+        msg = _fmt_stats(stats)
+        img = _make_chart(rewards) if rewards else None
+        send_telegram_message(text=msg, image_bytes=img)
+        _LAST_SENT_TS = time.time()
+    except Exception as e:
+        logger.error(f"❌ Failed to send training update: {e}", exc_info=True)
