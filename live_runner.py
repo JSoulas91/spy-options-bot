@@ -15,7 +15,7 @@ load_dotenv()  # load environment early
 from utils.logger         import bot_logger as logger
 from utils.telegram_utils import send_telegram_message
 from monitor.health_check import update_status
-from utils.trade_tracker  import trade_tracker, purge_old_trades
+from utils.trade_tracker import trade_tracker
 
 from data.multi_timeframe_fetcher import fetch_long_term_features
 from data.quote_utils             import get_spy_quote as fetch_spy_quote
