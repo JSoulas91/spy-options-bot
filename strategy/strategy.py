@@ -8,7 +8,7 @@ Signal‑generation and in‑position evaluation logic.
 
 from __future__ import annotations
 import traceback
-from datetime import datetime, time
+from datetime import datetime
 from typing import Dict, Any
 
 from strategy.helpers import is_day_trade, is_swing_trade
@@ -71,7 +71,6 @@ def evaluate_trade_signal(market_snap: Dict) -> Dict[str, Any]:
             logger.info("[Strategy] Meta-agent vetoed entry.")
             return _no_trade()
 
-        # Meta-agent approved, boost confidence
         confidence += CONFIDENCE_STEP_UP
         if confidence < MIN_META_CONFIDENCE:
             logger.info(f"[Strategy] Confidence {confidence:.2f} below threshold.")
@@ -120,7 +119,6 @@ def evaluate_trade(trade: dict, spy_price: float, current_time=None) -> Dict[str
             logger.info(f"[Strategy] Price below stop-loss: {spy_price:.2f} < {stop_loss_price:.2f}")
             return {"exit": True, "reason": "stop_loss"}
 
-        # Meta-agent override
         meta_state = trade.get("meta_state")
         if meta_state:
             decision = meta_agent.should_exit(meta_state)
