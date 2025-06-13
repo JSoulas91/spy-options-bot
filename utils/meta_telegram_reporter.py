@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 from collections import deque
-from telegram_utils import send_telegram_message
+from utils.telegram_utils import send_telegram_message
 
 LOG_PATH = "meta/meta_log.jsonl"
 MAX_EPISODES = 100  # Limit to recent episodes for plotting
