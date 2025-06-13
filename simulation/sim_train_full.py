@@ -135,14 +135,6 @@ def simulate():
 
         for step in range(TRADES_PER_DAY):
             trade = simulate_trade(day, step, prices, vix_today)
-
-            # ✅ Patch to include synthetic OHLCV so ML logger doesn't break
-            trade["open"]   = trade["entry_price"]
-            trade["high"]   = trade["entry_price"] * 1.01
-            trade["low"]    = trade["entry_price"] * 0.99
-            trade["close"]  = trade["exit_price"]
-            trade["volume"] = int(RNG.uniform(1_000_000, 10_000_000))
-
             append_meta_log(trade, vix_today)
 
             # ML logging
@@ -150,6 +142,13 @@ def simulate():
             try:
                 timestamp = datetime.strptime(trade["timestamp"], "%Y-%m-%dT%H:%M:%S")
                 close     = trade["entry_price"]
+
+                # Synthetic OHLCV construction (very simple but consistent)
+                open_price = round(close * RNG.uniform(0.995, 1.005), 2)
+                high_price = round(max(open_price, close) * RNG.uniform(1.0, 1.01), 2)
+                low_price  = round(min(open_price, close) * RNG.uniform(0.99, 1.0), 2)
+                volume     = int(RNG.uniform(1000, 10000))
+
                 features  = {
                     "confidence": trade["confidence"],
                     "hour": int(trade["timestamp"][11:13]),
@@ -157,7 +156,12 @@ def simulate():
                     "atr": trade["meta_state"][3] if len(trade["meta_state"]) > 3 else 4.0,
                     "pnl": trade["pnl"],
                     "regime_bull": 1 if vix_today < 18 else 0,
-                    "regime_bear": 1 if vix_today >= 18 else 0
+                    "regime_bear": 1 if vix_today >= 18 else 0,
+                    "open": open_price,
+                    "high": high_price,
+                    "low": low_price,
+                    "close": close,
+                    "volume": volume
                 }
                 log_training_example(timestamp, close, features, label)
             except Exception as e:
