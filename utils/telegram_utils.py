@@ -1,5 +1,7 @@
 import os
+import io
 import requests
+import matplotlib.pyplot as plt
 
 def send_telegram_message(text: str, image_bytes: bytes = None):
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -28,3 +30,13 @@ def send_telegram_message(text: str, image_bytes: bytes = None):
                 print("❌ Failed to send Telegram message:", response.text)
         except Exception as e:
             print("❌ Telegram send error:", str(e))
+
+def send_plot(plt_obj, caption="Meta‑Agent Reward Plot"):
+    """
+    Send a matplotlib plot to Telegram as an image.
+    """
+    buf = io.BytesIO()
+    plt_obj.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+
+    send_telegram_message(caption, image_bytes=buf.read())
