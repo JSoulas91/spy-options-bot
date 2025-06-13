@@ -1,3 +1,4 @@
+# train_meta_agent.py
 import os, sys, json, csv
 from typing import List, Dict
 
@@ -10,7 +11,7 @@ from meta.ppo                   import PPOAgent
 from meta.meta_agent_info       import save_meta_agent_dims
 from meta.prioritized_buffer    import PrioritizedReplayBuffer
 from utils.logger               import bot_logger as logger
-from utils.meta_telegram_reporter import send_meta_agent_report
+from utils.meta_telegram_reporter import send_training_report, send_meta_agent_report
 from utils.telegram_utils       import send_telegram_message
 from monitor.health_check       import update_status
 from config import (
@@ -19,12 +20,11 @@ from config import (
 )
 
 CSV_PATH, NOTIFY_EVERY   = "meta/reward_history.csv", 10
-BUFFER_CAPACITY          = 10_000        # replay buffer size
-ACTION_DIM               = 3             # categorical actions 0/1/2
+BUFFER_CAPACITY          = 10_000
+ACTION_DIM               = 3
 
-# ╭──────────────────────────────────────────────────────────╮
-# │ Helpers                                                  │
-# ╰──────────────────────────────────────────────────────────╯
+# ─── Helpers ─────────────────────────────────────────────────────────────
+
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
         return []
@@ -68,28 +68,24 @@ def _append_csv(epoch_idx, avg_r):
             w.writerow(["epoch", "avg_reward"])
         w.writerow([epoch_idx, avg_r])
 
-# ╭──────────────────────────────────────────────────────────╮
-# │ Main training loop                                       │
-# ╰──────────────────────────────────────────────────────────╯
+# ─── Training ────────────────────────────────────────────────────────────
+
 def train():
     logger.info("🚀 PPO meta‑agent training started")
     update_status("last_ppo_attempt")
 
     rows = _load_rows()
     if not rows:
-        logger.warning("No training data.")
-        return
+        logger.warning("No training data."); return
 
     state_dim = _discover_state_dim(rows)
     if state_dim <= 0:
-        logger.error("Cannot infer state_dim.")
-        return
+        logger.error("Cannot infer state_dim."); return
 
     save_meta_agent_dims(state_dim, ACTION_DIM)
     buffer = _prep_buffer(rows, state_dim)
     if len(buffer) < BATCH_SIZE:
-        logger.error("Buffer too small.")
-        return
+        logger.error("Buffer too small."); return
 
     agent  = PPOAgent(state_dim=state_dim)
     beta   = BUFFER_BETA_START
@@ -115,7 +111,6 @@ def train():
             if not states:
                 continue
 
-            # numpy → tensor
             states_t  = torch.tensor(np.array(states, dtype=np.float32))
             next_t    = states_t.clone()
             dirs_t    = torch.tensor(np.array(dirs, dtype=np.int64))
@@ -141,10 +136,22 @@ def train():
         logger.info("Epoch %d/%d – avg_reward = %.4f", ep, EPOCHS, avg_r)
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
+        if ep % NOTIFY_EVERY == 0:
+            send_training_report(
+                {"epoch": ep,
+                 "avg_reward": avg_r,
+                 "reward_std": float(np.std(ep_rewards)) if ep_rewards else 0},
+                hist
+            )
 
     agent.save()
     update_status("last_ppo")
-    send_meta_agent_report()
+
+    try:
+        send_meta_agent_report()
+    except Exception as e:
+        logger.error("Meta agent report failed: %s", str(e))
+
     send_telegram_message("✅ Dual‑head PPO training completed.")
 
 if __name__ == "__main__":
