@@ -125,13 +125,18 @@ def run_scheduler_loop():
     bot_logger.info("🕒 Scheduler started.")
     update_status("last_scheduler_start")
 
-    # Weekday-only tasks
-    schedule.every().monday.to.friday.at("09:30").do(run_market_open_tasks)
-    schedule.every().monday.to.friday.at("16:45").do(send_daily_summary_task)
-    schedule.every().monday.to.friday.at("17:00").do(retrain_model_task)
-    schedule.every().monday.to.friday.at("17:20").do(clean_logs_task)
-    schedule.every().monday.to.friday.at("17:40").do(online_meta_update_task)
-    schedule.every().monday.to.friday.at("17:50").do(train_meta_agent_task)
+    # Weekday tasks (explicitly scheduled per day)
+    for day in [schedule.every().monday,
+                schedule.every().tuesday,
+                schedule.every().wednesday,
+                schedule.every().thursday,
+                schedule.every().friday]:
+        day.at("09:30").do(run_market_open_tasks)
+        day.at("16:45").do(send_daily_summary_task)
+        day.at("17:00").do(retrain_model_task)
+        day.at("17:20").do(clean_logs_task)
+        day.at("17:40").do(online_meta_update_task)
+        day.at("17:50").do(train_meta_agent_task)
 
     # Weekend simulation + training
     schedule.every().saturday.at("12:00").do(run_weekend_training_tasks)
