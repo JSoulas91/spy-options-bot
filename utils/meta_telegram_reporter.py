@@ -1,73 +1,84 @@
-"""
-Send concise meta‑agent training summaries (text + reward chart) to Telegram.
-"""
-
-from __future__ import annotations
-
+import os
 import io
-import time
-from datetime import datetime
-from typing import List, Dict
-
+import json
+import pandas as pd
 import matplotlib.pyplot as plt
+from datetime import datetime
+from collections import deque
+from telegram_utils import send_telegram_message
 
-from utils.logger import bot_logger as logger
-from utils.telegram_utils import send_telegram_message  # ✅ existing helper
+LOG_PATH = "meta/meta_log.jsonl"
+MAX_EPISODES = 100  # Limit to recent episodes for plotting
 
-_MIN_INTERVAL = 90  # seconds – throttle updates
-_LAST_SENT_TS = 0.0
+def load_meta_log():
+    if not os.path.exists(LOG_PATH):
+        return []
+    with open(LOG_PATH, "r") as f:
+        return [json.loads(line.strip()) for line in f if line.strip()]
 
+def generate_summary(log_data):
+    df = pd.DataFrame(log_data)
+    if df.empty:
+        return "No data available."
 
-# ─────────────────────────────────────────────────────────────
-def _make_chart(rewards: List[float]) -> bytes:
-    """Return a PNG bytes object of the reward‑history chart."""
-    fig, ax = plt.subplots()
-    ax.plot(rewards, linewidth=2)
-    ax.set_title("Meta‑Agent Avg Reward")
-    ax.set_xlabel("Epoch")
+    df["reward"] = df["reward"].astype(float)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    avg_reward = df["reward"].mean()
+    max_reward = df["reward"].max()
+    min_reward = df["reward"].min()
+    last_reward = df["reward"].iloc[-1]
+    n_trades = len(df)
+
+    regime_counts = df["regime"].value_counts().to_dict()
+    action_counts = df["action"].value_counts().to_dict()
+
+    summary = f"""
+📊 *Meta-Agent Training Summary*
+🗓️ Period: {df['timestamp'].min().strftime('%Y-%m-%d')} → {df['timestamp'].max().strftime('%Y-%m-%d')}
+📈 Trades: {n_trades}
+💡 Reward Avg: `{avg_reward:.2f}`, Max: `{max_reward:.2f}`, Min: `{min_reward:.2f}`, Last: `{last_reward:.2f}`
+🧠 Regimes Seen: {regime_counts}
+🎯 Actions Taken: {action_counts}
+"""
+    return summary
+
+def generate_reward_plot(log_data):
+    df = pd.DataFrame(log_data)
+    if df.empty or "reward" not in df:
+        return None
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["reward"] = df["reward"].astype(float)
+
+    # Keep only the last MAX_EPISODES
+    df = df.tail(MAX_EPISODES)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(df["timestamp"], df["reward"], marker="o", linestyle="-", color="teal", label="Reward")
+    ax.set_title("Meta-Agent Reward Over Time")
+    ax.set_xlabel("Time")
     ax.set_ylabel("Reward")
     ax.grid(True)
-    plt.tight_layout()
+    ax.legend()
+    fig.tight_layout()
+
     buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    plt.close(fig)
+    plt.savefig(buf, format="png")
     buf.seek(0)
+    plt.close(fig)
     return buf.read()
 
+def send_meta_agent_report():
+    log_data = load_meta_log()
+    if not log_data:
+        send_telegram_message("⚠️ No meta-agent log data found.")
+        return
 
-# ─────────────────────────────────────────────────────────────
-def _fmt_stats(stats: Dict) -> str:
-    """Format the stats dict into a Telegram‑friendly markdown message."""
-    return (
-        "🏋️‍♂️ *Meta‑Training Update*\n"
-        f"• Epoch: *{stats.get('epoch', '?')}*\n"
-        f"• Avg Reward: *{stats.get('avg_reward', 0):.3f}*\n"
-        f"• Sharpe: *{stats.get('sharpe', 0):.2f}*\n"
-        f"• Reject‑rate: *{stats.get('reject_rate', 0)*100:.1f}%*\n"
-        f"• Avg Dur: *{stats.get('avg_duration', 0):.1f} min*\n"
-        f"• Avg PnL: *{stats.get('avg_pnl', 0):.2f} $*\n"
-        f"_UTC {datetime.utcnow().strftime('%Y‑%m‑%d %H:%M')}_"
-    )
+    summary = generate_summary(log_data)
+    image_bytes = generate_reward_plot(log_data)
 
+    send_telegram_message(summary.strip(), image_bytes=image_bytes)
 
-# ─────────────────────────────────────────────────────────────
-def send_training_report(stats: Dict, rewards: List[float]) -> None:
-    """
-    Push a text summary (and optional reward chart) to Telegram.
-
-    Parameters
-    ----------
-    stats   : dict   – keys like epoch, avg_reward, reward_std, sharpe, ...
-    rewards : list   – running list of average reward per epoch
-    """
-    global _LAST_SENT_TS
-    if time.time() - _LAST_SENT_TS < _MIN_INTERVAL:
-        return  # anti‑spam throttle
-
-    try:
-        msg = _fmt_stats(stats)
-        img = _make_chart(rewards) if rewards else None
-        send_telegram_message(text=msg, image_bytes=img)
-        _LAST_SENT_TS = time.time()
-    except Exception as e:
-        logger.error(f"❌ Failed to send training update: {e}", exc_info=True)
+if __name__ == "__main__":
+    send_meta_agent_report()
