@@ -9,13 +9,13 @@ import torch
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from meta.ppo                   import PPOAgent
-from meta.meta_agent_info       import save_meta_agent_dims
-from meta.prioritized_buffer    import PrioritizedReplayBuffer
-from utils.logger               import bot_logger as logger
+from meta.ppo import PPOAgent
+from meta.meta_agent_info import save_meta_agent_dims
+from meta.prioritized_buffer import PrioritizedReplayBuffer
+from utils.logger import bot_logger as logger
 from utils.meta_telegram_reporter import send_training_report, send_meta_agent_report
-from utils.telegram_utils       import send_telegram_message
-from monitor.health_check       import update_status
+from utils.telegram_utils import send_telegram_message
+from monitor.health_check import update_status
 from config import (
     META_LOG_PATH, EPOCHS, BATCH_SIZE,
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
@@ -108,39 +108,30 @@ def train():
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
 
-        # Optional: gentler entropy decay
+        # Optional: gentle entropy decay
         agent.entropy_coef.data *= 0.995
 
         num_batches = max(1, len(buffer) // BATCH_SIZE)
         for _ in range(num_batches):
-            batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
+            batch = buffer.sample(BATCH_SIZE, beta)
+            states = batch['states']
+            actions = batch['actions']
+            rewards = batch['rewards']
+            dones = batch['dones']
+            indices = batch['indices']
+            weights = batch['weights']
 
-            states, dirs, confs, rewards, dones = [], [], [], [], []
-            for s, a, r, _, done in batch:
-                s_vec = _pad_or_trim(s, state_dim)
-                states.append(s_vec)
-                if isinstance(a, (list, tuple)):
-                    dirs.append(int(a[0]))
-                    confs.append(float(a[1]))
-                else:
-                    dirs.append(int(a))
-                    confs.append(0.5)
-                rewards.append(float(r))
-                dones.append(int(bool(done)))
-
-            if not states:
-                continue
-
-            rewards_np = np.array(rewards, dtype=np.float32)
-            rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
-            rewards = rewards_np.tolist()
+            dirs, confs = [], []
+            for a in actions:
+                dirs.append(int(a[0]))
+                confs.append(float(a[1]))
 
             states_t  = torch.tensor(states, dtype=torch.float32)
             next_t    = states_t.clone()
             dirs_t    = torch.tensor(dirs, dtype=torch.long)
             confs_t   = torch.tensor(confs, dtype=torch.float32)
             weights_t = torch.tensor(weights, dtype=torch.float32)
-            old_logp  = torch.zeros(len(states_t), dtype=torch.float32)
+            old_logp  = None  # No KL term during offline training
 
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
@@ -159,7 +150,7 @@ def train():
             else:
                 td_err_list = list(td_err) if isinstance(td_err, (list, np.ndarray)) else [0.0] * BATCH_SIZE
 
-            buffer.update_priorities(idxs, td_err_list)
+            buffer.update_priorities(indices, td_err_list)
             epoch_rewards.extend(rewards)
 
             if DEBUG:
