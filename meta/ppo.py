@@ -25,9 +25,8 @@ class DualHeadLSTM(nn.Module):
                                         nn.Linear(hidden, 1))
 
     def forward(self, x: torch.Tensor):
-        # x: [batch, state_dim]
         out, _ = self.lstm(x.unsqueeze(1))          # [B,1,lstm_hid]
-        h      = self.dropout(out[:, -1, :])         # take last time step
+        h      = self.dropout(out[:, -1, :])        # last time step
         h      = self.shared(h)
         return self.dir_head(h), self.conf_head(h).squeeze(-1), self.value_head(h)
 
@@ -58,7 +57,7 @@ class PPOAgent:
         self.k_epochs        = k_epochs
         self.conf_loss_w     = conf_loss_w
         self.grad_clip_norm  = grad_clip_norm
-        self.tgt_entropy     = target_entropy or -3.0   # 3-way categorical
+        self.tgt_entropy     = target_entropy or -3.0   # log(1/3)
 
         self.load()
 
@@ -100,7 +99,6 @@ class PPOAgent:
     def _discounted_returns(rewards, dones, last_v, gamma):
         r = torch.tensor(rewards, dtype=torch.float32)
         d = torch.tensor(dones,   dtype=torch.float32)
-        # Simple 1-step bootstrap return
         return r + gamma * last_v * (1 - d)
 
     def _entropy_update(self, entropy_mean):
@@ -131,38 +129,24 @@ class PPOAgent:
         dir_logits, conf_pred, _ = self.net(states)
         dist  = Categorical(logits=dir_logits)
         logp  = dist.log_prob(actions_dir)
+        entropy = dist.entropy().mean()
 
         ratio = torch.exp(logp - old_logp)
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-
         actor_loss  = -torch.min(surr1, surr2).mean()
         critic_loss = nn.MSELoss()(v.squeeze(-1), returns)
-        conf_loss   = nn.MSELoss()(conf_pred, target_conf) * self.conf_loss_w
-        entropy     = dist.entropy().mean()
-        kl_div      = (old_logp - logp).mean()
 
-        total_loss = actor_loss + 0.5 * critic_loss + conf_loss - self.entropy_coef * entropy
-        if weights is not None:
-            total_loss = (total_loss * weights).mean()
-        else:
-            total_loss = total_loss.mean()
+        conf_loss = nn.MSELoss()(conf_pred, target_conf)
+
+        loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
 
         self.opt.zero_grad()
-        total_loss.backward()
+        loss.backward()
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.opt.step()
 
-        self._entropy_update(entropy)
+        self._entropy_update(entropy.detach())
 
-        td_errors = (returns - v.detach().squeeze(-1)).cpu()
-
-        return {
-            "loss": total_loss.item(),
-            "policy_loss": actor_loss.item(),
-            "value_loss": critic_loss.item(),
-            "conf_loss": conf_loss.item(),
-            "entropy": entropy.item(),
-            "kl": kl_div.item(),
-            "td_errors": td_errors
-        }
+        td_error = (v.squeeze(-1).detach() - returns).abs()
+        return td_error.detach()
