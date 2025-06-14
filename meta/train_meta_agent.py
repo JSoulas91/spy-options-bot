@@ -22,14 +22,11 @@ from config import (
     ENTROPY_COEF_START, ENTROPY_COEF_END, ENTROPY_DECAY_STEPS
 )
 
-# ─── Config ───────────────────────────────────────────────────────────────
 CSV_PATH = "meta/reward_history.csv"
 NOTIFY_EVERY = 20
 BUFFER_CAPACITY = 10_000
 ACTION_DIM = 3
 DEBUG = True
-
-# ─── Helpers ─────────────────────────────────────────────────────────────
 
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
@@ -60,7 +57,6 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
 
-        # ✅ Use reward directly (already shaped in logging)
         rew = float(row.get("reward", 0))
 
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
@@ -81,8 +77,6 @@ def _append_csv(epoch_idx, avg_r):
         if new_file:
             writer.writerow(["epoch", "avg_reward"])
         writer.writerow([epoch_idx, avg_r])
-
-# ─── Training ────────────────────────────────────────────────────────────
 
 def train():
     logger.info("🚀 PPO meta-agent training started")
@@ -138,9 +132,9 @@ def train():
             dirs_t    = torch.tensor(dirs, dtype=torch.long)
             confs_t   = torch.tensor(confs, dtype=torch.float32)
             weights_t = torch.tensor(weights, dtype=torch.float32)
-            old_logp  = None  # No KL term in offline training
+            old_logp  = None
 
-            train_metrics = agent.train_step(
+            td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
                 rewards=rewards,
                 dones=dones,
@@ -148,10 +142,6 @@ def train():
                 old_logp=old_logp,
                 weights=weights_t
             )
-
-            td_err = train_metrics.get("td_error", [])
-            kl_div = train_metrics.get("kl", None)
-            conf_loss = train_metrics.get("conf_loss", None)
 
             if hasattr(td_err, "detach"):
                 td_err_list = td_err.detach().cpu().tolist()
@@ -165,13 +155,8 @@ def train():
                 logger.debug("Sampled dirs: %s", dirs)
                 logger.debug("Sampled confs: %s", confs)
                 logger.debug("TD errors: %s", td_err_list)
-                if kl_div is not None:
-                    logger.debug("KL divergence: %.6f", kl_div)
-                if conf_loss is not None:
-                    logger.debug("Confidence loss: %.6f", conf_loss)
                 logger.debug("Entropy coef (pre-decay): %.8f", agent.entropy_coef.item())
 
-        # Decay entropy coefficient once per epoch
         with torch.no_grad():
             agent.entropy_coef.mul_(decay_rate)
 
@@ -188,7 +173,6 @@ def train():
             current_lr = param_group.get("lr", None)
             break
 
-        # Optional learning rate scheduler step
         if hasattr(agent, "scheduler") and agent.scheduler:
             agent.scheduler.step(avg_reward)
 
