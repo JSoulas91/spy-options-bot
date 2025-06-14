@@ -21,9 +21,8 @@ from config import (
 CSV_PATH, NOTIFY_EVERY = "meta/reward_history.csv", 10
 BUFFER_CAPACITY = 10_000
 ACTION_DIM = 3
+DEBUG = True  # Enable this to print debug info during training
 
-# ─── Debug Mode ──────────────────────────────────────────────────────────
-DEBUG = True  # ← Set to False for quiet mode
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -54,7 +53,7 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
-        # 🔥 Amplify profitable trades more aggressively (1.5)
+        # Amplify profitable trades, especially larger wins
         rew = np.sign(rew) * abs(rew) ** 1.5
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5))) \
@@ -81,16 +80,19 @@ def train():
 
     rows = _load_rows()
     if not rows:
-        logger.warning("No training data."); return
+        logger.warning("No training data.")
+        return
 
     state_dim = _discover_state_dim(rows)
     if state_dim <= 0:
-        logger.error("Cannot infer state_dim."); return
+        logger.error("Cannot infer state_dim.")
+        return
 
     save_meta_agent_dims(state_dim, ACTION_DIM)
     buffer = _prep_buffer(rows, state_dim)
     if len(buffer) < BATCH_SIZE:
-        logger.error("Buffer too small."); return
+        logger.error("Buffer too small.")
+        return
 
     agent = PPOAgent(state_dim=state_dim)
     beta = BUFFER_BETA_START
@@ -98,13 +100,15 @@ def train():
 
     for ep in range(1, EPOCHS + 1):
         ep_rewards = []
-        agent.entropy_coef.data *= 0.98  # gradual shift toward exploitation
+
+        # Gradual decay of entropy coefficient to shift from explore → exploit
+        agent.entropy_coef.data *= 0.98
 
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
 
             states, dirs, confs, rewards, dones = [], [], [], [], []
-            for s, a, r, _, done in batch:
+            for idx, (s, a, r, _, done) in enumerate(batch):
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
 
@@ -120,6 +124,7 @@ def train():
             if not states:
                 continue
 
+            # Normalize rewards
             rewards_np = np.array(rewards, dtype=np.float32)
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
@@ -139,6 +144,10 @@ def train():
                 old_logp=old_logp,
                 weights=weights_t
             )
+
+            # ✅ Handle dict output with 'td_errors' key
+            if isinstance(td_err, dict) and "td_errors" in td_err:
+                td_err = td_err["td_errors"]
 
             buffer.update_priorities(idxs, td_err.cpu().tolist())
             ep_rewards.extend(rewards)
