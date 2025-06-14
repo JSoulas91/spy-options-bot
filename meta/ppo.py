@@ -27,7 +27,7 @@ class DualHeadLSTM(nn.Module):
         out, _ = self.lstm(x.unsqueeze(1))  # [B,1,lstm_hid]
         h = self.dropout(out[:, -1, :])     # last timestep
         h = self.shared(h)
-        return self.dir_head(h), self.conf_head(h).squeeze(-1), self.value_head(h)
+        return self.dir_head(h), self.conf_head(h).squeeze(-1), self.value_head(h).squeeze(-1)
 
 
 class PPOAgent:
@@ -55,7 +55,7 @@ class PPOAgent:
         self.k_epochs = k_epochs
         self.conf_loss_w = conf_loss_w
         self.grad_clip_norm = grad_clip_norm
-        self.tgt_entropy = target_entropy or -1.0  # encourage more entropy initially
+        self.tgt_entropy = target_entropy or -1.0  # Encourage higher exploration initially
 
         self.load()
 
@@ -97,10 +97,10 @@ class PPOAgent:
         return torch.tensor(returns, dtype=torch.float32)
 
     def _entropy_update(self, entropy_mean):
-        # Encourage entropy above target_entropy
-        loss = -(self.entropy_coef * (entropy_mean - self.tgt_entropy).detach())
+        # Encourage entropy above target
+        ent_loss = -self.entropy_coef * (entropy_mean - self.tgt_entropy)
         self.entropy_opt.zero_grad()
-        loss.backward()
+        ent_loss.backward()
         self.entropy_opt.step()
 
     def train_step(self,
@@ -113,47 +113,49 @@ class PPOAgent:
                    old_logp: torch.Tensor,
                    weights: torch.Tensor | None = None):
 
-        # Value estimates
+        device = next(self.net.parameters()).device
+
+        states = states.to(device)
+        next_states = next_states.to(device)
+        actions_dir = actions_dir.to(device)
+        target_conf = target_conf.to(device)
+        old_logp = old_logp.to(device)
+
+        # Compute returns
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
-            last_value = next_v.squeeze(-1)
+            last_value = next_v.mean().item()
 
-        _, _, v = self.net(states)
-        values = v.squeeze(-1)
-
-        # Compute returns and advantage
-        returns = self._discounted_returns(rewards, dones, last_value.mean().item(), self.gamma)
-        returns = returns.to(values.device)
+        _, _, values = self.net(states)
+        returns = self._discounted_returns(rewards, dones, last_value, self.gamma).to(device)
         advantages = returns - values.detach()
-
-        # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # Forward pass
-        dir_logits, conf_pred, v_pred = self.net(states)
+        dir_logits, conf_pred, value_pred = self.net(states)
         dist = Categorical(logits=dir_logits)
         logp = dist.log_prob(actions_dir)
         entropy = dist.entropy().mean()
 
-        # PPO clipped loss
+        # PPO clipped objective
         ratio = torch.exp(logp - old_logp)
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         actor_loss = -torch.min(surr1, surr2).mean()
 
-        critic_loss = nn.MSELoss()(v_pred.squeeze(-1), returns)
+        critic_loss = nn.MSELoss()(value_pred, returns)
         conf_loss = nn.MSELoss()(conf_pred, target_conf)
 
         # Total loss
-        loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
+        total_loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
 
         self.opt.zero_grad()
-        loss.backward()
+        total_loss.backward()
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.opt.step()
 
         self._entropy_update(entropy.detach())
 
         # TD error for PER
-        td_error = (v_pred.squeeze(-1).detach() - returns).abs()
-        return td_error.detach()
+        td_error = (value_pred.detach() - returns).abs()
+        return td_error
