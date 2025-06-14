@@ -1,4 +1,3 @@
-# train_meta_agent.py
 import os, sys, json, csv
 from typing import List, Dict
 
@@ -19,9 +18,10 @@ from config import (
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
 )
 
-CSV_PATH, NOTIFY_EVERY   = "meta/reward_history.csv", 10
-BUFFER_CAPACITY          = 10_000
-ACTION_DIM               = 3
+CSV_PATH, NOTIFY_EVERY = "meta/reward_history.csv", 10
+BUFFER_CAPACITY = 10_000
+ACTION_DIM = 3
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -52,6 +52,8 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
+        # Amplify profitable trades, especially larger wins
+        rew = np.sign(rew) * abs(rew) ** 1.25
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5))) \
               if isinstance(act_raw, dict) else (int(act_raw), 0.5)
@@ -67,6 +69,7 @@ def _append_csv(epoch_idx, avg_r):
         if new:
             w.writerow(["epoch", "avg_reward"])
         w.writerow([epoch_idx, avg_r])
+
 
 # ─── Training ────────────────────────────────────────────────────────────
 
@@ -87,12 +90,15 @@ def train():
     if len(buffer) < BATCH_SIZE:
         logger.error("Buffer too small."); return
 
-    agent  = PPOAgent(state_dim=state_dim)
-    beta   = BUFFER_BETA_START
-    hist   = []
+    agent = PPOAgent(state_dim=state_dim)
+    beta = BUFFER_BETA_START
+    hist = []
 
     for ep in range(1, EPOCHS + 1):
         ep_rewards = []
+
+        # Gradual decay of entropy coefficient to shift from explore → exploit
+        agent.entropy_coef.data *= 0.98
 
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
@@ -110,6 +116,11 @@ def train():
 
             if not states:
                 continue
+
+            # Normalize rewards for more stable training
+            rewards_np = np.array(rewards, dtype=np.float32)
+            rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
+            rewards = rewards_np.tolist()
 
             states_t  = torch.tensor(np.array(states, dtype=np.float32))
             next_t    = states_t.clone()
@@ -131,16 +142,27 @@ def train():
             ep_rewards.extend(rewards)
 
         avg_r = float(np.mean(ep_rewards)) if ep_rewards else 0.0
+        std_r = float(np.std(ep_rewards)) if ep_rewards else 0.0
+        max_r = float(np.max(ep_rewards)) if ep_rewards else 0.0
+        min_r = float(np.min(ep_rewards)) if ep_rewards else 0.0
+
         hist.append(avg_r)
         _append_csv(ep, avg_r)
-        logger.info("Epoch %d/%d – avg_reward = %.4f", ep, EPOCHS, avg_r)
+
+        logger.info("📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f",
+                    ep, EPOCHS, avg_r, max_r, min_r, std_r)
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
+
         if ep % NOTIFY_EVERY == 0:
             send_training_report(
-                {"epoch": ep,
-                 "avg_reward": avg_r,
-                 "reward_std": float(np.std(ep_rewards)) if ep_rewards else 0},
+                {
+                    "epoch": ep,
+                    "avg_reward": avg_r,
+                    "reward_std": std_r,
+                    "reward_max": max_r,
+                    "reward_min": min_r
+                },
                 hist
             )
 
