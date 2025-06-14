@@ -22,6 +22,8 @@ CSV_PATH, NOTIFY_EVERY = "meta/reward_history.csv", 10
 BUFFER_CAPACITY = 10_000
 ACTION_DIM = 3
 
+# ─── Debug Mode ──────────────────────────────────────────────────────────
+DEBUG = True  # ← Set to False for quiet mode
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -52,8 +54,8 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
-        # Amplify profitable trades, especially larger wins
-        rew = np.sign(rew) * abs(rew) ** 1.25
+        # 🔥 Amplify profitable trades more aggressively (1.5)
+        rew = np.sign(rew) * abs(rew) ** 1.5
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5))) \
               if isinstance(act_raw, dict) else (int(act_raw), 0.5)
@@ -96,28 +98,28 @@ def train():
 
     for ep in range(1, EPOCHS + 1):
         ep_rewards = []
-
-        # Gradual decay of entropy coefficient to shift from explore → exploit
-        agent.entropy_coef.data *= 0.98
+        agent.entropy_coef.data *= 0.98  # gradual shift toward exploitation
 
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
 
             states, dirs, confs, rewards, dones = [], [], [], [], []
-            for idx, (s, a, r, _, done) in enumerate(batch):
+            for s, a, r, _, done in batch:
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
 
                 if isinstance(a, (list, tuple)):
-                    dirs.append(int(a[0])); confs.append(float(a[1]))
+                    dirs.append(int(a[0]))
+                    confs.append(float(a[1]))
                 else:
-                    dirs.append(int(a));    confs.append(0.5)
-                rewards.append(float(r));  dones.append(int(bool(done)))
+                    dirs.append(int(a))
+                    confs.append(0.5)
+                rewards.append(float(r))
+                dones.append(int(bool(done)))
 
             if not states:
                 continue
 
-            # Normalize rewards for more stable training
             rewards_np = np.array(rewards, dtype=np.float32)
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
@@ -140,6 +142,11 @@ def train():
 
             buffer.update_priorities(idxs, td_err.cpu().tolist())
             ep_rewards.extend(rewards)
+
+            if DEBUG:
+                logger.debug("Sampled dirs: %s", dirs)
+                logger.debug("Sampled confs: %s", confs)
+                logger.debug("Sampled TD errors: %s", td_err.cpu().tolist())
 
         avg_r = float(np.mean(ep_rewards)) if ep_rewards else 0.0
         std_r = float(np.std(ep_rewards)) if ep_rewards else 0.0
