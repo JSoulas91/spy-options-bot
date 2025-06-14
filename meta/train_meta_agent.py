@@ -60,14 +60,8 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
 
+        # ✅ Use reward directly (already shaped in logging)
         rew = float(row.get("reward", 0))
-        # 🔥 NEW REWARD SHAPING: Promote big profits but still respect small wins
-        if rew > 0:
-            rew = np.log1p(rew)  # log(1 + reward)
-        elif rew < 0:
-            rew = -np.log1p(abs(rew))  # penalize losses more aggressively
-        else:
-            rew = 0.0
 
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         if isinstance(act_raw, dict):
