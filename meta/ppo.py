@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
+from typing import Optional, List, Union
 
 from meta.meta_agent_info import get_meta_agent_dims
 from config import META_MODEL_PATH
@@ -14,32 +15,49 @@ class DualHeadLSTM(nn.Module):
         super().__init__()
         self.lstm = nn.LSTM(state_dim, lstm_hid, batch_first=True)
         self.dropout = nn.Dropout(0.1)
-        self.shared = nn.Sequential(nn.Linear(lstm_hid, hidden), nn.ReLU())
-
-        self.dir_head = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(),
-                                      nn.Linear(hidden, 3))  # logits for 3 actions
-        self.conf_head = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(),
-                                       nn.Linear(hidden, 1), nn.Sigmoid())
-        self.value_head = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(),
-                                        nn.Linear(hidden, 1))
+        self.shared = nn.Sequential(
+            nn.Linear(lstm_hid, hidden),
+            nn.ReLU()
+        )
+        self.dir_head = nn.Sequential(
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 3)  # logits for 3 actions
+        )
+        self.conf_head = nn.Sequential(
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 1),
+            nn.Sigmoid()
+        )
+        self.value_head = nn.Sequential(
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 1)
+        )
 
     def forward(self, x: torch.Tensor):
-        out, _ = self.lstm(x.unsqueeze(1))  # [B,1,lstm_hid]
-        h = self.dropout(out[:, -1, :])     # last timestep
-        h = self.shared(h)
-        return self.dir_head(h), self.conf_head(h).squeeze(-1), self.value_head(h).squeeze(-1)
+        # x: [B, state_dim]
+        # Add sequence dim for LSTM: [B, seq_len=1, state_dim]
+        out, _ = self.lstm(x.unsqueeze(1))  # output shape [B, 1, lstm_hid]
+        h = self.dropout(out[:, -1, :])  # Take last timestep [B, lstm_hid]
+        h = self.shared(h)               # [B, hidden]
+        dir_logits = self.dir_head(h)   # [B, 3]
+        conf = self.conf_head(h).squeeze(-1)  # [B]
+        value = self.value_head(h).squeeze(-1)  # [B]
+        return dir_logits, conf, value
 
 
 class PPOAgent:
     def __init__(self,
-                 state_dim: int | None = None,
+                 state_dim: Optional[int] = None,
                  lr: float = 3e-4,
                  gamma: float = 0.99,
                  eps_clip: float = 0.2,
                  k_epochs: int = 4,
                  conf_loss_w: float = 0.20,
                  entropy_coef_start: float = 1e-2,
-                 target_entropy: float | None = None,
+                 target_entropy: Optional[float] = None,
                  grad_clip_norm: float = 1.0):
         if state_dim is None:
             state_dim, _ = get_meta_agent_dims()
@@ -47,6 +65,7 @@ class PPOAgent:
         self.net = DualHeadLSTM(state_dim)
         self.opt = optim.Adam(self.net.parameters(), lr=lr)
 
+        # Entropy coefficient as a learnable parameter
         self.entropy_coef = torch.tensor(entropy_coef_start, requires_grad=True)
         self.entropy_opt = optim.Adam([self.entropy_coef], lr=1e-3)
 
@@ -55,7 +74,7 @@ class PPOAgent:
         self.k_epochs = k_epochs
         self.conf_loss_w = conf_loss_w
         self.grad_clip_norm = grad_clip_norm
-        self.tgt_entropy = target_entropy or -1.0  # Encourage higher exploration initially
+        self.tgt_entropy = target_entropy if target_entropy is not None else -1.0  # Encourage exploration
 
         self.load()
 
@@ -66,7 +85,8 @@ class PPOAgent:
         ckpt = torch.load(path, map_location="cpu")
         self.net.load_state_dict(ckpt["net"])
         self.opt.load_state_dict(ckpt["opt"])
-        self.entropy_coef.data.copy_(torch.tensor(ckpt.get("ent_coef", 1e-2)))
+        ent_coef = ckpt.get("ent_coef", 1e-2)
+        self.entropy_coef.data.copy_(torch.tensor(ent_coef))
         self.entropy_opt.load_state_dict(ckpt["ent_opt"])
         logger.info("📥 PPO model loaded.")
 
@@ -82,13 +102,18 @@ class PPOAgent:
 
     @torch.no_grad()
     def act(self, state: torch.Tensor):
+        # state shape: [B, state_dim] or [state_dim], ensure batch dim
+        if state.dim() == 1:
+            state = state.unsqueeze(0)
         dir_logits, conf, _ = self.net(state)
         dist = Categorical(logits=dir_logits)
         action = dist.sample()
-        return action.item(), conf.item(), dist.log_prob(action), dist.entropy()
+        log_prob = dist.log_prob(action)
+        entropy = dist.entropy()
+        return action.item(), conf.item(), log_prob, entropy
 
     @staticmethod
-    def _discounted_returns(rewards, dones, last_value, gamma):
+    def _discounted_returns(rewards: List[float], dones: List[int], last_value: float, gamma: float):
         returns = []
         R = last_value
         for r, d in zip(reversed(rewards), reversed(dones)):
@@ -96,22 +121,25 @@ class PPOAgent:
             returns.insert(0, R)
         return torch.tensor(returns, dtype=torch.float32)
 
-    def _entropy_update(self, entropy_mean):
-        # Encourage entropy above target
+    def _entropy_update(self, entropy_mean: torch.Tensor):
+        # Entropy coefficient update to encourage entropy close to target
         ent_loss = -self.entropy_coef * (entropy_mean - self.tgt_entropy)
         self.entropy_opt.zero_grad()
         ent_loss.backward()
         self.entropy_opt.step()
+        # Clamp entropy_coef to positive range to avoid negative entropy weight
+        with torch.no_grad():
+            self.entropy_coef.clamp_(0.0, 1.0)
 
     def train_step(self,
                    states: torch.Tensor,
                    actions_dir: torch.Tensor,
                    target_conf: torch.Tensor,
-                   rewards: list,
-                   dones: list,
+                   rewards: List[float],
+                   dones: List[int],
                    next_states: torch.Tensor,
-                   old_logp: torch.Tensor,
-                   weights: torch.Tensor | None = None):
+                   old_logp: Optional[torch.Tensor],
+                   weights: Optional[torch.Tensor] = None) -> torch.Tensor:
 
         device = next(self.net.parameters()).device
 
@@ -119,9 +147,13 @@ class PPOAgent:
         next_states = next_states.to(device)
         actions_dir = actions_dir.to(device)
         target_conf = target_conf.to(device)
-        old_logp = old_logp.to(device)
+        if old_logp is not None:
+            old_logp = old_logp.to(device)
+        else:
+            # When old_logp is None (offline training), use zeros
+            old_logp = torch.zeros_like(actions_dir, dtype=torch.float32, device=device)
 
-        # Compute returns
+        # Compute returns and advantages
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
             last_value = next_v.mean().item()
@@ -143,10 +175,11 @@ class PPOAgent:
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         actor_loss = -torch.min(surr1, surr2).mean()
 
+        # Weighted critic loss
         critic_loss = nn.MSELoss()(value_pred, returns)
         conf_loss = nn.MSELoss()(conf_pred, target_conf)
 
-        # Total loss
+        # Total loss including confidence and entropy losses
         total_loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
 
         self.opt.zero_grad()
@@ -156,6 +189,6 @@ class PPOAgent:
 
         self._entropy_update(entropy.detach())
 
-        # TD error for PER
+        # TD error for Prioritized Experience Replay (PER)
         td_error = (value_pred.detach() - returns).abs()
         return td_error
