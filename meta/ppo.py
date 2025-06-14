@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
-from typing import Optional, List, Union
+from typing import Optional, List
 
 from meta.meta_agent_info import get_meta_agent_dims
 from config import META_MODEL_PATH
@@ -63,18 +63,17 @@ class PPOAgent:
             state_dim, _ = get_meta_agent_dims()
 
         self.net = DualHeadLSTM(state_dim)
-        self.optimizer = optim.Adam(self.net.parameters(), lr=lr)  # <-- renamed from opt to optimizer
+        self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
 
-        # Entropy coefficient as a learnable parameter
-        self.entropy_coef = torch.tensor(entropy_coef_start, requires_grad=True)
-        self.entropy_opt = optim.Adam([self.entropy_coef], lr=1e-3)
+        # Entropy coefficient as a simple float tensor, no gradients or optimizer
+        self.entropy_coef = torch.tensor(entropy_coef_start)
 
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
         self.conf_loss_w = conf_loss_w
         self.grad_clip_norm = grad_clip_norm
-        self.tgt_entropy = target_entropy if target_entropy is not None else -1.0  # Encourage exploration
+        self.tgt_entropy = target_entropy if target_entropy is not None else -1.0
 
         self.load()
 
@@ -86,8 +85,7 @@ class PPOAgent:
         self.net.load_state_dict(ckpt["net"])
         self.optimizer.load_state_dict(ckpt["opt"])
         ent_coef = ckpt.get("ent_coef", 1e-2)
-        self.entropy_coef.data.copy_(torch.tensor(ent_coef))
-        self.entropy_opt.load_state_dict(ckpt["ent_opt"])
+        self.entropy_coef = torch.tensor(ent_coef)
         logger.info("📥 PPO model loaded.")
 
     def save(self):
@@ -96,7 +94,6 @@ class PPOAgent:
             "net": self.net.state_dict(),
             "opt": self.optimizer.state_dict(),
             "ent_coef": self.entropy_coef.item(),
-            "ent_opt": self.entropy_opt.state_dict(),
         }, META_MODEL_PATH)
         logger.info("💾 PPO model saved → %s", META_MODEL_PATH)
 
@@ -121,16 +118,6 @@ class PPOAgent:
             returns.insert(0, R)
         return torch.tensor(returns, dtype=torch.float32)
 
-    def _entropy_update(self, entropy_mean: torch.Tensor):
-        # Entropy coefficient update to encourage entropy close to target
-        ent_loss = -self.entropy_coef * (entropy_mean - self.tgt_entropy)
-        self.entropy_opt.zero_grad()
-        ent_loss.backward()
-        self.entropy_opt.step()
-        # Clamp entropy_coef to positive range to avoid negative entropy weight
-        with torch.no_grad():
-            self.entropy_coef.clamp_(0.0, 1.0)
-
     def train_step(self,
                    states: torch.Tensor,
                    actions_dir: torch.Tensor,
@@ -150,10 +137,8 @@ class PPOAgent:
         if old_logp is not None:
             old_logp = old_logp.to(device)
         else:
-            # When old_logp is None (offline training), use zeros
             old_logp = torch.zeros_like(actions_dir, dtype=torch.float32, device=device)
 
-        # Compute returns and advantages
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
             last_value = next_v.mean().item()
@@ -163,23 +148,19 @@ class PPOAgent:
         advantages = returns - values.detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # Forward pass
         dir_logits, conf_pred, value_pred = self.net(states)
         dist = Categorical(logits=dir_logits)
         logp = dist.log_prob(actions_dir)
         entropy = dist.entropy().mean()
 
-        # PPO clipped objective
         ratio = torch.exp(logp - old_logp)
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         actor_loss = -torch.min(surr1, surr2).mean()
 
-        # Weighted critic loss
         critic_loss = nn.MSELoss()(value_pred, returns)
         conf_loss = nn.MSELoss()(conf_pred, target_conf)
 
-        # Total loss including confidence and entropy losses
         total_loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
 
         self.optimizer.zero_grad()
@@ -187,8 +168,10 @@ class PPOAgent:
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
 
-        self._entropy_update(entropy.detach())
+        # Manual entropy coefficient decay - multiply by decay factor (e.g. 0.999) after each step
+        with torch.no_grad():
+            self.entropy_coef *= 0.999
+            self.entropy_coef.clamp_(min=1e-4)
 
-        # TD error for Prioritized Experience Replay (PER)
         td_error = (value_pred.detach() - returns).abs()
         return td_error
