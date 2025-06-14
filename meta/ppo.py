@@ -59,7 +59,7 @@ class PPOAgent:
         self.grad_clip_norm  = grad_clip_norm
         self.tgt_entropy     = target_entropy or -3.0   # 3‑way categorical
 
-        self.load()  # Load from default path unless overridden later
+        self.load()
 
     # ───────── persistence ─────────────────────────────────
     def load(self, path: str = META_MODEL_PATH):
@@ -124,32 +124,41 @@ class PPOAgent:
 
         returns = self._discounted_returns(rewards, dones,
                                            v_next.squeeze(-1), self.gamma)
-        adv = returns - v.squeeze(-1).detach()
+        advantages = returns - v.squeeze(-1).detach()
 
         dir_logits, conf_pred, _ = self.net(states)
         dist  = Categorical(logits=dir_logits)
         logp  = dist.log_prob(actions_dir)
 
         ratio = torch.exp(logp - old_logp)
-        surr1, surr2 = ratio * adv, torch.clamp(ratio,
-                                               1 - self.eps_clip,
-                                               1 + self.eps_clip) * adv
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
 
         actor_loss  = -torch.min(surr1, surr2).mean()
         critic_loss = nn.MSELoss()(v.squeeze(-1), returns)
         conf_loss   = nn.MSELoss()(conf_pred, target_conf) * self.conf_loss_w
         entropy     = dist.entropy().mean()
+        kl_div      = (old_logp - logp).mean()
 
-        loss = actor_loss + 0.5 * critic_loss + conf_loss - self.entropy_coef * entropy
+        total_loss = actor_loss + 0.5 * critic_loss + conf_loss - self.entropy_coef * entropy
         if weights is not None:
-            loss *= weights.mean()
+            total_loss *= weights.mean()
 
         self.opt.zero_grad()
-        loss.backward()
+        total_loss.backward()
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.opt.step()
 
         self._entropy_update(entropy)
 
-        # TD‑error for PER
-        return (returns - v.detach().squeeze(-1)).cpu()
+        td_errors = (returns - v.detach().squeeze(-1)).cpu()
+
+        return {
+            "loss": total_loss.item(),
+            "policy_loss": actor_loss.item(),
+            "value_loss": critic_loss.item(),
+            "conf_loss": conf_loss.item(),
+            "entropy": entropy.item(),
+            "kl": kl_div.item(),
+            "td_error": td_errors
+        }
