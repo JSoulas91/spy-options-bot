@@ -103,22 +103,18 @@ def train():
         return
 
     agent = PPOAgent(state_dim=state_dim)
-
-    # Initialize entropy coefficient with start value
     agent.entropy_coef.data.fill_(ENTROPY_COEF_START)
 
-    # Calculate decay rate per step so entropy decays over ENTROPY_DECAY_STEPS steps
-    decay_rate = (ENTROPY_COEF_END / ENTROPY_COEF_START) ** (1 / ENTROPY_DECAY_STEPS)
-    logger.info("Entropy decay rate per batch: %.10f", decay_rate)
+    decay_rate = (ENTROPY_COEF_END / ENTROPY_COEF_START) ** (1 / EPOCHS)
+    logger.info("Entropy decay rate per epoch: %.10f", decay_rate)
 
     beta = BUFFER_BETA_START
     history_rewards = []
 
-    step_count = 0
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
-
         num_batches = max(1, len(buffer) // BATCH_SIZE)
+
         for _ in range(num_batches):
             batch = buffer.sample(BATCH_SIZE, beta)
             states = batch['states']
@@ -140,7 +136,7 @@ def train():
             dirs_t    = torch.tensor(dirs, dtype=torch.long)
             confs_t   = torch.tensor(confs, dtype=torch.float32)
             weights_t = torch.tensor(weights, dtype=torch.float32)
-            old_logp  = None  # No KL term during offline training
+            old_logp  = None  # No KL term in offline training
 
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
@@ -162,17 +158,15 @@ def train():
             buffer.update_priorities(indices, td_err_list)
             epoch_rewards.extend(rewards)
 
-            # Decay entropy coef correctly per step
-            with torch.no_grad():
-                agent.entropy_coef.mul_(decay_rate)
-
-            step_count += 1
-
             if DEBUG:
                 logger.debug("Sampled dirs: %s", dirs)
                 logger.debug("Sampled confs: %s", confs)
                 logger.debug("TD errors: %s", td_err_list)
-                logger.debug("Entropy coef: %.8f", agent.entropy_coef.item())
+                logger.debug("Entropy coef (pre-decay): %.8f", agent.entropy_coef.item())
+
+        # Decay entropy coefficient once per epoch
+        with torch.no_grad():
+            agent.entropy_coef.mul_(decay_rate)
 
         avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
         std_reward = float(np.std(epoch_rewards)) if epoch_rewards else 0.0
@@ -182,7 +176,6 @@ def train():
         history_rewards.append(avg_reward)
         _append_csv(epoch, avg_reward)
 
-        # Get current learning rate
         current_lr = None
         for param_group in agent.optimizer.param_groups:
             current_lr = param_group.get("lr", None)
