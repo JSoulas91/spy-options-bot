@@ -18,10 +18,13 @@ from config import (
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
 )
 
-CSV_PATH, NOTIFY_EVERY = "meta/reward_history.csv", 10
+# ─── Config ───────────────────────────────────────────────────────────────
+CSV_PATH = "meta/reward_history.csv"
+NOTIFY_EVERY = 10
 BUFFER_CAPACITY = 10_000
 ACTION_DIM = 3
-DEBUG = True  # Enable this to print debug info during training
+REWARD_EXPONENT = 1.5
+DEBUG = True
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
@@ -53,8 +56,8 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
-        # Amplify profitable trades, especially larger wins
-        rew = np.sign(rew) * abs(rew) ** 1.5
+        # ✅ Reward amplification for profitable trades
+        rew = np.sign(rew) * abs(rew) ** REWARD_EXPONENT
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5))) \
               if isinstance(act_raw, dict) else (int(act_raw), 0.5)
@@ -80,19 +83,16 @@ def train():
 
     rows = _load_rows()
     if not rows:
-        logger.warning("No training data.")
-        return
+        logger.warning("No training data."); return
 
     state_dim = _discover_state_dim(rows)
     if state_dim <= 0:
-        logger.error("Cannot infer state_dim.")
-        return
+        logger.error("Cannot infer state_dim."); return
 
     save_meta_agent_dims(state_dim, ACTION_DIM)
     buffer = _prep_buffer(rows, state_dim)
     if len(buffer) < BATCH_SIZE:
-        logger.error("Buffer too small.")
-        return
+        logger.error("Buffer too small."); return
 
     agent = PPOAgent(state_dim=state_dim)
     beta = BUFFER_BETA_START
@@ -101,7 +101,7 @@ def train():
     for ep in range(1, EPOCHS + 1):
         ep_rewards = []
 
-        # Gradual decay of entropy coefficient to shift from explore → exploit
+        # Decay entropy coefficient
         agent.entropy_coef.data *= 0.98
 
         for _ in range(max(1, len(buffer) // BATCH_SIZE)):
@@ -113,18 +113,14 @@ def train():
                 states.append(s_vec)
 
                 if isinstance(a, (list, tuple)):
-                    dirs.append(int(a[0]))
-                    confs.append(float(a[1]))
+                    dirs.append(int(a[0])); confs.append(float(a[1]))
                 else:
-                    dirs.append(int(a))
-                    confs.append(0.5)
-                rewards.append(float(r))
-                dones.append(int(bool(done)))
+                    dirs.append(int(a));    confs.append(0.5)
+                rewards.append(float(r));  dones.append(int(bool(done)))
 
             if not states:
                 continue
 
-            # Normalize rewards
             rewards_np = np.array(rewards, dtype=np.float32)
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
@@ -145,17 +141,19 @@ def train():
                 weights=weights_t
             )
 
-            # ✅ Handle dict output with 'td_errors' key
+            # ✅ Handle dict output for td_err
             if isinstance(td_err, dict) and "td_errors" in td_err:
                 td_err = td_err["td_errors"]
 
-            buffer.update_priorities(idxs, td_err.cpu().tolist())
+            td_err_cpu = td_err.detach().cpu().tolist()
+            buffer.update_priorities(idxs, td_err_cpu)
+
             ep_rewards.extend(rewards)
 
             if DEBUG:
                 logger.debug("Sampled dirs: %s", dirs)
                 logger.debug("Sampled confs: %s", confs)
-                logger.debug("Sampled TD errors: %s", td_err.cpu().tolist())
+                logger.debug("Sampled TD errors: %s", td_err_cpu)
 
         avg_r = float(np.mean(ep_rewards)) if ep_rewards else 0.0
         std_r = float(np.std(ep_rewards)) if ep_rewards else 0.0
