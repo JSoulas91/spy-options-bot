@@ -56,7 +56,6 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
-        # ✅ Reward amplification for profitable trades
         rew = np.sign(rew) * abs(rew) ** REWARD_EXPONENT
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5))) \
@@ -141,7 +140,7 @@ def train():
                 weights=weights_t
             )
 
-            # ✅ Handle dict output for td_err
+            # ✅ Safely extract td_errors before calling .detach()
             if isinstance(td_err, dict) and "td_errors" in td_err:
                 td_err = td_err["td_errors"]
 
