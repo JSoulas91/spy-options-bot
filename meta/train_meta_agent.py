@@ -162,8 +162,10 @@ def train():
             buffer.update_priorities(indices, td_err_list)
             epoch_rewards.extend(rewards)
 
-            # Decay entropy per batch
-            agent.entropy_coef.data *= decay_rate
+            # ✅ Corrected entropy decay step
+            with torch.no_grad():
+                agent.entropy_coef.mul_(decay_rate)
+
             step_count += 1
 
             if DEBUG:
