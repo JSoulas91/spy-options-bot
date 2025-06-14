@@ -9,13 +9,13 @@ import torch
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from meta.ppo import PPOAgent
-from meta.meta_agent_info import save_meta_agent_dims
-from meta.prioritized_buffer import PrioritizedReplayBuffer
-from utils.logger import bot_logger as logger
+from meta.ppo                   import PPOAgent
+from meta.meta_agent_info       import save_meta_agent_dims
+from meta.prioritized_buffer    import PrioritizedReplayBuffer
+from utils.logger               import bot_logger as logger
 from utils.meta_telegram_reporter import send_training_report, send_meta_agent_report
-from utils.telegram_utils import send_telegram_message
-from monitor.health_check import update_status
+from utils.telegram_utils       import send_telegram_message
+from monitor.health_check       import update_status
 from config import (
     META_LOG_PATH, EPOCHS, BATCH_SIZE,
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
@@ -79,6 +79,19 @@ def _append_csv(epoch_idx, avg_r):
             writer.writerow(["epoch", "avg_reward"])
         writer.writerow([epoch_idx, avg_r])
 
+def _extract_td_error(td_err_raw):
+    if isinstance(td_err_raw, torch.Tensor):
+        return td_err_raw.detach().cpu().tolist()
+    elif isinstance(td_err_raw, list):
+        return td_err_raw
+    elif isinstance(td_err_raw, dict):
+        # Flatten any nested dict to first tensor/list found
+        for v in td_err_raw.values():
+            result = _extract_td_error(v)
+            if result is not None:
+                return result
+    return None
+
 # ─── Training ────────────────────────────────────────────────────────────
 
 def train():
@@ -107,7 +120,6 @@ def train():
 
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
-
         agent.entropy_coef.data *= 0.98
         num_batches = max(1, len(buffer) // BATCH_SIZE)
 
@@ -134,14 +146,14 @@ def train():
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
 
-            states_t  = torch.tensor(np.array(states), dtype=torch.float32)
+            states_t  = torch.tensor(np.array(states, dtype=np.float32))
             next_t    = states_t.clone()
-            dirs_t    = torch.tensor(np.array(dirs), dtype=torch.long)
-            confs_t   = torch.tensor(np.array(confs), dtype=torch.float32)
-            weights_t = torch.tensor(np.array(weights), dtype=torch.float32)
-            old_logp  = torch.zeros(len(states_t), dtype=torch.float32)
+            dirs_t    = torch.tensor(np.array(dirs, dtype=torch.int64))
+            confs_t   = torch.tensor(np.array(confs, dtype=np.float32))
+            weights_t = torch.tensor(np.array(weights, dtype=np.float32))
+            old_logp  = torch.zeros(len(states_t))
 
-            td_err = agent.train_step(
+            td_err_raw = agent.train_step(
                 states_t, dirs_t, confs_t,
                 rewards=rewards,
                 dones=dones,
@@ -150,17 +162,9 @@ def train():
                 weights=weights_t
             )
 
-            # Handle TD error extraction
-            if isinstance(td_err, dict) and "td_error" in td_err:
-                td_err = td_err["td_error"]
-
-            # Convert safely to list
-            if isinstance(td_err, torch.Tensor):
-                td_err_list = td_err.detach().cpu().tolist()
-            elif isinstance(td_err, list):
-                td_err_list = td_err
-            else:
-                logger.error("Unexpected td_err format: %s", type(td_err))
+            td_err_list = _extract_td_error(td_err_raw)
+            if td_err_list is None:
+                logger.error("Unexpected td_err format: %s", type(td_err_raw))
                 continue
 
             buffer.update_priorities(idxs, td_err_list)
