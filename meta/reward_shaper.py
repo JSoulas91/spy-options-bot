@@ -1,6 +1,6 @@
 """
 Reward‑shaping utilities for the meta‑agent.
-Encourages exploration and big, high-confidence trades.
+Encourages exploration, clean execution, and high-confidence trades.
 """
 
 from __future__ import annotations
@@ -27,13 +27,14 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     pnl         = float(trade.get("pnl", 0))
     confidence  = float(trade.get("confidence", 0))
     trade_type  = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
+    setup_quality = float(trade.get("setup_quality", 0.0))  # Optional input from classifier
     reward      = pnl
 
     # 💡 Confidence shaping (scaled by pnl magnitude)
     if pnl > 0:
-        reward += confidence * min(pnl / 5, 3.0)  # Stronger boost for high-conf profitable trades
+        reward += confidence * min(pnl / 5, 3.0)
     elif pnl < 0:
-        reward -= confidence * min(abs(pnl) / 5, 2.0)  # Penalize overconfident losses harder
+        reward -= confidence * min(abs(pnl) / 5, 2.0)
 
     # ⏰ Time decay penalty for late day‑trades
     if trade_type == 0:
@@ -44,15 +45,15 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         except Exception:
             pass
 
-    # 📈 Reward scaling by PnL magnitude (incentivize big trades more)
+    # 📈 Balanced reward scaling by PnL magnitude
     if abs(pnl) < 5:
-        reward *= 0.2
+        reward *= 0.7 if confidence > 0.6 else 0.3
     elif abs(pnl) < 10:
-        reward *= 0.6
+        reward *= 0.9
     elif abs(pnl) < 25:
-        reward *= 1.3
+        reward *= 1.2
     else:
-        reward *= 2.0
+        reward *= 1.6
 
     # 📉 Market risk via VIX
     vix = float(market_data.get("vix", 15))
@@ -75,9 +76,13 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     if exit_reason == "Meta-agent signal" and pnl > 10:
         reward += 0.4
 
+    # 🎯 Optional setup quality bonus
+    if setup_quality > 0.5:
+        reward += setup_quality * 0.5
+
     # 🎲 Persistent exploration encouragement
-    if random.random() < 0.15:  # increased from 10% to 15%
-        reward += 0.2           # stronger nudge toward novelty
+    if random.random() < 0.15:
+        reward += 0.2
 
     return reward
 
@@ -105,12 +110,12 @@ def compute_shaped_reward(log_entry: dict) -> float:
 
     reward_window.append(raw)
     if len(reward_window) < reward_window.maxlen:
-        return float(np.clip(raw, -3.0, 3.0))  # allow broader signal early
+        return float(np.clip(raw, -3.0, 3.0))
 
     mean = np.mean(reward_window)
     std  = np.std(reward_window) + 1e-6
     sharpe_scaled = (raw - mean) / std
-    return float(np.clip(sharpe_scaled, -3.0, 3.0))  # richer feedback for bigger trades
+    return float(np.clip(sharpe_scaled, -3.0, 3.0))
 
 # ─────────────────────────────────────────────────────────
 def _append_csv(timestamp: str, shaped: float, raw: float):
