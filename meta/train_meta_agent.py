@@ -9,13 +9,13 @@ import torch
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from meta.ppo                   import PPOAgent
-from meta.meta_agent_info       import save_meta_agent_dims
-from meta.prioritized_buffer    import PrioritizedReplayBuffer
-from utils.logger               import bot_logger as logger
+from meta.ppo import PPOAgent
+from meta.meta_agent_info import save_meta_agent_dims
+from meta.prioritized_buffer import PrioritizedReplayBuffer
+from utils.logger import bot_logger as logger
 from utils.meta_telegram_reporter import send_training_report, send_meta_agent_report
-from utils.telegram_utils       import send_telegram_message
-from monitor.health_check       import update_status
+from utils.telegram_utils import send_telegram_message
+from monitor.health_check import update_status
 from config import (
     META_LOG_PATH, EPOCHS, BATCH_SIZE,
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
@@ -60,7 +60,6 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
-        # Apply reward shaping with exponent
         rew = np.sign(rew) * (abs(rew) ** REWARD_EXPONENT)
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         if isinstance(act_raw, dict):
@@ -109,10 +108,9 @@ def train():
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
 
-        # Decay entropy coefficient gently each epoch
         agent.entropy_coef.data *= 0.98
-
         num_batches = max(1, len(buffer) // BATCH_SIZE)
+
         for _ in range(num_batches):
             batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
 
@@ -120,31 +118,28 @@ def train():
             for s, a, r, _, done in batch:
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
-
                 if isinstance(a, (list, tuple)):
                     dirs.append(int(a[0]))
                     confs.append(float(a[1]))
                 else:
                     dirs.append(int(a))
                     confs.append(0.5)
-
                 rewards.append(float(r))
                 dones.append(int(bool(done)))
 
             if not states:
                 continue
 
-            # Normalize rewards before training step
             rewards_np = np.array(rewards, dtype=np.float32)
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
 
-            states_t  = torch.tensor(np.array(states, dtype=np.float32))
+            states_t  = torch.tensor(np.array(states), dtype=torch.float32)
             next_t    = states_t.clone()
-            dirs_t    = torch.tensor(np.array(dirs, dtype=torch.int64))
-            confs_t   = torch.tensor(np.array(confs, dtype=np.float32))
-            weights_t = torch.tensor(np.array(weights, dtype=np.float32))
-            old_logp  = torch.zeros(len(states_t))
+            dirs_t    = torch.tensor(np.array(dirs), dtype=torch.long)
+            confs_t   = torch.tensor(np.array(confs), dtype=torch.float32)
+            weights_t = torch.tensor(np.array(weights), dtype=torch.float32)
+            old_logp  = torch.zeros(len(states_t), dtype=torch.float32)
 
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
@@ -155,13 +150,11 @@ def train():
                 weights=weights_t
             )
 
-            # Extract TD errors correctly for priority update
             if isinstance(td_err, dict) and "td_error" in td_err:
                 td_err = td_err["td_error"]
 
             td_err_list = td_err.detach().cpu().tolist()
             buffer.update_priorities(idxs, td_err_list)
-
             epoch_rewards.extend(rewards)
 
             if DEBUG:
