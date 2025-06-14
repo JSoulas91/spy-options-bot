@@ -18,15 +18,16 @@ class DualHeadLSTM(nn.Module):
         self.shared   = nn.Sequential(nn.Linear(lstm_hid, hidden), nn.ReLU())
 
         self.dir_head  = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(),
-                                       nn.Linear(hidden, 3))          # logits
+                                       nn.Linear(hidden, 3))          # logits for 3 actions
         self.conf_head = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(),
                                        nn.Linear(hidden, 1), nn.Sigmoid())
         self.value_head = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(),
                                         nn.Linear(hidden, 1))
 
     def forward(self, x: torch.Tensor):
-        out, _ = self.lstm(x.unsqueeze(1))          # [B,1,feat]
-        h      = self.dropout(out[:, -1, :])
+        # x: [batch, state_dim]
+        out, _ = self.lstm(x.unsqueeze(1))          # [B,1,lstm_hid]
+        h      = self.dropout(out[:, -1, :])         # take last time step
         h      = self.shared(h)
         return self.dir_head(h), self.conf_head(h).squeeze(-1), self.value_head(h)
 
@@ -57,7 +58,7 @@ class PPOAgent:
         self.k_epochs        = k_epochs
         self.conf_loss_w     = conf_loss_w
         self.grad_clip_norm  = grad_clip_norm
-        self.tgt_entropy     = target_entropy or -3.0   # 3‑way categorical
+        self.tgt_entropy     = target_entropy or -3.0   # 3-way categorical
 
         self.load()
 
@@ -99,6 +100,7 @@ class PPOAgent:
     def _discounted_returns(rewards, dones, last_v, gamma):
         r = torch.tensor(rewards, dtype=torch.float32)
         d = torch.tensor(dones,   dtype=torch.float32)
+        # Simple 1-step bootstrap return
         return r + gamma * last_v * (1 - d)
 
     def _entropy_update(self, entropy_mean):
@@ -142,7 +144,9 @@ class PPOAgent:
 
         total_loss = actor_loss + 0.5 * critic_loss + conf_loss - self.entropy_coef * entropy
         if weights is not None:
-            total_loss *= weights.mean()
+            total_loss = (total_loss * weights).mean()
+        else:
+            total_loss = total_loss.mean()
 
         self.opt.zero_grad()
         total_loss.backward()
@@ -160,5 +164,5 @@ class PPOAgent:
             "conf_loss": conf_loss.item(),
             "entropy": entropy.item(),
             "kl": kl_div.item(),
-            "td_error": td_errors
+            "td_errors": td_errors
         }
