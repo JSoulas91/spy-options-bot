@@ -1,11 +1,10 @@
-# meta/reward_shaper.py
 """
 Reward‑shaping utilities for the meta‑agent.
-Keeps a rolling Sharpe‑style normalization window and logs reward trends.
+Encourages exploration and big, high-confidence trades.
 """
 
 from __future__ import annotations
-import csv, os, datetime
+import csv, os, datetime, random
 from collections import deque
 from pathlib     import Path
 
@@ -23,17 +22,18 @@ HIST_CSV.parent.mkdir(parents=True, exist_ok=True)
 def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = None) -> float:
     """
     Build a shaped reward from raw PnL plus contextual signals.
+    Encourages exploration and high-quality trades.
     """
     pnl         = float(trade.get("pnl", 0))
     confidence  = float(trade.get("confidence", 0))
     trade_type  = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
     reward      = pnl
 
-    # 💡 Confidence shaping
+    # 💡 Confidence shaping (scaled by pnl magnitude)
     if pnl > 0:
-        reward += 0.5 if confidence >= 0.7 else 0.2
+        reward += confidence * min(pnl / 10, 2.0)
     elif pnl < 0:
-        reward -= 0.5 if confidence >= 0.7 else 0.2
+        reward -= confidence * 0.5  # penalize overconfident losses
 
     # ⏰ Time decay penalty for late day‑trades
     if trade_type == 0:
@@ -44,9 +44,15 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         except Exception:
             pass
 
-    # ⚖️ Low absolute PnL dampening
+    # 📈 Reward scaling by PnL magnitude (incentivize big trades)
     if abs(pnl) < 5:
         reward *= 0.25
+    elif abs(pnl) < 10:
+        reward *= 0.75
+    elif abs(pnl) < 25:
+        reward *= 1.2
+    else:
+        reward *= 1.5
 
     # 📉 Market risk via VIX
     vix = float(market_data.get("vix", 15))
@@ -64,6 +70,14 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         case "Stop loss":            reward -= 0.1
         case "Take profit":          reward += 0.2
         case "Time-based exit":      reward -= 0.1
+
+    # 🧠 Bonus if meta-agent exits a profitable trade
+    if exit_reason == "Meta-agent signal" and pnl > 10:
+        reward += 0.3
+
+    # 🎲 Exploration encouragement
+    if random.random() < 0.1:  # 10% chance
+        reward += 0.1  # nudge toward novelty
 
     return reward
 
@@ -91,12 +105,12 @@ def compute_shaped_reward(log_entry: dict) -> float:
 
     reward_window.append(raw)
     if len(reward_window) < reward_window.maxlen:
-        return float(np.clip(raw, -1.0, 1.0))
+        return float(np.clip(raw, -2.0, 2.0))  # allow greater signal range early
 
     mean = np.mean(reward_window)
     std  = np.std(reward_window) + 1e-6
     sharpe_scaled = (raw - mean) / std
-    return float(np.clip(sharpe_scaled, -1.0, 1.0))
+    return float(np.clip(sharpe_scaled, -2.0, 2.0))  # extended range for richer feedback
 
 # ─────────────────────────────────────────────────────────
 def _append_csv(timestamp: str, shaped: float, raw: float):
