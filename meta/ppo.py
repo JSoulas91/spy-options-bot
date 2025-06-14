@@ -15,7 +15,6 @@ class DualHeadLSTM(nn.Module):
         super().__init__()
         self.lstm = nn.LSTM(state_dim, lstm_hid, batch_first=True)
         self.dropout = nn.Dropout(0.1)
-
         self.shared = nn.Sequential(
             nn.Linear(lstm_hid, hidden),
             nn.ReLU()
@@ -23,45 +22,41 @@ class DualHeadLSTM(nn.Module):
         self.dir_head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, 3)  # logits for 3 discrete actions
+            nn.Linear(hidden, 3)
         )
         self.conf_head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
             nn.Linear(hidden, 1),
-            nn.Sigmoid()  # confidence output between 0 and 1
+            nn.Sigmoid()
         )
         self.value_head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, 1)  # state value
+            nn.Linear(hidden, 1)
         )
 
     def forward(self, x: torch.Tensor):
-        # x shape: [B, state_dim]
-        # Add sequence dimension for LSTM: [B, seq_len=1, state_dim]
-        lstm_out, _ = self.lstm(x.unsqueeze(1))  # [B, 1, lstm_hid]
-        h = self.dropout(lstm_out[:, -1, :])     # [B, lstm_hid]
-        h = self.shared(h)                        # [B, hidden]
-        dir_logits = self.dir_head(h)             # [B, 3]
-        conf = self.conf_head(h).squeeze(-1)      # [B]
-        value = self.value_head(h).squeeze(-1)    # [B]
+        out, _ = self.lstm(x.unsqueeze(1))
+        h = self.dropout(out[:, -1, :])
+        h = self.shared(h)
+        dir_logits = self.dir_head(h)
+        conf = self.conf_head(h).squeeze(-1)
+        value = self.value_head(h).squeeze(-1)
         return dir_logits, conf, value
 
 
 class PPOAgent:
-    def __init__(
-        self,
-        state_dim: Optional[int] = None,
-        lr: float = 3e-4,
-        gamma: float = 0.99,
-        eps_clip: float = 0.2,
-        k_epochs: int = 4,
-        conf_loss_w: float = 0.20,
-        entropy_coef_start: float = 1e-2,
-        target_entropy: Optional[float] = None,
-        grad_clip_norm: float = 1.0,
-    ):
+    def __init__(self,
+                 state_dim: Optional[int] = None,
+                 lr: float = 3e-4,
+                 gamma: float = 0.99,
+                 eps_clip: float = 0.2,
+                 k_epochs: int = 4,
+                 conf_loss_w: float = 0.20,
+                 entropy_coef_start: float = 1e-2,
+                 target_entropy: Optional[float] = None,
+                 grad_clip_norm: float = 1.0):
         if state_dim is None:
             state_dim, _ = get_meta_agent_dims()
 
@@ -69,7 +64,6 @@ class PPOAgent:
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
 
         self.entropy_coef = torch.tensor(entropy_coef_start)
-
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
@@ -101,7 +95,6 @@ class PPOAgent:
 
     @torch.no_grad()
     def act(self, state: torch.Tensor):
-        # state shape: [B, state_dim] or [state_dim], ensure batch dim
         if state.dim() == 1:
             state = state.unsqueeze(0)
         dir_logits, conf, _ = self.net(state)
@@ -120,17 +113,15 @@ class PPOAgent:
             returns.insert(0, R)
         return torch.tensor(returns, dtype=torch.float32)
 
-    def train_step(
-        self,
-        states: torch.Tensor,
-        actions_dir: torch.Tensor,
-        target_conf: torch.Tensor,
-        rewards: List[float],
-        dones: List[int],
-        next_states: torch.Tensor,
-        old_logp: Optional[torch.Tensor],
-        weights: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    def train_step(self,
+                   states: torch.Tensor,
+                   actions_dir: torch.Tensor,
+                   target_conf: torch.Tensor,
+                   rewards: List[float],
+                   dones: List[int],
+                   next_states: torch.Tensor,
+                   old_logp: Optional[torch.Tensor],
+                   weights: Optional[torch.Tensor] = None) -> torch.Tensor:
 
         device = next(self.net.parameters()).device
 
@@ -149,7 +140,6 @@ class PPOAgent:
 
         _, _, values = self.net(states)
         returns = self._discounted_returns(rewards, dones, last_value, self.gamma).to(device)
-
         advantages = returns - values.detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
@@ -172,11 +162,6 @@ class PPOAgent:
         total_loss.backward()
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
-
-        # Entropy coefficient decay
-        with torch.no_grad():
-            self.entropy_coef *= 0.999
-            self.entropy_coef.clamp_(min=1e-4)
 
         td_error = (value_pred.detach() - returns).abs()
         return td_error
