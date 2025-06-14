@@ -107,9 +107,9 @@ def train():
     # Initialize entropy coefficient with start value
     agent.entropy_coef.data.fill_(ENTROPY_COEF_START)
 
-    # Calculate per-batch decay rate
+    # Calculate decay rate per step so entropy decays over ENTROPY_DECAY_STEPS steps
     decay_rate = (ENTROPY_COEF_END / ENTROPY_COEF_START) ** (1 / ENTROPY_DECAY_STEPS)
-    logger.info("Entropy decay rate per batch: %.8f", decay_rate)
+    logger.info("Entropy decay rate per batch: %.10f", decay_rate)
 
     beta = BUFFER_BETA_START
     history_rewards = []
@@ -162,7 +162,7 @@ def train():
             buffer.update_priorities(indices, td_err_list)
             epoch_rewards.extend(rewards)
 
-            # ✅ Corrected entropy decay step
+            # Decay entropy coef correctly per step
             with torch.no_grad():
                 agent.entropy_coef.mul_(decay_rate)
 
@@ -172,7 +172,7 @@ def train():
                 logger.debug("Sampled dirs: %s", dirs)
                 logger.debug("Sampled confs: %s", confs)
                 logger.debug("TD errors: %s", td_err_list)
-                logger.debug("Entropy coef: %.6f", agent.entropy_coef.item())
+                logger.debug("Entropy coef: %.8f", agent.entropy_coef.item())
 
         avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
         std_reward = float(np.std(epoch_rewards)) if epoch_rewards else 0.0
@@ -189,9 +189,9 @@ def train():
             break
 
         logger.info(
-            "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.6f  lr: %.8f",
+            "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
             epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward,
-            agent.entropy_coef.item(), current_lr
+            agent.entropy_coef.item(), current_lr if current_lr is not None else 0.0
         )
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
@@ -205,7 +205,7 @@ def train():
                     "reward_max": max_reward,
                     "reward_min": min_reward,
                     "entropy_coef": agent.entropy_coef.item(),
-                    "learning_rate": current_lr
+                    "learning_rate": current_lr if current_lr is not None else 0.0
                 },
                 history_rewards
             )
