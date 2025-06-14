@@ -63,7 +63,7 @@ class PPOAgent:
             state_dim, _ = get_meta_agent_dims()
 
         self.net = DualHeadLSTM(state_dim)
-        self.opt = optim.Adam(self.net.parameters(), lr=lr)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=lr)  # <-- renamed from opt to optimizer
 
         # Entropy coefficient as a learnable parameter
         self.entropy_coef = torch.tensor(entropy_coef_start, requires_grad=True)
@@ -84,7 +84,7 @@ class PPOAgent:
             return
         ckpt = torch.load(path, map_location="cpu")
         self.net.load_state_dict(ckpt["net"])
-        self.opt.load_state_dict(ckpt["opt"])
+        self.optimizer.load_state_dict(ckpt["opt"])
         ent_coef = ckpt.get("ent_coef", 1e-2)
         self.entropy_coef.data.copy_(torch.tensor(ent_coef))
         self.entropy_opt.load_state_dict(ckpt["ent_opt"])
@@ -94,7 +94,7 @@ class PPOAgent:
         os.makedirs(os.path.dirname(META_MODEL_PATH), exist_ok=True)
         torch.save({
             "net": self.net.state_dict(),
-            "opt": self.opt.state_dict(),
+            "opt": self.optimizer.state_dict(),
             "ent_coef": self.entropy_coef.item(),
             "ent_opt": self.entropy_opt.state_dict(),
         }, META_MODEL_PATH)
@@ -182,10 +182,10 @@ class PPOAgent:
         # Total loss including confidence and entropy losses
         total_loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
 
-        self.opt.zero_grad()
+        self.optimizer.zero_grad()
         total_loss.backward()
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
-        self.opt.step()
+        self.optimizer.step()
 
         self._entropy_update(entropy.detach())
 
