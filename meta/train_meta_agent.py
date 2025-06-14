@@ -150,10 +150,19 @@ def train():
                 weights=weights_t
             )
 
+            # Handle TD error extraction
             if isinstance(td_err, dict) and "td_error" in td_err:
                 td_err = td_err["td_error"]
 
-            td_err_list = td_err.detach().cpu().tolist()
+            # Convert safely to list
+            if isinstance(td_err, torch.Tensor):
+                td_err_list = td_err.detach().cpu().tolist()
+            elif isinstance(td_err, list):
+                td_err_list = td_err
+            else:
+                logger.error("Unexpected td_err format: %s", type(td_err))
+                continue
+
             buffer.update_priorities(idxs, td_err_list)
             epoch_rewards.extend(rewards)
 
