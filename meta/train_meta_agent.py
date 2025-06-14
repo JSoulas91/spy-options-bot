@@ -23,7 +23,7 @@ from config import (
 
 # ─── Config ───────────────────────────────────────────────────────────────
 CSV_PATH = "meta/reward_history.csv"
-NOTIFY_EVERY = 20
+NOTIFY_EVERY = 10
 BUFFER_CAPACITY = 10_000
 ACTION_DIM = 3
 REWARD_EXPONENT = 1.5
@@ -111,6 +111,12 @@ def train():
         # Optional: gentle entropy decay
         agent.entropy_coef.data *= 0.995
 
+        # Also get current learning rate from optimizer
+        current_lr = None
+        for param_group in agent.optimizer.param_groups:
+            current_lr = param_group.get("lr", None)
+            break
+
         num_batches = max(1, len(buffer) // BATCH_SIZE)
         for _ in range(num_batches):
             batch = buffer.sample(BATCH_SIZE, beta)
@@ -171,8 +177,9 @@ def train():
         _append_csv(epoch, avg_reward)
 
         logger.info(
-            "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f",
-            epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward
+            "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.6f  lr: %.8f",
+            epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward,
+            agent.entropy_coef.item(), current_lr
         )
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
@@ -184,7 +191,9 @@ def train():
                     "avg_reward": avg_reward,
                     "reward_std": std_reward,
                     "reward_max": max_reward,
-                    "reward_min": min_reward
+                    "reward_min": min_reward,
+                    "entropy_coef": agent.entropy_coef.item(),
+                    "learning_rate": current_lr
                 },
                 history_rewards
             )
