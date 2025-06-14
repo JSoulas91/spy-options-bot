@@ -18,7 +18,8 @@ from utils.telegram_utils import send_telegram_message
 from monitor.health_check import update_status
 from config import (
     META_LOG_PATH, EPOCHS, BATCH_SIZE,
-    BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT
+    BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT,
+    ENTROPY_COEF_START, ENTROPY_COEF_END, ENTROPY_DECAY_STEPS
 )
 
 # ─── Config ───────────────────────────────────────────────────────────────
@@ -102,20 +103,20 @@ def train():
         return
 
     agent = PPOAgent(state_dim=state_dim)
+
+    # Initialize entropy coefficient with start value
+    agent.entropy_coef.data.fill_(ENTROPY_COEF_START)
+
+    # Calculate per-batch decay rate
+    decay_rate = (ENTROPY_COEF_END / ENTROPY_COEF_START) ** (1 / ENTROPY_DECAY_STEPS)
+    logger.info("Entropy decay rate per batch: %.8f", decay_rate)
+
     beta = BUFFER_BETA_START
     history_rewards = []
 
+    step_count = 0
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
-
-        # Optional: gentle entropy decay
-        agent.entropy_coef.data *= 0.995
-
-        # Also get current learning rate from optimizer
-        current_lr = None
-        for param_group in agent.optimizer.param_groups:
-            current_lr = param_group.get("lr", None)
-            break
 
         num_batches = max(1, len(buffer) // BATCH_SIZE)
         for _ in range(num_batches):
@@ -132,10 +133,8 @@ def train():
                 dirs.append(int(a[0]))
                 confs.append(float(a[1]))
 
-            # === FIXED TENSOR CREATION ===
             states_arr = np.array(states, dtype=np.float32)
             states_t = torch.from_numpy(states_arr)
-            # ============================
 
             next_t    = states_t.clone()
             dirs_t    = torch.tensor(dirs, dtype=torch.long)
@@ -163,10 +162,15 @@ def train():
             buffer.update_priorities(indices, td_err_list)
             epoch_rewards.extend(rewards)
 
+            # Decay entropy per batch
+            agent.entropy_coef.data *= decay_rate
+            step_count += 1
+
             if DEBUG:
                 logger.debug("Sampled dirs: %s", dirs)
                 logger.debug("Sampled confs: %s", confs)
                 logger.debug("TD errors: %s", td_err_list)
+                logger.debug("Entropy coef: %.6f", agent.entropy_coef.item())
 
         avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
         std_reward = float(np.std(epoch_rewards)) if epoch_rewards else 0.0
@@ -175,6 +179,12 @@ def train():
 
         history_rewards.append(avg_reward)
         _append_csv(epoch, avg_reward)
+
+        # Get current learning rate
+        current_lr = None
+        for param_group in agent.optimizer.param_groups:
+            current_lr = param_group.get("lr", None)
+            break
 
         logger.info(
             "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.6f  lr: %.8f",
