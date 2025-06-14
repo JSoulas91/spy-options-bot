@@ -108,8 +108,8 @@ def train():
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
 
-        # Decay entropy coefficient gently each epoch
-        agent.entropy_coef.data *= 0.98
+        # Optional: gentler entropy decay
+        agent.entropy_coef.data *= 0.995
 
         num_batches = max(1, len(buffer) // BATCH_SIZE)
         for _ in range(num_batches):
@@ -119,21 +119,18 @@ def train():
             for s, a, r, _, done in batch:
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
-
                 if isinstance(a, (list, tuple)):
                     dirs.append(int(a[0]))
                     confs.append(float(a[1]))
                 else:
                     dirs.append(int(a))
                     confs.append(0.5)
-
                 rewards.append(float(r))
                 dones.append(int(bool(done)))
 
             if not states:
                 continue
 
-            # Normalize rewards
             rewards_np = np.array(rewards, dtype=np.float32)
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
@@ -154,26 +151,21 @@ def train():
                 weights=weights_t
             )
 
-            # Handle td_err safely
             if isinstance(td_err, dict):
-                if "td_error" in td_err:
-                    td_err = td_err["td_error"]
-                else:
-                    logger.error("Unexpected td_err format: %s", type(td_err))
-                    continue
+                td_err = td_err.get("td_error", [])
 
             if hasattr(td_err, "detach"):
                 td_err_list = td_err.detach().cpu().tolist()
             else:
-                td_err_list = td_err  # Already a list
+                td_err_list = list(td_err) if isinstance(td_err, (list, np.ndarray)) else [0.0] * BATCH_SIZE
 
             buffer.update_priorities(idxs, td_err_list)
             epoch_rewards.extend(rewards)
 
             if DEBUG:
-                logger.debug("Sampled directions: %s", dirs)
-                logger.debug("Sampled confidences: %s", confs)
-                logger.debug("Sampled TD errors: %s", td_err_list)
+                logger.debug("Sampled dirs: %s", dirs)
+                logger.debug("Sampled confs: %s", confs)
+                logger.debug("TD errors: %s", td_err_list)
 
         avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
         std_reward = float(np.std(epoch_rewards)) if epoch_rewards else 0.0
