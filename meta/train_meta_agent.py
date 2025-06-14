@@ -1,4 +1,7 @@
-import os, sys, json, csv
+import os
+import sys
+import json
+import csv
 from typing import List, Dict
 
 import numpy as np
@@ -31,8 +34,8 @@ DEBUG = True
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
         return []
-    with open(META_LOG_PATH) as f:
-        return [json.loads(l) for l in f if l.strip()]
+    with open(META_LOG_PATH, "r") as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 def _discover_state_dim(rows):
     for r in rows:
@@ -45,7 +48,9 @@ def _pad_or_trim(vec, dim):
     if not isinstance(vec, (list, np.ndarray)):
         return [0.0] * dim
     lst = list(vec)
-    return lst[:dim] if len(lst) >= dim else lst + [0.0] * (dim - len(lst))
+    if len(lst) >= dim:
+        return lst[:dim]
+    return lst + [0.0] * (dim - len(lst))
 
 def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
@@ -55,76 +60,88 @@ def _prep_buffer(rows, dim):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
         rew = float(row.get("reward", 0))
-        rew = np.sign(rew) * abs(rew) ** REWARD_EXPONENT
+        # Apply reward shaping with exponent
+        rew = np.sign(rew) * (abs(rew) ** REWARD_EXPONENT)
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
-        act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5))) \
-              if isinstance(act_raw, dict) else (int(act_raw), 0.5)
+        if isinstance(act_raw, dict):
+            act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5)))
+        else:
+            act = (int(act_raw), 0.5)
         buf.add(st, act, rew, st, True)
     logger.info("Replay buffer populated: %d samples", len(buf))
     return buf
 
 def _append_csv(epoch_idx, avg_r):
     os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
-    new = not os.path.exists(CSV_PATH)
+    new_file = not os.path.exists(CSV_PATH)
     with open(CSV_PATH, "a", newline="") as f:
-        w = csv.writer(f)
-        if new:
-            w.writerow(["epoch", "avg_reward"])
-        w.writerow([epoch_idx, avg_r])
+        writer = csv.writer(f)
+        if new_file:
+            writer.writerow(["epoch", "avg_reward"])
+        writer.writerow([epoch_idx, avg_r])
 
 # ─── Training ────────────────────────────────────────────────────────────
 
 def train():
-    logger.info("🚀 PPO meta‑agent training started")
+    logger.info("🚀 PPO meta-agent training started")
     update_status("last_ppo_attempt")
 
     rows = _load_rows()
     if not rows:
-        logger.warning("No training data."); return
+        logger.warning("No training data found.")
+        return
 
     state_dim = _discover_state_dim(rows)
     if state_dim <= 0:
-        logger.error("Cannot infer state_dim."); return
+        logger.error("Cannot infer state_dim from training data.")
+        return
 
     save_meta_agent_dims(state_dim, ACTION_DIM)
     buffer = _prep_buffer(rows, state_dim)
     if len(buffer) < BATCH_SIZE:
-        logger.error("Buffer too small."); return
+        logger.error("Replay buffer too small to train.")
+        return
 
     agent = PPOAgent(state_dim=state_dim)
     beta = BUFFER_BETA_START
-    hist = []
+    history_rewards = []
 
-    for ep in range(1, EPOCHS + 1):
-        ep_rewards = []
+    for epoch in range(1, EPOCHS + 1):
+        epoch_rewards = []
 
-        # Decay entropy coefficient
+        # Decay entropy coefficient gently each epoch
         agent.entropy_coef.data *= 0.98
 
-        for _ in range(max(1, len(buffer) // BATCH_SIZE)):
+        num_batches = max(1, len(buffer) // BATCH_SIZE)
+        for _ in range(num_batches):
             batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
 
             states, dirs, confs, rewards, dones = [], [], [], [], []
-            for idx, (s, a, r, _, done) in enumerate(batch):
+            for s, a, r, _, done in batch:
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
 
                 if isinstance(a, (list, tuple)):
-                    dirs.append(int(a[0])); confs.append(float(a[1]))
+                    dirs.append(int(a[0]))
+                    confs.append(float(a[1]))
                 else:
-                    dirs.append(int(a));    confs.append(0.5)
-                rewards.append(float(r));  dones.append(int(bool(done)))
+                    dirs.append(int(a))
+                    confs.append(0.5)
+
+                rewards.append(float(r))
+                dones.append(int(bool(done)))
 
             if not states:
                 continue
 
+            # Normalize rewards before training step
             rewards_np = np.array(rewards, dtype=np.float32)
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
 
             states_t  = torch.tensor(np.array(states, dtype=np.float32))
             next_t    = states_t.clone()
-            dirs_t    = torch.tensor(np.array(dirs, dtype=np.int64))
+            dirs_t    = torch.tensor(np.array(dirs, dtype=torch.int64))
             confs_t   = torch.tensor(np.array(confs, dtype=np.float32))
             weights_t = torch.tensor(np.array(weights, dtype=np.float32))
             old_logp  = torch.zeros(len(states_t))
@@ -138,43 +155,45 @@ def train():
                 weights=weights_t
             )
 
-            # ✅ Safely extract td_errors before calling .detach()
-            if isinstance(td_err, dict) and "td_errors" in td_err:
-                td_err = td_err["td_errors"]
+            # Extract TD errors correctly for priority update
+            if isinstance(td_err, dict) and "td_error" in td_err:
+                td_err = td_err["td_error"]
 
-            td_err_cpu = td_err.detach().cpu().tolist()
-            buffer.update_priorities(idxs, td_err_cpu)
+            td_err_list = td_err.detach().cpu().tolist()
+            buffer.update_priorities(idxs, td_err_list)
 
-            ep_rewards.extend(rewards)
+            epoch_rewards.extend(rewards)
 
             if DEBUG:
-                logger.debug("Sampled dirs: %s", dirs)
-                logger.debug("Sampled confs: %s", confs)
-                logger.debug("Sampled TD errors: %s", td_err_cpu)
+                logger.debug("Sampled directions: %s", dirs)
+                logger.debug("Sampled confidences: %s", confs)
+                logger.debug("Sampled TD errors: %s", td_err_list)
 
-        avg_r = float(np.mean(ep_rewards)) if ep_rewards else 0.0
-        std_r = float(np.std(ep_rewards)) if ep_rewards else 0.0
-        max_r = float(np.max(ep_rewards)) if ep_rewards else 0.0
-        min_r = float(np.min(ep_rewards)) if ep_rewards else 0.0
+        avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
+        std_reward = float(np.std(epoch_rewards)) if epoch_rewards else 0.0
+        max_reward = float(np.max(epoch_rewards)) if epoch_rewards else 0.0
+        min_reward = float(np.min(epoch_rewards)) if epoch_rewards else 0.0
 
-        hist.append(avg_r)
-        _append_csv(ep, avg_r)
+        history_rewards.append(avg_reward)
+        _append_csv(epoch, avg_reward)
 
-        logger.info("📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f",
-                    ep, EPOCHS, avg_r, max_r, min_r, std_r)
+        logger.info(
+            "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f",
+            epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward
+        )
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
 
-        if ep % NOTIFY_EVERY == 0:
+        if epoch % NOTIFY_EVERY == 0:
             send_training_report(
                 {
-                    "epoch": ep,
-                    "avg_reward": avg_r,
-                    "reward_std": std_r,
-                    "reward_max": max_r,
-                    "reward_min": min_r
+                    "epoch": epoch,
+                    "avg_reward": avg_reward,
+                    "reward_std": std_reward,
+                    "reward_max": max_reward,
+                    "reward_min": min_reward
                 },
-                hist
+                history_rewards
             )
 
     agent.save()
@@ -185,7 +204,7 @@ def train():
     except Exception as e:
         logger.error("Meta agent report failed: %s", str(e))
 
-    send_telegram_message("✅ Dual‑head PPO training completed.")
+    send_telegram_message("✅ Dual-head PPO training completed.")
 
 if __name__ == "__main__":
     train()
