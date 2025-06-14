@@ -126,7 +126,11 @@ def train():
                 dirs.append(int(a[0]))
                 confs.append(float(a[1]))
 
-            states_t  = torch.tensor(states, dtype=torch.float32)
+            # === FIXED TENSOR CREATION ===
+            states_arr = np.array(states, dtype=np.float32)
+            states_t = torch.from_numpy(states_arr)
+            # ============================
+
             next_t    = states_t.clone()
             dirs_t    = torch.tensor(dirs, dtype=torch.long)
             confs_t   = torch.tensor(confs, dtype=torch.float32)
