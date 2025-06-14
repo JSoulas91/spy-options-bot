@@ -26,7 +26,6 @@ ACTION_DIM = 3
 REWARD_EXPONENT = 1.5
 DEBUG = True
 
-
 # ─── Helpers ─────────────────────────────────────────────────────────────
 
 def _load_rows() -> List[Dict]:
@@ -72,7 +71,6 @@ def _append_csv(epoch_idx, avg_r):
         if new:
             w.writerow(["epoch", "avg_reward"])
         w.writerow([epoch_idx, avg_r])
-
 
 # ─── Training ────────────────────────────────────────────────────────────
 
