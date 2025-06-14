@@ -59,7 +59,9 @@ def send_training_report(stats: dict, history: list[float]):
     msg = (
         f"📈 PPO Epoch {stats['epoch']}\n"
         f"Avg Reward: {stats['avg_reward']:.4f}\n"
-        f"Reward Std: {stats['reward_std']:.4f}"
+        f"Reward Std: {stats['reward_std']:.4f}\n"
+        f"Entropy Coef: {stats.get('entropy_coef', 0):.6f}\n"
+        f"Learning Rate: {stats.get('learning_rate', 0):.8f}"
     )
     send_telegram_message(msg)
 
