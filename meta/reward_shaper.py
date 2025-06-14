@@ -33,6 +33,7 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     vix           = float(market_data.get("vix", 15))
     entry_time    = trade.get("entry_time", "09:35")
     exit_time     = trade.get("exit_time", "15:59")
+    post_exit_move = float(trade.get("post_exit_move", 0.0))  # Optional: large follow-through
 
     # 🧮 Base reward using log-scale PnL
     reward = np.sign(pnl) * np.log1p(abs(pnl))
@@ -119,6 +120,28 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
 
     # 🧮 Risk-adjusted PnL penalty (lower realized volatility = better)
     reward *= max(0.8, 1.5 - realized_vol)
+
+    # ✅ Rare high-quality trade multiplier
+    if confidence > 0.9 and setup_quality > 0.8 and pnl > 20:
+        reward *= 1.5
+
+    # ✅ Missed potential penalty (post-exit move was large)
+    if pnl > 5 and post_exit_move > 10:
+        reward -= 0.4
+
+    # ✅ Classifier disagreement penalty
+    if setup_quality < 0.3 and confidence > 0.8:
+        reward -= 0.4
+
+    # ✅ Extra large trade reward
+    if abs(pnl) > 30:
+        reward += 0.5
+
+    # ✅ Adaptive exploration encouragement if recent reward Sharpe is poor
+    if len(reward_window) == reward_window.maxlen:
+        rolling_sharpe = compute_sharpe_style_reward(list(reward_window))
+        if rolling_sharpe < 0.1 and random.random() < 0.2:
+            reward += 0.3
 
     return float(reward)
 
