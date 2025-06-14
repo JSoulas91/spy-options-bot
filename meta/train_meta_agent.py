@@ -140,7 +140,7 @@ def train():
             weights_t = torch.tensor(weights, dtype=torch.float32)
             old_logp  = None  # No KL term in offline training
 
-            td_err = agent.train_step(
+            train_metrics = agent.train_step(
                 states_t, dirs_t, confs_t,
                 rewards=rewards,
                 dones=dones,
@@ -149,8 +149,9 @@ def train():
                 weights=weights_t
             )
 
-            if isinstance(td_err, dict):
-                td_err = td_err.get("td_error", [])
+            td_err = train_metrics.get("td_error", [])
+            kl_div = train_metrics.get("kl", None)
+            conf_loss = train_metrics.get("conf_loss", None)
 
             if hasattr(td_err, "detach"):
                 td_err_list = td_err.detach().cpu().tolist()
@@ -164,6 +165,10 @@ def train():
                 logger.debug("Sampled dirs: %s", dirs)
                 logger.debug("Sampled confs: %s", confs)
                 logger.debug("TD errors: %s", td_err_list)
+                if kl_div is not None:
+                    logger.debug("KL divergence: %.6f", kl_div)
+                if conf_loss is not None:
+                    logger.debug("Confidence loss: %.6f", conf_loss)
                 logger.debug("Entropy coef (pre-decay): %.8f", agent.entropy_coef.item())
 
         # Decay entropy coefficient once per epoch
@@ -182,6 +187,10 @@ def train():
         for param_group in agent.optimizer.param_groups:
             current_lr = param_group.get("lr", None)
             break
+
+        # Optional learning rate scheduler step
+        if hasattr(agent, "scheduler") and agent.scheduler:
+            agent.scheduler.step(avg_reward)
 
         logger.info(
             "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
