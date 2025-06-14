@@ -27,7 +27,6 @@ CSV_PATH = "meta/reward_history.csv"
 NOTIFY_EVERY = 20
 BUFFER_CAPACITY = 10_000
 ACTION_DIM = 3
-REWARD_EXPONENT = 1.5
 DEBUG = True
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
@@ -60,13 +59,22 @@ def _prep_buffer(rows, dim):
         if not isinstance(ms, (list, np.ndarray)):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
+
         rew = float(row.get("reward", 0))
-        rew = np.sign(rew) * (abs(rew) ** REWARD_EXPONENT)
+        # 🔥 NEW REWARD SHAPING: Promote big profits but still respect small wins
+        if rew > 0:
+            rew = np.log1p(rew)  # log(1 + reward)
+        elif rew < 0:
+            rew = -np.log1p(abs(rew))  # penalize losses more aggressively
+        else:
+            rew = 0.0
+
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         if isinstance(act_raw, dict):
             act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5)))
         else:
             act = (int(act_raw), 0.5)
+
         buf.add(st, act, rew, st, True)
     logger.info("Replay buffer populated: %d samples", len(buf))
     return buf
