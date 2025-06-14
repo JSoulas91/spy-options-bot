@@ -79,19 +79,6 @@ def _append_csv(epoch_idx, avg_r):
             writer.writerow(["epoch", "avg_reward"])
         writer.writerow([epoch_idx, avg_r])
 
-def _extract_td_error(td_err_raw):
-    if isinstance(td_err_raw, torch.Tensor):
-        return td_err_raw.detach().cpu().tolist()
-    elif isinstance(td_err_raw, list):
-        return td_err_raw
-    elif isinstance(td_err_raw, dict):
-        # Flatten any nested dict to first tensor/list found
-        for v in td_err_raw.values():
-            result = _extract_td_error(v)
-            if result is not None:
-                return result
-    return None
-
 # ─── Training ────────────────────────────────────────────────────────────
 
 def train():
@@ -120,9 +107,11 @@ def train():
 
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
-        agent.entropy_coef.data *= 0.98
-        num_batches = max(1, len(buffer) // BATCH_SIZE)
 
+        # Decay entropy coefficient gently each epoch
+        agent.entropy_coef.data *= 0.98
+
+        num_batches = max(1, len(buffer) // BATCH_SIZE)
         for _ in range(num_batches):
             batch, idxs, weights = buffer.sample(BATCH_SIZE, beta)
 
@@ -130,30 +119,33 @@ def train():
             for s, a, r, _, done in batch:
                 s_vec = _pad_or_trim(s, state_dim)
                 states.append(s_vec)
+
                 if isinstance(a, (list, tuple)):
                     dirs.append(int(a[0]))
                     confs.append(float(a[1]))
                 else:
                     dirs.append(int(a))
                     confs.append(0.5)
+
                 rewards.append(float(r))
                 dones.append(int(bool(done)))
 
             if not states:
                 continue
 
+            # Normalize rewards
             rewards_np = np.array(rewards, dtype=np.float32)
             rewards_np = (rewards_np - rewards_np.mean()) / (rewards_np.std() + 1e-8)
             rewards = rewards_np.tolist()
 
-            states_t  = torch.tensor(np.array(states, dtype=np.float32))
+            states_t  = torch.tensor(states, dtype=torch.float32)
             next_t    = states_t.clone()
-            dirs_t    = torch.tensor(np.array(dirs, dtype=torch.int64))
-            confs_t   = torch.tensor(np.array(confs, dtype=np.float32))
-            weights_t = torch.tensor(np.array(weights, dtype=np.float32))
-            old_logp  = torch.zeros(len(states_t))
+            dirs_t    = torch.tensor(dirs, dtype=torch.long)
+            confs_t   = torch.tensor(confs, dtype=torch.float32)
+            weights_t = torch.tensor(weights, dtype=torch.float32)
+            old_logp  = torch.zeros(len(states_t), dtype=torch.float32)
 
-            td_err_raw = agent.train_step(
+            td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
                 rewards=rewards,
                 dones=dones,
@@ -162,10 +154,18 @@ def train():
                 weights=weights_t
             )
 
-            td_err_list = _extract_td_error(td_err_raw)
-            if td_err_list is None:
-                logger.error("Unexpected td_err format: %s", type(td_err_raw))
-                continue
+            # Handle td_err safely
+            if isinstance(td_err, dict):
+                if "td_error" in td_err:
+                    td_err = td_err["td_error"]
+                else:
+                    logger.error("Unexpected td_err format: %s", type(td_err))
+                    continue
+
+            if hasattr(td_err, "detach"):
+                td_err_list = td_err.detach().cpu().tolist()
+            else:
+                td_err_list = td_err  # Already a list
 
             buffer.update_priorities(idxs, td_err_list)
             epoch_rewards.extend(rewards)
