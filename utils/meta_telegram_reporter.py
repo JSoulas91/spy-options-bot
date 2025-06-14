@@ -1,4 +1,3 @@
-# utils/meta_telegram_reporter.py
 import os
 import json
 import pandas as pd
