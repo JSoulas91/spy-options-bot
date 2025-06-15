@@ -32,7 +32,18 @@ def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
         return []
     with open(META_LOG_PATH, "r") as f:
-        return [json.loads(line) for line in f if line.strip()]
+        all_rows = [json.loads(line) for line in f if line.strip()]
+    
+    # Filter out poor-quality experiences
+    filtered = [
+        r for r in all_rows
+        if r.get("reward", 0) > -0.05
+        and r.get("meta_confidence", 0) > 0.3
+        and r.get("sharpe", 0) > 0.5
+    ]
+    
+    logger.info("Loaded %d raw experiences, filtered to %d high-quality samples", len(all_rows), len(filtered))
+    return filtered
 
 def _discover_state_dim(rows):
     for r in rows:
@@ -127,7 +138,6 @@ def train():
 
             states_arr = np.array(states, dtype=np.float32)
             states_t = torch.from_numpy(states_arr)
-
             next_t    = states_t.clone()
             dirs_t    = torch.tensor(dirs, dtype=torch.long)
             confs_t   = torch.tensor(confs, dtype=torch.float32)
@@ -159,6 +169,7 @@ def train():
 
         with torch.no_grad():
             agent.entropy_coef.mul_(decay_rate)
+            agent.entropy_coef.data.clamp_(min=0.002)
 
         avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
         std_reward = float(np.std(epoch_rewards)) if epoch_rewards else 0.0
