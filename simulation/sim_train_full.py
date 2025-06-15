@@ -80,6 +80,8 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
 
     fill_ratio   = round(RNG.uniform(0.6, 1.0), 2)
 
+    direction_outcome = 1 if raw_pnl_pct > 0 else 0
+
     trade = {
         "id":            f"SIM.{day_idx}-{step_idx}",
         "timestamp":     datetime.utcnow().isoformat(timespec="seconds"),
@@ -95,6 +97,7 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
         "pnl":           round(raw_pnl_pct * 100 * fill_ratio, 2),
         "meta_state":    meta_state.tolist(),
         "meta_action":   int(action_idx),
+        "direction_outcome": direction_outcome
     }
     return trade
 
