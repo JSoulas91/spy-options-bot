@@ -22,8 +22,8 @@ from config import (
 )
 
 CSV_PATH = "meta/reward_history.csv"
-NOTIFY_EVERY = 2
-BUFFER_CAPACITY = 10000
+NOTIFY_EVERY = 1
+BUFFER_CAPACITY = 20000
 ACTION_DIM = 3
 DEBUG = True
 MIN_HIGH_REWARD = 1.5  # Only train if at least one good reward exists
