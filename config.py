@@ -78,14 +78,14 @@ ENABLE_DIRECTIONAL_SKEW   = os.getenv("ENABLE_DIRECTIONAL_SKEW", "true").lower()
 DEBUG_OPTION_FILTER       = os.getenv("DEBUG_OPTION_FILTER", "false").lower() == "true"
 
 # === META / PPO TRAINING ===
-EPOCHS               = int(os.getenv("EPOCHS", 10))
-BATCH_SIZE           = int(os.getenv("BATCH_SIZE", 64))
+EPOCHS               = int(os.getenv("EPOCHS", 100))
+BATCH_SIZE           = int(os.getenv("BATCH_SIZE", 128))
 BUFFER_ALPHA         = float(os.getenv("BUFFER_ALPHA", 0.6))
 BUFFER_BETA_START    = float(os.getenv("BUFFER_BETA_START", 0.4))
 BUFFER_BETA_INCREMENT = float(os.getenv("BUFFER_BETA_INCREMENT", 0.004))
 META_LOG_PATH        = os.getenv("META_LOG_PATH", "meta/meta_log.jsonl")
-ENTROPY_COEF_START   = float(os.getenv("ENTROPY_COEF_START", 0.08))
-ENTROPY_COEF_END     = float(os.getenv("ENTROPY_COEF_END", 0.04))
+ENTROPY_COEF_START   = float(os.getenv("ENTROPY_COEF_START", 0.15))
+ENTROPY_COEF_END     = float(os.getenv("ENTROPY_COEF_END", 0.03))
 META_MODEL_PATH = os.getenv("META_MODEL_PATH", "meta/models/ppo_agent.pth")
 META_INFO_PATH = "meta/meta_agent_info.json"
 META_STATE_LOOKBACK_MINUTES = 60
