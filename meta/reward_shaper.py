@@ -13,6 +13,7 @@ from utils.logger import bot_logger as logger
 
 # ─────────────────────────────────────────────────────────
 ROLL_WINDOW = 20
+MIN_HIGH_REWARD = 1.0  # New: Used to help prioritize high-quality experiences
 reward_window: deque[float] = deque(maxlen=ROLL_WINDOW)
 
 HIST_CSV = Path("meta/reward_history.csv")
@@ -52,9 +53,9 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     # 📉 Risk environment penalty via VIX
     reward -= 0.1 * max(0, (vix - 15) // 5)
 
-    # 🎲 Exploration bonus
-    if random.random() < 0.15:
-        reward += 0.2
+    # 🎯 Smarter exploration bonus — only if uncertain and not in extreme regimes
+    if 0.4 < confidence < 0.7 and realized_vol < 2.0 and random.random() < 0.2:
+        reward += 0.25
 
     # 🔚 Exit reason shaping
     match exit_reason:
@@ -96,9 +97,9 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     if confidence > 0.75 and setup_quality > 0.7:
         reward += 0.3
 
-    # 📈 PnL scaling tiers
+    # 📈 PnL scaling tiers (adjusted)
     if abs(pnl) < 5:
-        reward *= 0.7 if confidence > 0.6 else 0.3
+        reward *= 0.7 if confidence > 0.6 else 0.3  # Still positive, just modest
     elif abs(pnl) < 10:
         reward *= 0.9
     elif abs(pnl) < 25:
