@@ -12,7 +12,7 @@ from utils.logger        import bot_logger as logger
 from ml.logger           import log_training_example
 
 # ───────── simulation params
-SIM_DAYS            = 60
+SIM_DAYS            = 400
 TRADES_PER_DAY      = 10
 GBM_MU              = 0.08
 GBM_SIGMA           = 0.22
