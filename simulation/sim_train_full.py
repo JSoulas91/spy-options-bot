@@ -107,11 +107,11 @@ def append_meta_log(trade: dict, vix_val: float):
         "exit_reason": "sim_exit"
     })
 
-    # Filter out garbage trades unless randomly kept
+    # Apply stricter filter for better training signal
     if (
-        abs(shaped_reward) < 0.05 or
-        abs(trade["pnl"]) < 0.1 or
-        trade["confidence"] < 0.1
+        abs(shaped_reward) < 0.3 or
+        abs(trade["pnl"]) < 1.5 or
+        trade["confidence"] < 0.3
     ):
         if RNG.random() > GARBAGE_KEEP_PROB:
             return
