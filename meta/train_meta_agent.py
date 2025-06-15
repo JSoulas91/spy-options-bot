@@ -19,7 +19,7 @@ from monitor.health_check import update_status
 from config import (
     META_LOG_PATH, EPOCHS, BATCH_SIZE,
     BUFFER_ALPHA, BUFFER_BETA_START, BUFFER_BETA_INCREMENT,
-    ENTROPY_COEF_START, ENTROPY_COEF_END, ENTROPY_DECAY_STEPS
+    ENTROPY_COEF_START, ENTROPY_COEF_END
 )
 
 CSV_PATH = "meta/reward_history.csv"
@@ -70,7 +70,7 @@ def _prep_buffer(rows, dim):
         buf.add(st, act, rew, st, True)
 
     logger.info("Replay buffer populated: %d samples", len(buf))
-    logger.info("Reward stats â avg: %.4f, std: %.4f, max: %.2f, min: %.2f",
+    logger.info("Reward stats — avg: %.4f, std: %.4f, max: %.2f, min: %.2f",
                 np.mean(rewards), np.std(rewards), np.max(rewards), np.min(rewards))
     return buf
 
@@ -84,7 +84,7 @@ def _append_csv(epoch_idx, avg_r):
         writer.writerow([epoch_idx, avg_r])
 
 def train():
-    logger.info("ð PPO meta-agent training started")
+    logger.info("🚀 PPO meta-agent training started")
     update_status("last_ppo_attempt")
 
     rows = _load_rows()
@@ -182,7 +182,7 @@ def train():
             agent.scheduler.step(avg_reward)
 
         logger.info(
-            "ð Epoch %d/%d â avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
+            "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
             epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward,
             agent.entropy_coef.item(), current_lr if current_lr is not None else 0.0
         )
@@ -211,7 +211,7 @@ def train():
     except Exception as e:
         logger.error("Meta agent report failed: %s", str(e))
 
-    send_telegram_message("â Dual-head PPO training completed.")
+    send_telegram_message("⭐ Dual-head PPO training completed.")
 
 if __name__ == "__main__":
     train()
