@@ -134,6 +134,9 @@ class PPOAgent:
         else:
             old_logp = torch.zeros_like(actions_dir, dtype=torch.float32, device=device)
 
+        if weights is not None:
+            weights = weights.to(device)
+
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
             last_value = next_v.mean().item()
@@ -151,10 +154,15 @@ class PPOAgent:
         ratio = torch.exp(logp - old_logp)
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-        actor_loss = -torch.min(surr1, surr2).mean()
 
-        critic_loss = nn.MSELoss()(value_pred, returns)
-        conf_loss = nn.MSELoss()(conf_pred, target_conf)
+        if weights is not None:
+            actor_loss = -(weights * torch.min(surr1, surr2)).mean()
+            critic_loss = (weights * (value_pred - returns) ** 2).mean()
+            conf_loss = (weights * (conf_pred - target_conf) ** 2).mean()
+        else:
+            actor_loss = -torch.min(surr1, surr2).mean()
+            critic_loss = nn.MSELoss()(value_pred, returns)
+            conf_loss = nn.MSELoss()(conf_pred, target_conf)
 
         total_loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
 
