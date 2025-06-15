@@ -27,45 +27,36 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     pnl           = float(trade.get("pnl", 0))
     confidence    = float(trade.get("confidence", 0))
     trade_type    = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
-    setup_quality = float(trade.get("setup_quality", 0.0))  # Optional input from classifier
-    num_signals   = int(trade.get("total_signals_today", 10))  # Trade selectivity context
+    setup_quality = float(trade.get("setup_quality", 0.0))
+    num_signals   = int(trade.get("total_signals_today", 10))
     realized_vol  = float(market_data.get("realized_vol", 1.0))
     vix           = float(market_data.get("vix", 15))
     entry_time    = trade.get("entry_time", "09:35")
     exit_time     = trade.get("exit_time", "15:59")
-    post_exit_move = float(trade.get("post_exit_move", 0.0))  # Optional: large follow-through
+    post_exit_move = float(trade.get("post_exit_move", 0.0))
 
-    # 🧮 Base reward using log-scale PnL
     reward = np.sign(pnl) * np.log1p(abs(pnl))
 
-    # 💡 Confidence shaping (scaled by pnl magnitude)
-    if pnl > 0:
-        reward += confidence * min(pnl / 5, 3.0)
-    elif pnl < 0:
-        reward -= confidence * min(abs(pnl) / 5, 2.0)
+    # 💡 Confidence shaping
+    reward += np.clip(confidence, 0, 1) * np.sign(pnl) * min(abs(pnl) / 5, 3.0)
 
-    # ⏰ Time decay penalty for late day-trades
+    # ⏰ Late exit penalty for day-trades
     if trade_type == 0:
         try:
             exit_hour = int(exit_time.split(":")[0])
             if exit_hour >= 15 and pnl < 0:
                 reward -= 0.5
-        except Exception:
+        except:
             pass
 
-    # 📉 Market risk via VIX
-    if vix > 30:
-        reward -= 0.4
-    elif vix > 20:
-        reward -= 0.2
-    elif vix > 15:
-        reward -= 0.1
+    # 📉 Risk environment penalty via VIX
+    reward -= 0.1 * max(0, (vix - 15) // 5)
 
-    # 🎲 Persistent exploration encouragement
+    # 🎲 Exploration bonus
     if random.random() < 0.15:
         reward += 0.2
 
-    # 🔚 Exit reason tweaks
+    # 🔚 Exit reason shaping
     match exit_reason:
         case "Contract near expiry": reward -= 0.3
         case "Meta-agent signal":    reward += 0.3
@@ -73,19 +64,17 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         case "Take profit":          reward += 0.3
         case "Time-based exit":      reward -= 0.1
 
-    # 🧠 Bonus if meta-agent exits a profitable trade
     if exit_reason == "Meta-agent signal" and pnl > 10:
         reward += 0.4
 
-    # 🎯 Setup quality bonus
-    if setup_quality > 0.5:
-        reward += setup_quality * 0.5
+    # 🧠 Setup quality shaping
+    reward += np.clip(setup_quality, 0, 1) * 0.5
 
-    # 📊 Trade selectivity bonus (encourage fewer, higher quality trades)
+    # 📊 Selectivity bonus
     if confidence > 0.8 and num_signals <= 3:
         reward += 0.4
 
-    # 🔥 Fast profit bonus (exit within 2 hours)
+    # ⚡ Fast win bonus
     try:
         entry_hour = int(entry_time.split(":")[0])
         exit_hour  = int(exit_time.split(":")[0])
@@ -94,21 +83,20 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     except:
         pass
 
-    # 🌀 Penalize high PnL if trade had low confidence (fluke discouragement)
+    # 🌀 Fluke discouragement
     if confidence < 0.4 and pnl > 10:
         reward *= 0.6
 
-    # 🧠 Classifier agreement bonus
+    # 🧠 Classifier agreement/disagreement
     if setup_quality > 0.7 and pnl > 10:
         reward += 0.4
     elif setup_quality < 0.3 and pnl < 0:
-        reward += 0.2  # Reward avoiding bad setups
+        reward += 0.2
 
-    # 🧠 Confidence and setup synergy
     if confidence > 0.75 and setup_quality > 0.7:
         reward += 0.3
 
-    # 📈 PnL magnitude scaling (mild boost)
+    # 📈 PnL scaling tiers
     if abs(pnl) < 5:
         reward *= 0.7 if confidence > 0.6 else 0.3
     elif abs(pnl) < 10:
@@ -118,26 +106,26 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     else:
         reward *= 1.6
 
-    # 🧮 Risk-adjusted PnL penalty (lower realized volatility = better)
+    # 📉 Realized volatility shaping
     reward *= max(0.8, 1.5 - realized_vol)
 
-    # ✅ Rare high-quality trade multiplier
+    # 🏆 Rare excellent trade multiplier
     if confidence > 0.9 and setup_quality > 0.8 and pnl > 20:
         reward *= 1.5
 
-    # ✅ Missed potential penalty (post-exit move was large)
+    # ❌ Missed post-trade opportunity penalty
     if pnl > 5 and post_exit_move > 10:
         reward -= 0.4
 
-    # ✅ Classifier disagreement penalty
+    # ❌ Classifier disagreement penalty
     if setup_quality < 0.3 and confidence > 0.8:
         reward -= 0.4
 
-    # ✅ Extra large trade reward
+    # 💰 Extra large win bonus
     if abs(pnl) > 30:
         reward += 0.5
 
-    # ✅ Adaptive exploration encouragement if recent reward Sharpe is poor
+    # 📉 Adaptive exploration if rolling Sharpe is weak
     if len(reward_window) == reward_window.maxlen:
         rolling_sharpe = compute_sharpe_style_reward(list(reward_window))
         if rolling_sharpe < 0.1 and random.random() < 0.2:
@@ -147,10 +135,6 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
 
 # ─────────────────────────────────────────────────────────
 def compute_sharpe_style_reward(returns, rf: float = 0.0, eps: float = 1e-8) -> float:
-    """
-    Basic Sharpe‑ratio style metric for a list/array of returns.
-    Returns 0 if fewer than 2 points.
-    """
     if len(returns) < 2:
         return 0.0
     r = np.asarray(returns, dtype=np.float32) - rf
@@ -178,9 +162,6 @@ def compute_shaped_reward(log_entry: dict) -> float:
 
 # ─────────────────────────────────────────────────────────
 def _append_csv(timestamp: str, shaped: float, raw: float):
-    """
-    Append reward row to CSV: timestamp, raw, shaped
-    """
     is_new = not HIST_CSV.exists()
     with HIST_CSV.open("a", newline="") as f:
         w = csv.writer(f)
