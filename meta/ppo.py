@@ -113,63 +113,84 @@ class PPOAgent:
             returns.insert(0, R)
         return torch.tensor(returns, dtype=torch.float32)
 
-    def train_step(self,
-                   states: torch.Tensor,
-                   actions_dir: torch.Tensor,
-                   target_conf: torch.Tensor,
-                   rewards: List[float],
-                   dones: List[int],
-                   next_states: torch.Tensor,
-                   old_logp: Optional[torch.Tensor],
-                   weights: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def train_step(
+    self,
+    states: torch.Tensor,
+    actions_dir: torch.Tensor,
+    target_conf: torch.Tensor,
+    rewards: List[float],
+    dones: List[int],
+    next_states: torch.Tensor,
+    old_logp: Optional[torch.Tensor],
+    weights: Optional[torch.Tensor] = None
+) -> torch.Tensor:
+    device = next(self.net.parameters()).device
 
-        device = next(self.net.parameters()).device
+    states = states.to(device)
+    next_states = next_states.to(device)
+    actions_dir = actions_dir.to(device)
+    target_conf = target_conf.to(device)
 
-        states = states.to(device)
-        next_states = next_states.to(device)
-        actions_dir = actions_dir.to(device)
-        target_conf = target_conf.to(device)
-        if old_logp is not None:
-            old_logp = old_logp.to(device)
-        else:
-            old_logp = torch.zeros_like(actions_dir, dtype=torch.float32, device=device)
+    if weights is None:
+        weights = torch.ones_like(actions_dir, dtype=torch.float32)
+    weights = weights.to(device)
 
-        if weights is not None:
-            weights = weights.to(device)
+    # Compute target values
+    with torch.no_grad():
+        _, _, next_v = self.net(next_states)
+        last_value = next_v.mean().item()
 
-        with torch.no_grad():
-            _, _, next_v = self.net(next_states)
-            last_value = next_v.mean().item()
+    _, _, values = self.net(states)
+    returns = self._discounted_returns(rewards, dones, last_value, self.gamma).to(device)
+    advantages = returns - values.detach()
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        _, _, values = self.net(states)
-        returns = self._discounted_returns(rewards, dones, last_value, self.gamma).to(device)
-        advantages = returns - values.detach()
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    # Forward pass
+    dir_logits, conf_pred, value_pred = self.net(states)
+    dist = Categorical(logits=dir_logits)
+    log_probs = dist.log_prob(actions_dir)
 
-        dir_logits, conf_pred, value_pred = self.net(states)
-        dist = Categorical(logits=dir_logits)
-        logp = dist.log_prob(actions_dir)
-        entropy = dist.entropy().mean()
+    if old_logp is None:
+        old_logp = log_probs.detach()
 
-        ratio = torch.exp(logp - old_logp)
-        surr1 = ratio * advantages
-        surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+    # PPO clipped surrogate objective
+    ratios = torch.exp(log_probs - old_logp)
+    surrogate1 = ratios * advantages
+    surrogate2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+    policy_loss = -torch.min(surrogate1, surrogate2)
 
-        if weights is not None:
-            actor_loss = -(weights * torch.min(surr1, surr2)).mean()
-            critic_loss = (weights * (value_pred - returns) ** 2).mean()
-            conf_loss = (weights * (conf_pred - target_conf) ** 2).mean()
-        else:
-            actor_loss = -torch.min(surr1, surr2).mean()
-            critic_loss = nn.MSELoss()(value_pred, returns)
-            conf_loss = nn.MSELoss()(conf_pred, target_conf)
+    # Confidence supervision loss (MSE)
+    conf_loss = nn.functional.mse_loss(conf_pred, target_conf, reduction="none")
 
-        total_loss = actor_loss + 0.5 * critic_loss + self.conf_loss_w * conf_loss - self.entropy_coef * entropy
+    # Value loss (critic)
+    value_loss = nn.functional.mse_loss(value_pred, returns, reduction="none")
 
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
-        self.optimizer.step()
+    # Entropy bonus
+    entropy = dist.entropy()
+    entropy_loss = -self.entropy_coef * entropy
 
-        td_error = (value_pred.detach() - returns).abs()
-        return td_error
+    total_loss = (
+        policy_loss +
+        self.conf_loss_w * conf_loss +
+        value_loss +
+        entropy_loss
+    )
+
+    # Apply sample weights from PER
+    total_loss = (total_loss * weights).mean()
+
+    self.optimizer.zero_grad()
+    total_loss.backward()
+    torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
+    self.optimizer.step()
+
+    # KL divergence (for diagnostics or KL penalty)
+    with torch.no_grad():
+        approx_kl = (old_logp - log_probs).mean().item()
+
+    logger.debug("Loss components — policy: %.6f  conf: %.6f  value: %.6f  entropy: %.6f  KL: %.6f",
+                 policy_loss.mean().item(), conf_loss.mean().item(), value_loss.mean().item(),
+                 entropy.mean().item(), approx_kl)
+
+    return (advantages.detach() ** 2)  # TD error proxy
+        
