@@ -24,7 +24,7 @@ from config import (
 
 CSV_PATH = "meta/reward_history.csv"
 NOTIFY_EVERY = 20
-BUFFER_CAPACITY = 10_000
+BUFFER_CAPACITY = 20000
 ACTION_DIM = 3
 DEBUG = True
 
@@ -32,18 +32,7 @@ def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
         return []
     with open(META_LOG_PATH, "r") as f:
-        all_rows = [json.loads(line) for line in f if line.strip()]
-    
-    # Filter out poor-quality experiences
-    filtered = [
-        r for r in all_rows
-        if r.get("reward", 0) > -0.05
-        and r.get("meta_confidence", 0) > 0.3
-        and r.get("sharpe", 0) > 0.5
-    ]
-    
-    logger.info("Loaded %d raw experiences, filtered to %d high-quality samples", len(all_rows), len(filtered))
-    return filtered
+        return [json.loads(line) for line in f if line.strip()]
 
 def _discover_state_dim(rows):
     for r in rows:
@@ -62,13 +51,15 @@ def _pad_or_trim(vec, dim):
 
 def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
-    for row in rows:
+    rewards = []
+    for row in reversed(rows[-BUFFER_CAPACITY:]):
         ms = row.get("meta_state")
         if not isinstance(ms, (list, np.ndarray)):
             continue
         st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
 
         rew = float(row.get("reward", 0))
+        rewards.append(rew)
 
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         if isinstance(act_raw, dict):
@@ -77,7 +68,10 @@ def _prep_buffer(rows, dim):
             act = (int(act_raw), 0.5)
 
         buf.add(st, act, rew, st, True)
+
     logger.info("Replay buffer populated: %d samples", len(buf))
+    logger.info("Reward stats â avg: %.4f, std: %.4f, max: %.2f, min: %.2f",
+                np.mean(rewards), np.std(rewards), np.max(rewards), np.min(rewards))
     return buf
 
 def _append_csv(epoch_idx, avg_r):
@@ -90,7 +84,7 @@ def _append_csv(epoch_idx, avg_r):
         writer.writerow([epoch_idx, avg_r])
 
 def train():
-    logger.info("🚀 PPO meta-agent training started")
+    logger.info("ð PPO meta-agent training started")
     update_status("last_ppo_attempt")
 
     rows = _load_rows()
@@ -138,6 +132,7 @@ def train():
 
             states_arr = np.array(states, dtype=np.float32)
             states_t = torch.from_numpy(states_arr)
+
             next_t    = states_t.clone()
             dirs_t    = torch.tensor(dirs, dtype=torch.long)
             confs_t   = torch.tensor(confs, dtype=torch.float32)
@@ -169,7 +164,6 @@ def train():
 
         with torch.no_grad():
             agent.entropy_coef.mul_(decay_rate)
-            agent.entropy_coef.data.clamp_(min=0.002)
 
         avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
         std_reward = float(np.std(epoch_rewards)) if epoch_rewards else 0.0
@@ -188,7 +182,7 @@ def train():
             agent.scheduler.step(avg_reward)
 
         logger.info(
-            "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
+            "ð Epoch %d/%d â avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
             epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward,
             agent.entropy_coef.item(), current_lr if current_lr is not None else 0.0
         )
@@ -217,7 +211,7 @@ def train():
     except Exception as e:
         logger.error("Meta agent report failed: %s", str(e))
 
-    send_telegram_message("✅ Dual-head PPO training completed.")
+    send_telegram_message("â Dual-head PPO training completed.")
 
 if __name__ == "__main__":
     train()
