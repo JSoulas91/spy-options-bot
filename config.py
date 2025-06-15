@@ -79,7 +79,7 @@ DEBUG_OPTION_FILTER       = os.getenv("DEBUG_OPTION_FILTER", "false").lower() ==
 
 # === META / PPO TRAINING ===
 EPOCHS               = int(os.getenv("EPOCHS", 20))
-BATCH_SIZE           = int(os.getenv("BATCH_SIZE", 64))
+BATCH_SIZE           = int(os.getenv("BATCH_SIZE", 1024))
 BUFFER_ALPHA         = float(os.getenv("BUFFER_ALPHA", 0.6))
 BUFFER_BETA_START    = float(os.getenv("BUFFER_BETA_START", 0.4))
 BUFFER_BETA_INCREMENT = float(os.getenv("BUFFER_BETA_INCREMENT", 0.004))
