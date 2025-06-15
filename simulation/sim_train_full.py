@@ -9,15 +9,18 @@ from meta.meta_agent    import MetaAgent
 from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_utils import send_telegram_message
 from utils.logger        import bot_logger as logger
-from ml.logger           import log_training_example  # ML logger import
+from ml.logger           import log_training_example
 
 # ───────── simulation params
 SIM_DAYS            = 60
-START_PRICE         = 450.0
+TRADES_PER_DAY      = 10
 GBM_MU              = 0.08
+GBM_SIGMA           = 0.22
+START_PRICE         = 450.0
 
 META_LOG_PATH       = Path("meta/meta_log.jsonl")
 RNG                 = random.Random(42)
+GARBAGE_KEEP_PROB   = 0.05  # 5% chance to retain garbage trades
 
 meta_agent = MetaAgent()
 
@@ -26,9 +29,8 @@ meta_agent = MetaAgent()
 # ╰──────────────────────────────────────────────────────────╯
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
-    for i in range(1, n_steps):
-        intraday_vol_boost = 1.2 if i < 60 or i > 330 else 1.0
-        shock = RNG.normalvariate(0, 1) * intraday_vol_boost
+    for _ in range(1, n_steps):
+        shock = RNG.normalvariate(0, 1)
         s_t   = prices[-1] * math.exp((mu - 0.5 * sigma ** 2) * dt +
                                       sigma * math.sqrt(dt) * shock)
         prices.append(round(s_t, 2))
@@ -71,12 +73,7 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
 
     slippage_pct = (fill_price - price_sig) / price_sig + RNG.gauss(0, 0.001)
 
-    # Flash spike/crash logic (~2% chance)
-    if RNG.random() < 0.02:
-        move_pct = RNG.uniform(-3.0, 3.0)  # Extreme scenario
-    else:
-        move_pct = RNG.uniform(-0.6, 0.6)
-
+    move_pct     = RNG.uniform(-0.6, 0.6)
     raw_pnl_pct  = move_pct * RNG.uniform(0.8, 1.2) * 0.3
     raw_pnl_pct  = abs(raw_pnl_pct) if RNG.random() < confidence else -abs(raw_pnl_pct)
     raw_pnl_pct  = max(min(raw_pnl_pct, 1.8), -0.9)
@@ -104,6 +101,21 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
 
 def append_meta_log(trade: dict, vix_val: float):
     META_LOG_PATH.parent.mkdir(exist_ok=True)
+    shaped_reward = compute_shaped_reward({
+        "trade": trade,
+        "market": {"vix": vix_val},
+        "exit_reason": "sim_exit"
+    })
+
+    # Filter out garbage trades unless randomly kept
+    if (
+        abs(shaped_reward) < 0.05 or
+        abs(trade["pnl"]) < 0.1 or
+        trade["confidence"] < 0.1
+    ):
+        if RNG.random() > GARBAGE_KEEP_PROB:
+            return
+
     payload = {
         "timestamp":   trade["timestamp"],
         "trade":       trade,
@@ -111,13 +123,10 @@ def append_meta_log(trade: dict, vix_val: float):
         "exit_reason": "sim_exit",
         "meta_state":  trade["meta_state"],
         "meta_action": trade["meta_action"],
-        "reward":      compute_shaped_reward({
-                           "trade": trade,
-                           "market": {"vix": vix_val},
-                           "exit_reason": "sim_exit"
-                       }),
+        "reward":      shaped_reward,
         "done": True
     }
+
     with META_LOG_PATH.open("a") as fh:
         fh.write(json.dumps(payload) + "\n")
 
@@ -131,25 +140,13 @@ def simulate():
 
     for day in range(SIM_DAYS):
         logger.info(f"── Day {day+1}/{SIM_DAYS}")
-
-        # Regime-driven volatility
-        vix_today = RNG.uniform(14, 28)
-        sigma     = 0.15 + (vix_today - 12) * 0.01
-
         minutes_per_day = 390
         prices = gbm_path(minutes_per_day, current_price,
-                          GBM_MU / 252, sigma, dt=1/390)
+                          GBM_MU / 252, GBM_SIGMA / np.sqrt(252), dt=1/390)
         current_price = prices[-1]
+        vix_today     = RNG.uniform(14, 28)
 
-        # Vary trades per day by volatility
-        if vix_today < 16:
-            trades_today = RNG.randint(8, 12)
-        elif vix_today < 22:
-            trades_today = RNG.randint(6, 9)
-        else:
-            trades_today = RNG.randint(3, 6)
-
-        for step in range(trades_today):
+        for step in range(TRADES_PER_DAY):
             trade = simulate_trade(day, step, prices, vix_today)
             append_meta_log(trade, vix_today)
 
@@ -185,7 +182,15 @@ def simulate():
             time.sleep(0.05)
 
     logger.info("✅ Simulation finished.")
-    send_telegram_message("✅ Simulation finished.")  # Training disabled
+    send_telegram_message("✅ Simulation finished. PPO training not triggered.")
+
+    # PPO training is now manual
+    # try:
+    #     subprocess.run(["python3", "meta/train_meta_agent.py"], check=True)
+    #     logger.info("PPO training completed successfully.")
+    # except subprocess.CalledProcessError as e:
+    #     logger.error(f"❌ PPO training failed: {e}")
+    #     send_telegram_message("⚠️ PPO training failed – check VPS logs.")
 
 
 if __name__ == "__main__":
