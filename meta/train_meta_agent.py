@@ -22,7 +22,7 @@ from config import (
 )
 
 CSV_PATH = "meta/reward_history.csv"
-NOTIFY_EVERY = 1
+NOTIFY_EVERY = 10
 BUFFER_CAPACITY = 30000
 ACTION_DIM = 3
 DEBUG = True
