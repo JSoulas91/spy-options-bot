@@ -13,7 +13,7 @@ from utils.logger import bot_logger as logger
 
 # ─────────────────────────────────────────────────────────
 ROLL_WINDOW = 20
-MIN_HIGH_REWARD = 1.0  # New: Used to help prioritize high-quality experiences
+MIN_HIGH_REWARD = 1.5  # New: Used to help prioritize high-quality experiences
 reward_window: deque[float] = deque(maxlen=ROLL_WINDOW)
 
 HIST_CSV = Path("meta/reward_history.csv")
