@@ -26,7 +26,7 @@ NOTIFY_EVERY = 2
 BUFFER_CAPACITY = 20000
 ACTION_DIM = 3
 DEBUG = True
-MIN_HIGH_REWARD = 1.5  # Threshold for what counts as a high-quality trade
+MIN_HIGH_REWARD = 1.5  # Only train if at least one good reward exists
 
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
@@ -52,7 +52,12 @@ def _pad_or_trim(vec, dim):
 def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
     rewards = []
-    for row in reversed(rows[-BUFFER_CAPACITY:]):
+
+    # 🔀 Shuffle before adding to buffer to avoid recency bias
+    recent_rows = rows[-BUFFER_CAPACITY:]
+    np.random.shuffle(recent_rows)
+
+    for row in recent_rows:
         ms = row.get("meta_state")
         if not isinstance(ms, (list, np.ndarray)):
             continue
@@ -103,7 +108,12 @@ def train():
         logger.error("Replay buffer too small to train.")
         return
 
-    # Balance reward samples
+    # 🔍 Skip training if no meaningful high-quality samples
+    if np.max(all_rewards) < MIN_HIGH_REWARD:
+        logger.warning("No high-reward trades (reward > %.2f). Training skipped.", MIN_HIGH_REWARD)
+        return
+
+    # Reward stratification for balanced sampling
     rewards_np = np.array(all_rewards)
     high_rew_cutoff = np.percentile(rewards_np, 70)
     low_rew_cutoff = np.percentile(rewards_np, 30)
@@ -113,7 +123,6 @@ def train():
 
     agent = PPOAgent(state_dim=state_dim)
     agent.entropy_coef.data.fill_(ENTROPY_COEF_START)
-
     decay_rate = (ENTROPY_COEF_END / ENTROPY_COEF_START) ** (1 / EPOCHS)
     logger.info("Entropy decay rate per epoch: %.10f", decay_rate)
 
