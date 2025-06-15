@@ -86,7 +86,6 @@ BUFFER_BETA_INCREMENT = float(os.getenv("BUFFER_BETA_INCREMENT", 0.004))
 META_LOG_PATH        = os.getenv("META_LOG_PATH", "meta/meta_log.jsonl")
 ENTROPY_COEF_START   = float(os.getenv("ENTROPY_COEF_START", 0.08))
 ENTROPY_COEF_END     = float(os.getenv("ENTROPY_COEF_END", 0.008))
-ENTROPY_DECAY_STEPS  = int(os.getenv("ENTROPY_DECAY_STEPS", 78000))
 META_MODEL_PATH = os.getenv("META_MODEL_PATH", "meta/models/ppo_agent.pth")
 META_INFO_PATH = "meta/meta_agent_info.json"
 META_STATE_LOOKBACK_MINUTES = 60
