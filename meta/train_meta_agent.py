@@ -3,7 +3,6 @@ import sys
 import json
 import csv
 from typing import List, Dict
-
 import numpy as np
 import torch
 
@@ -27,6 +26,7 @@ NOTIFY_EVERY = 2
 BUFFER_CAPACITY = 20000
 ACTION_DIM = 3
 DEBUG = True
+MIN_HIGH_REWARD = 1.5  # Threshold for what counts as a high-quality trade
 
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
@@ -72,7 +72,7 @@ def _prep_buffer(rows, dim):
     logger.info("Replay buffer populated: %d samples", len(buf))
     logger.info("Reward stats — avg: %.4f, std: %.4f, max: %.2f, min: %.2f",
                 np.mean(rewards), np.std(rewards), np.max(rewards), np.min(rewards))
-    return buf
+    return buf, rewards
 
 def _append_csv(epoch_idx, avg_r):
     os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
@@ -98,9 +98,17 @@ def train():
         return
 
     save_meta_agent_dims(state_dim, ACTION_DIM)
-    buffer = _prep_buffer(rows, state_dim)
+    buffer, all_rewards = _prep_buffer(rows, state_dim)
     if len(buffer) < BATCH_SIZE:
         logger.error("Replay buffer too small to train.")
+        return
+
+    # Balance reward samples
+    rewards_np = np.array(all_rewards)
+    high_rew_cutoff = np.percentile(rewards_np, 70)
+    low_rew_cutoff = np.percentile(rewards_np, 30)
+    if high_rew_cutoff <= low_rew_cutoff:
+        logger.warning("Insufficient reward spread. Training skipped.")
         return
 
     agent = PPOAgent(state_dim=state_dim)
@@ -117,7 +125,7 @@ def train():
         num_batches = max(1, len(buffer) // BATCH_SIZE)
 
         for _ in range(num_batches):
-            batch = buffer.sample(BATCH_SIZE, beta)
+            batch = buffer.sample_balanced(BATCH_SIZE, beta, high_rew_cutoff, low_rew_cutoff)
             states = batch['states']
             actions = batch['actions']
             rewards = batch['rewards']
@@ -125,34 +133,23 @@ def train():
             indices = batch['indices']
             weights = batch['weights']
 
-            dirs, confs = [], []
-            for a in actions:
-                dirs.append(int(a[0]))
-                confs.append(float(a[1]))
-
-            states_arr = np.array(states, dtype=np.float32)
-            states_t = torch.from_numpy(states_arr)
-
-            next_t    = states_t.clone()
-            dirs_t    = torch.tensor(dirs, dtype=torch.long)
-            confs_t   = torch.tensor(confs, dtype=torch.float32)
+            dirs, confs = zip(*[(int(a[0]), float(a[1])) for a in actions])
+            states_t = torch.tensor(states, dtype=torch.float32)
+            next_t   = states_t.clone()
+            dirs_t   = torch.tensor(dirs, dtype=torch.long)
+            confs_t  = torch.tensor(confs, dtype=torch.float32)
             weights_t = torch.tensor(weights, dtype=torch.float32)
-            old_logp  = None
 
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
                 rewards=rewards,
                 dones=dones,
                 next_states=next_t,
-                old_logp=old_logp,
+                old_logp=None,
                 weights=weights_t
             )
 
-            if hasattr(td_err, "detach"):
-                td_err_list = td_err.detach().cpu().tolist()
-            else:
-                td_err_list = list(td_err) if isinstance(td_err, (list, np.ndarray)) else [0.0] * BATCH_SIZE
-
+            td_err_list = td_err.detach().cpu().tolist() if hasattr(td_err, "detach") else list(td_err)
             buffer.update_priorities(indices, td_err_list)
             epoch_rewards.extend(rewards)
 
@@ -173,10 +170,7 @@ def train():
         history_rewards.append(avg_reward)
         _append_csv(epoch, avg_reward)
 
-        current_lr = None
-        for param_group in agent.optimizer.param_groups:
-            current_lr = param_group.get("lr", None)
-            break
+        current_lr = agent.optimizer.param_groups[0].get("lr", 0.0)
 
         if hasattr(agent, "scheduler") and agent.scheduler:
             agent.scheduler.step(avg_reward)
@@ -184,7 +178,7 @@ def train():
         logger.info(
             "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
             epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward,
-            agent.entropy_coef.item(), current_lr if current_lr is not None else 0.0
+            agent.entropy_coef.item(), current_lr
         )
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
@@ -198,7 +192,7 @@ def train():
                     "reward_max": max_reward,
                     "reward_min": min_reward,
                     "entropy_coef": agent.entropy_coef.item(),
-                    "learning_rate": current_lr if current_lr is not None else 0.0
+                    "learning_rate": current_lr
                 },
                 history_rewards
             )
