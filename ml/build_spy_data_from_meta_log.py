@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from utils.logger import bot_logger
-from technical_analysis.indicators import compute_trade_indicators
+from technical_analysis.indicators import calculate_indicators  # Use updated indicator function
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_NPZ = Path("ml/dataset.npz")
@@ -12,16 +12,26 @@ OUTPUT_CSV = Path("ml/spy_data.csv")
 
 def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
     trade = entry.get("trade", {})
+    bar = entry.get("bar", {})
     market = entry.get("market", {})
-    prices = entry.get("prices", {})
 
-    if not prices or not all(k in prices for k in ("open", "high", "low", "close", "volume")):
-        bot_logger.warning("[Feature Extract] Skipping entry due to missing price data")
+    open_, high, low, close = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close")
+    volume = bar.get("volume", 1.0)
+
+    if None in (open_, high, low, close):
+        bot_logger.warning("[Feature Extract] Skipping entry due to missing bar data")
         return None
 
     try:
-        df = pd.DataFrame(prices)
-        indicators = compute_trade_indicators(df)
+        df_bar = pd.DataFrame([{
+            'open': open_,
+            'high': high,
+            'low': low,
+            'close': close,
+            'volume': volume
+        }])
+        df_ind = calculate_indicators(df_bar)
+        row = df_ind.iloc[0]
 
         pnl = float(trade.get("pnl", 0))
         confidence = float(trade.get("confidence", 0))
@@ -31,9 +41,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
         trade_type = int(trade.get("trade_type", 0))  # 0=Day, 1=Swing
         total_signals_today = int(trade.get("total_signals_today", 10))
 
-        # Select most recent row of indicators
-        latest = indicators.iloc[-1]
-
         features = np.array([
             pnl,
             confidence,
@@ -42,17 +49,17 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
             realized_vol,
             trade_type,
             total_signals_today,
-            latest["EMA_20"],
-            latest["RSI_14"],
-            latest["MACD"],
-            latest["MACD_signal"],
-            latest["MACD_hist"],
-            latest["BB_upper"],
-            latest["BB_middle"],
-            latest["BB_lower"],
-            latest["VWAP"],
-            latest["ATR_14"],
-            latest["ADX_14"]
+            row["EMA_20"],
+            row["RSI_14"],
+            row["MACD"],
+            row["MACD_signal"],
+            row["MACD_hist"],
+            row["BB_upper"],
+            row["BB_middle"],
+            row["BB_lower"],
+            row["VWAP"],
+            row["ATR_14"],
+            row["ADX_14"]
         ], dtype=np.float32)
 
         label = 1 if pnl > 5 else 0  # Good trades only
