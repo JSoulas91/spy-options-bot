@@ -43,7 +43,7 @@ def load_data():
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"{DATA_PATH} not found.")
     df = pd.read_csv(DATA_PATH, parse_dates=["timestamp"])
-    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
+    logger.info(f"[Load Data] Loaded {len(df)} rows with semantic columns: {list(df.columns)}")
     return df.sort_values("timestamp")
 
 def create_labels(df: pd.DataFrame) -> pd.DataFrame:
