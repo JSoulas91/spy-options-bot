@@ -1,71 +1,76 @@
-#ml/build_spy_data_from_meta_log.py
-
-import os
 import json
-import pandas as pd
-from tqdm import tqdm
-from datetime import datetime
-from technical_analysis.indicators import calculate_indicators
+import os
+import numpy as np
+from pathlib import Path
+from utils.logger import bot_logger
 
-# === Config ===
-LOG_PATH = os.path.join("meta", "meta_log.jsonl")
-OUTPUT_PATH = os.path.join("ml", "spy_data.csv")
+META_LOG_PATH = Path("meta/meta_log.jsonl")
+OUTPUT_DATASET = Path("ml/dataset.npz")
 
-def extract_rows(log_path):
-    rows = []
-    with open(log_path, "r") as f:
-        for line in tqdm(f, desc="Parsing log"):
-            try:
-                obj = json.loads(line.strip())
-                ts = obj.get("timestamp")
-                state = obj.get("state", {})
-                reward = obj.get("reward")
+def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
+    """
+    Transform a meta log entry into ML features and binary label (1 = good trade).
+    Returns None if trade is invalid or unusable.
+    """
+    trade = entry.get("trade", {})
+    market = entry.get("market", {})
 
-                if not ts or not state or reward is None:
-                    continue
+    try:
+        pnl = float(trade.get("pnl", 0))
+        confidence = float(trade.get("confidence", 0))
+        setup_quality = float(trade.get("setup_quality", 0))
+        vix = float(market.get("vix", 15))
+        realized_vol = float(market.get("realized_vol", 1.0))
+        trade_type = int(trade.get("trade_type", 0))  # 0=Day, 1=Swing
+        total_signals_today = int(trade.get("total_signals_today", 10))
 
-                row = {
-                    "timestamp": ts,
-                    "open": state.get("open"),
-                    "high": state.get("high"),
-                    "low": state.get("low"),
-                    "close": state.get("close"),
-                    "volume": state.get("volume"),
-                    "label": int(reward > 0)  # 1 if profitable, 0 if not
-                }
+        features = np.array([
+            pnl,
+            confidence,
+            setup_quality,
+            vix,
+            realized_vol,
+            trade_type,
+            total_signals_today
+        ], dtype=np.float32)
 
-                # Only keep rows with full OHLCV
-                if all(v is not None for v in row.values()):
-                    rows.append(row)
+        label = 1 if pnl > 5 else 0  # Label good trades as 1
 
-            except Exception:
-                continue  # skip bad lines
+        return features, label
 
-    return pd.DataFrame(rows)
+    except Exception as e:
+        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}")
+        return None
 
-def main():
-    if not os.path.exists(LOG_PATH):
-        print(f"[Error] Cannot find log file: {LOG_PATH}")
+def build_dataset():
+    if not META_LOG_PATH.exists():
+        bot_logger.error(f"[Build Dataset] Log file not found: {META_LOG_PATH}")
         return
 
-    df = extract_rows(LOG_PATH)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.sort_values("timestamp").reset_index(drop=True)
+    features = []
+    labels = []
 
-    print(f"[Info] Extracted {len(df)} clean rows from meta_log.jsonl")
+    with META_LOG_PATH.open("r") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+                result = extract_features(entry)
+                if result:
+                    feat, label = result
+                    features.append(feat)
+                    labels.append(label)
+            except json.JSONDecodeError:
+                continue
 
-    if len(df) < 50:
-        print("[Warning] Less than 50 rows — retraining may fail.")
+    features = np.array(features, dtype=np.float32)
+    labels = np.array(labels, dtype=np.int32)
 
-    # Add indicators
-    df = calculate_indicators(df)
+    if len(features) == 0:
+        bot_logger.error("[Build Dataset] No valid entries found.")
+        return
 
-    # Move label to the end
-    label = df.pop("label")
-    df["label"] = label
-
-    df.to_csv(OUTPUT_PATH, index=False)
-    print(f"[Saved] Cleaned spy_data.csv written to: {OUTPUT_PATH}")
+    np.savez_compressed(OUTPUT_DATASET, X=features, y=labels)
+    bot_logger.info(f"[Build Dataset] ✅ Saved {len(features)} entries to {OUTPUT_DATASET}")
 
 if __name__ == "__main__":
-    main()
+    build_dataset()
