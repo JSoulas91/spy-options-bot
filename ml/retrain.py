@@ -130,6 +130,9 @@ def retrain_model():
         wrapper = XGBWrapper()
         wrapper.fit(X_train, y_train)
 
+        if not wrapper._fitted:
+            raise RuntimeError("XGBWrapper was not fitted before calibration.")
+
         logger.info("[Calibration] Running calibration …")
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
