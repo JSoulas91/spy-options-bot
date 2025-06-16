@@ -34,7 +34,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
         volume = float(market.get("volume", 0))
 
         # Compute technical indicators
-        indicators = compute_indicators(open_price, high, low, close, volume)
+        indicators = compute_trade_indicators(open_price, high, low, close, volume)
 
         features = np.array([
             pnl,
