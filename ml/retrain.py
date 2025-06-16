@@ -76,8 +76,12 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
     def __init__(self):
         self.booster = None
         self._fitted = False
+        self.feature_names = None
 
     def fit(self, X, y):
+        if isinstance(X, pd.DataFrame):
+            self.feature_names = X.columns.tolist()
+            X = X.values
         dtrain = xgb.DMatrix(X, label=y)
         self.booster = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=100)
         self._fitted = True
@@ -86,6 +90,8 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
     def predict_proba(self, X):
         if not self._fitted:
             raise ValueError("This XGBWrapper instance is not fitted yet.")
+        if isinstance(X, pd.DataFrame):
+            X = X[self.feature_names].values
         dmatrix = xgb.DMatrix(X)
         probs = self.booster.predict(dmatrix)
         return np.vstack([1 - probs, probs]).T
