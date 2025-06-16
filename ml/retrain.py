@@ -73,9 +73,9 @@ def plot_calibration(y_true, prob_pos, filename):
     plt.close()
 
 class XGBWrapper(BaseEstimator, ClassifierMixin):
-    def __init__(self, booster=None):
-        self.booster = booster
-        self._fitted = booster is not None
+    def __init__(self):
+        self.booster = None
+        self._fitted = False
 
     def fit(self, X, y):
         dtrain = xgb.DMatrix(X, label=y)
