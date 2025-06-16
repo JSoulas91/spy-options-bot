@@ -28,9 +28,9 @@ CAL_PLOT_PATH   = os.path.join(BASE_DIR, "calibration_plot.png")
 MAX_ROWS = 10000
 
 def send_telegram_message(message: str, photo_path: str = None):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
         requests.post(url, data=data, timeout=10)
         if photo_path and os.path.exists(photo_path):
             url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -57,16 +57,6 @@ def prune_training_data(df: pd.DataFrame) -> pd.DataFrame:
         df = df.iloc[-MAX_ROWS:]
         logger.info(f"[Data Prune] Training data pruned to last {MAX_ROWS} rows.")
     return df
-
-def get_last_accuracy():
-    try:
-        if os.path.exists(LOG_PATH):
-            df = pd.read_csv(LOG_PATH)
-            if not df.empty:
-                return df.iloc[-1]["accuracy"]
-    except Exception as e:
-        logger.warning(f"[ML Retraining] Couldn't load previous accuracy: {e}")
-    return None
 
 def plot_calibration(y_true, prob_pos, filename):
     prob_true, prob_pred = calibration_curve(y_true, prob_pos, n_bins=10)
@@ -103,7 +93,7 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
 
 def retrain_model():
     try:
-        logger.info("[ML Retraining] Starting warm-start XGBoost retraining with calibration …")
+        logger.info("[ML Retraining] Starting forced cold-start XGBoost retraining …")
         update_status("last_retrain_attempt")
 
         df = load_data()
@@ -134,28 +124,15 @@ def retrain_model():
             "eval_metric": "logloss",
             "learning_rate": 0.1,
             "max_depth": 4,
-            "verbosity": 0,
+            "verbosity": 1,
             "seed": 42,
         }
 
-        retrained = False
-        if os.path.exists(RAW_MODEL_PATH):
-            try:
-                logger.info("[Warm Start] Loading previous model …")
-                booster = xgb.Booster()
-                booster.load_model(RAW_MODEL_PATH)
-                booster = xgb.train(params, dtrain, num_boost_round=20, xgb_model=booster)
-                logger.info("[Warm Start] Booster updated with additional rounds.")
-            except Exception as e:
-                logger.warning(f"[Warm Start] Failed to load or update booster — retraining from scratch. Error: {e}")
-                booster = xgb.train(params, dtrain, num_boost_round=100)
-                retrained = True
-        else:
-            logger.info("[Cold Start] No previous model found — training new …")
-            booster = xgb.train(params, dtrain, num_boost_round=100)
-            retrained = True
-
+        # ✅ Force cold-start training
+        logger.info("[Force Cold Start] Training new XGBoost model …")
+        booster = xgb.train(params, dtrain, num_boost_round=100)
         booster.save_model(RAW_MODEL_PATH)
+
         wrapper = XGBWrapper(booster)
         wrapper.fit()
 
@@ -178,22 +155,16 @@ def retrain_model():
                 f.write("timestamp,accuracy,brier_score\n")
             f.write(f"{now},{acc:.4f},{brier:.4f}\n")
 
-        prev_acc = get_last_accuracy()
-        comparison = f"Compared to last: *{float(prev_acc):.2%}*" if prev_acc else "First run or previous accuracy unavailable"
-
         joblib.dump(calibrator, CAL_MODEL_PATH)
 
         message = (
-            f"📊 *ML {'Warm' if not retrained else 'Cold'} Retraining + Calibration Complete*\n"
+            f"📊 *ML Cold Retraining + Calibration Complete*\n"
             f"🗓️  Date: {now.split()[0]}\n"
             f"🎯 Accuracy: *{acc:.2%}*\n"
-            f"📉 Brier Score: *{brier:.4f}* (Lower is better)\n"
-            f"📈 {comparison}\n"
-            f"🔥 Warm Start: {'Yes' if not retrained else 'No'}\n"
-            f"🎛️ Calibration: Sigmoid (Platt Scaling)\n"
-            f"💾 Models: Raw booster + Calibrated sklearn wrapper\n"
+            f"📉 Brier Score: *{brier:.4f}*\n"
+            f"🔥 Warm Start: No (forced cold start)\n"
+            f"💾 Models: Raw booster + Calibrated wrapper\n"
             f"✅ Status: Saved & Logged\n"
-            f"📊 Calibration plot attached."
         )
 
         logger.info(f"[ML Retraining] Success — Accuracy: {acc:.2%}, Brier: {brier:.4f}")
