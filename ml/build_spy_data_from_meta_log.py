@@ -1,5 +1,4 @@
 import json
-import os
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -38,10 +37,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     market = entry.get("market", {})
     timestamp = entry.get("timestamp")
 
-    open_ = bar.get("open")
-    high = bar.get("high")
-    low = bar.get("low")
-    close = bar.get("close")
+    open_, high, low, close = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close")
     volume = bar.get("volume", 1.0)
 
     if None in (open_, high, low, close):
@@ -60,6 +56,10 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         df_ind = calculate_indicators(df_bar)
         row = df_ind.iloc[0]
 
+        # Helper to get value or fallback
+        def safe_val(name: str, fallback: float = 0.0):
+            return float(row[name]) if name in row and pd.notna(row[name]) else fallback
+
         pnl = float(trade.get("pnl", 0.0))
         confidence = float(trade.get("confidence", 0.0))
         setup_quality = float(trade.get("setup_quality", 0.5))
@@ -68,9 +68,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         trade_type = int(trade.get("trade_type", 0))
         total_signals_today = int(trade.get("total_signals_today", 0))
 
-        def safe_val(name: str, fallback: float = 0.0):
-            return float(row[name]) if name in row and pd.notna(row[name]) else fallback
-
+        # VWAP fallback to close if not present
         vwap_value = safe_val("VWAP", fallback=close)
 
         features = np.array([
@@ -99,7 +97,8 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         return features, label, timestamp
 
     except Exception as e:
-        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}")
+        available_cols = list(df_ind.columns)
+        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}. Available columns: {available_cols}")
         return None
 
 
@@ -108,9 +107,7 @@ def build_dataset():
         bot_logger.error(f"[Build Dataset] Log file not found: {META_LOG_PATH}")
         return
 
-    features = []
-    labels = []
-    timestamps = []
+    features, labels, timestamps = [], [], []
 
     with META_LOG_PATH.open("r") as f:
         for line in f:
