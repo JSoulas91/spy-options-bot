@@ -135,11 +135,15 @@ def retrain_model():
         booster = xgb.train(params, dtrain, num_boost_round=100)
         booster.save_model(RAW_MODEL_PATH)
         
-        # Fit wrapper from scratch (with full train set)
+        logger.info("[Force Cold Start] Training new XGBoost model wrapper …")
+
+        # Wrap and fit
         wrapper = XGBWrapper()
-        wrapper.fit(X_train, y_train)
+        wrapper.fit(X_train, y_train)  # ⬅️ IMPORTANT: this does actual training!
 
         logger.info("[Calibration] Running calibration …")
+
+        # Then calibrate
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
