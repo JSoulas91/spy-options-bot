@@ -157,7 +157,7 @@ def retrain_model():
         wrapper = XGBWrapper(booster)
         wrapper.fit(None, None)  # ✅ Manually mark as fitted
 
-        calibrator = CalibratedClassifierCV(base_estimator=wrapper, method="sigmoid", cv="prefit")
+        calibrator = CalibratedClassifierCV(estimator=wrapper, method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
         y_val_pred = calibrator.predict(X_val)
