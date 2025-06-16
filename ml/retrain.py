@@ -120,30 +120,11 @@ def retrain_model():
             X, y, test_size=0.2, random_state=42, stratify=y
         )
 
-        dtrain = xgb.DMatrix(X_train, label=y_train)
-        params = {
-            "objective": "binary:logistic",
-            "eval_metric": "logloss",
-            "learning_rate": 0.1,
-            "max_depth": 4,
-            "verbosity": 1,
-            "seed": 42,
-        }
-
-        # ✅ Force cold-start training
-        logger.info("[Force Cold Start] Training new XGBoost model …")
-        booster = xgb.train(params, dtrain, num_boost_round=100)
-        booster.save_model(RAW_MODEL_PATH)
-        
         logger.info("[Force Cold Start] Training new XGBoost model wrapper …")
-
-        # Wrap and fit
         wrapper = XGBWrapper()
-        wrapper.fit(X_train, y_train)  # ⬅️ IMPORTANT: this does actual training!
+        wrapper.fit(X_train, y_train)
 
         logger.info("[Calibration] Running calibration …")
-
-        # Then calibrate
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
@@ -153,16 +134,19 @@ def retrain_model():
         acc = accuracy_score(y_val, y_val_pred)
         brier = brier_score_loss(y_val, y_val_proba)
 
-        plot_calibration(y_val, y_val_proba, CAL_PLOT_PATH)
+        # Save models
+        if wrapper.booster:
+            wrapper.booster.save_model(RAW_MODEL_PATH)
+        joblib.dump(calibrator, CAL_MODEL_PATH)
 
+        # Calibration plot + log
+        plot_calibration(y_val, y_val_proba, CAL_PLOT_PATH)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_exists = os.path.exists(LOG_PATH)
         with open(LOG_PATH, "a") as f:
             if not log_exists:
                 f.write("timestamp,accuracy,brier_score\n")
             f.write(f"{now},{acc:.4f},{brier:.4f}\n")
-
-        joblib.dump(calibrator, CAL_MODEL_PATH)
 
         message = (
             f"📊 *ML Cold Retraining + Calibration Complete*\n"
