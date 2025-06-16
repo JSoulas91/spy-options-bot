@@ -153,7 +153,7 @@ def retrain_model():
         wrapper.fit()
 
         logger.info("[Calibration] Booster already trained — running calibration only …")
-        calibrator = CalibratedClassifierCV(base_estimator=wrapper, method="sigmoid", cv="prefit")
+        calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
         y_val_pred = calibrator.predict(X_val)
