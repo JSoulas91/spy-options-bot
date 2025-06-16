@@ -98,14 +98,13 @@ def retrain_model():
 
         # Load and prepare data
         df = load_data()
-        df = calculate_indicators(df)
 
         # Only calculate indicators if raw OHLCV columns exist
         required_cols = ["open", "high", "low", "close", "volume"]
         if all(col in df.columns for col in required_cols):
-        df = calculate_indicators(df)
-    else:
-    logger.info("[Indicators] Skipped indicator calculation — OHLCV columns missing.")
+            df = calculate_indicators(df)
+        else:
+            logger.info("[Indicators] Skipped indicator calculation — OHLCV columns missing.")
 
         # Drop rows with NaNs (from indicators or shifting)
         before = len(df)
@@ -118,6 +117,9 @@ def retrain_model():
 
         # Prune data if too large
         df = prune_training_data(df)
+
+        # Create labels for classification
+        df = create_labels(df)
 
         # Prepare training data
         X = df.drop(columns=["timestamp", "future_price", "label"])
