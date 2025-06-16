@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from utils.logger import bot_logger
-from technical_analysis.indicators import compute_indicators
+from technical_analysis.indicators import compute_trade_indicators
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_DATASET = Path("ml/dataset.npz")
