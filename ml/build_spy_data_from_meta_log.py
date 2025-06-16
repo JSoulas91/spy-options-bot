@@ -10,7 +10,6 @@ META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_NPZ = Path("ml/dataset.npz")
 OUTPUT_CSV = Path("ml/spy_data.csv")
 
-# Semantic feature column names
 FEATURE_NAMES = [
     "pnl",
     "confidence",
@@ -61,7 +60,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         df_ind = calculate_indicators(df_bar)
         row = df_ind.iloc[0]
 
-        # Features from logs
         pnl = float(trade.get("pnl", 0.0))
         confidence = float(trade.get("confidence", 0.0))
         setup_quality = float(trade.get("setup_quality", 0.5))
@@ -73,7 +71,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         def safe_val(name: str, fallback: float = 0.0):
             return float(row[name]) if name in row and pd.notna(row[name]) else fallback
 
-        vwap_value = safe_val("VWAP", fallback=close)  # fallback to close if VWAP missing
+        vwap_value = close if "VWAP" not in row else safe_val("VWAP", fallback=close)
 
         features = np.array([
             pnl,
