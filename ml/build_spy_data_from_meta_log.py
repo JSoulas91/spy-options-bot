@@ -10,10 +10,12 @@ META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_NPZ = Path("ml/dataset.npz")
 OUTPUT_CSV = Path("ml/spy_data.csv")
 
-def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
+
+def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     trade = entry.get("trade", {})
     bar = entry.get("bar", {})
     market = entry.get("market", {})
+    timestamp = entry.get("timestamp")
 
     open_, high, low, close = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close")
     volume = bar.get("volume", 1.0)
@@ -64,11 +66,12 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
 
         label = 1 if pnl > 5 else 0  # Good trades only
 
-        return features, label
+        return features, label, timestamp
 
     except Exception as e:
         bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}")
         return None
+
 
 def build_dataset():
     if not META_LOG_PATH.exists():
@@ -77,6 +80,7 @@ def build_dataset():
 
     features = []
     labels = []
+    timestamps = []
 
     with META_LOG_PATH.open("r") as f:
         for line in f:
@@ -84,9 +88,10 @@ def build_dataset():
                 entry = json.loads(line)
                 result = extract_features(entry)
                 if result:
-                    feat, label = result
+                    feat, label, ts = result
                     features.append(feat)
                     labels.append(label)
+                    timestamps.append(ts)
             except json.JSONDecodeError:
                 continue
 
@@ -97,12 +102,15 @@ def build_dataset():
     features = np.array(features, dtype=np.float32)
     labels = np.array(labels, dtype=np.int32)
 
-    np.savez_compressed(OUTPUT_NPZ, X=features, y=labels)
+    np.savez_compressed(OUTPUT_NPZ, X=features, y=labels, timestamps=np.array(timestamps))
+
     df_out = pd.DataFrame(features)
+    df_out.insert(0, "timestamp", timestamps)
     df_out["label"] = labels
     df_out.to_csv(OUTPUT_CSV, index=False)
 
     bot_logger.info(f"[Build Dataset] ✅ Saved {len(features)} entries to {OUTPUT_NPZ} and {OUTPUT_CSV}")
+
 
 if __name__ == "__main__":
     build_dataset()
