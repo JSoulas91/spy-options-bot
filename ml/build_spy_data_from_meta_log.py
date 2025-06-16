@@ -38,11 +38,14 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     market = entry.get("market", {})
     timestamp = entry.get("timestamp")
 
-    open_, high, low, close = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close")
+    open_ = bar.get("open")
+    high = bar.get("high")
+    low = bar.get("low")
+    close = bar.get("close")
     volume = bar.get("volume", 1.0)
 
     if None in (open_, high, low, close):
-        bot_logger.warning("[Feature Extract] Skipping entry due to missing bar data")
+        bot_logger.warning("[Feature Extract] Skipping entry due to missing OHLC data")
         return None
 
     try:
@@ -53,16 +56,23 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             'close': close,
             'volume': volume
         }])
+
+        # Compute indicators
         df_ind = calculate_indicators(df_bar)
         row = df_ind.iloc[0]
 
-        pnl = float(trade.get("pnl", 0))
-        confidence = float(trade.get("confidence", 0))
-        setup_quality = float(trade.get("setup_quality", 0))
-        vix = float(market.get("vix", 15))
-        realized_vol = float(market.get("realized_vol", 1.0))
-        trade_type = int(trade.get("trade_type", 0))  # 0=Day, 1=Swing
-        total_signals_today = int(trade.get("total_signals_today", 10))
+        # Primary features from logs
+        pnl = float(trade.get("pnl", 0.0))
+        confidence = float(trade.get("confidence", 0.0))
+        setup_quality = float(trade.get("setup_quality", 0.5))
+        vix = float(market.get("vix", 20.0))
+        realized_vol = float(market.get("realized_vol", 0.02))
+        trade_type = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
+        total_signals_today = int(trade.get("total_signals_today", 0))
+
+        # Indicator values with defaults
+        def get_safe(val, default=0.0):
+            return float(val) if pd.notna(val) else default
 
         features = np.array([
             pnl,
@@ -72,20 +82,20 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             realized_vol,
             trade_type,
             total_signals_today,
-            row["EMA_20"],
-            row["RSI_14"],
-            row["MACD"],
-            row["MACD_signal"],
-            row["MACD_hist"],
-            row["BB_upper"],
-            row["BB_middle"],
-            row["BB_lower"],
-            row["VWAP"],
-            row["ATR_14"],
-            row["ADX_14"]
+            get_safe(row.get("EMA_20")),
+            get_safe(row.get("RSI_14"), 50.0),
+            get_safe(row.get("MACD")),
+            get_safe(row.get("MACD_signal")),
+            get_safe(row.get("MACD_hist")),
+            get_safe(row.get("BB_upper")),
+            get_safe(row.get("BB_middle")),
+            get_safe(row.get("BB_lower")),
+            get_safe(row.get("VWAP", close)),
+            get_safe(row.get("ATR_14")),
+            get_safe(row.get("ADX_14"))
         ], dtype=np.float32)
 
-        label = 1 if pnl > 5 else 0  # Good trades only
+        label = 1 if pnl > 5 else 0  # Good trade threshold
 
         return features, label, timestamp
 
