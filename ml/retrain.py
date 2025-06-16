@@ -100,8 +100,12 @@ def retrain_model():
         df = load_data()
         df = calculate_indicators(df)
 
-        # Create labels based on future VWAP direction
-        df = create_labels(df)
+        # Only calculate indicators if raw OHLCV columns exist
+        required_cols = ["open", "high", "low", "close", "volume"]
+        if all(col in df.columns for col in required_cols):
+        df = calculate_indicators(df)
+    else:
+    logger.info("[Indicators] Skipped indicator calculation — OHLCV columns missing.")
 
         # Drop rows with NaNs (from indicators or shifting)
         before = len(df)
