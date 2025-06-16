@@ -8,17 +8,12 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "spy_data.csv")
 TRAINING_LOG_PATH = os.path.join(BASE_DIR, "training_log.jsonl")
 
-# Define the feature schema including OHLCV and engineered features
+# Define the updated feature schema with semantic indicator names
 DEFAULT_FEATURES = [
-    'open',
-    'high',
-    'low',
-    'volume',
     'vix',
-    'rsi',
-    'macd',
-    'sma_ratio',
-    'volume_zscore',
+    'rsi_14',
+    'ema_20',
+    'vwap',
     'regime_bull',
     'regime_bear',
     'confidence',
@@ -36,7 +31,7 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
     Ensures consistent header and trims file if it grows too large.
     Also logs JSONL version to training_log.jsonl.
     """
-    fieldnames = ['timestamp', 'open', 'high', 'low', 'close', 'volume'] + DEFAULT_FEATURES[4:] + ['label']
+    fieldnames = ['timestamp', 'open', 'high', 'low', 'close', 'volume'] + DEFAULT_FEATURES + ['label']
 
     # Build row for CSV
     row = {
@@ -49,8 +44,8 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
         'label': label if label is not None else ''
     }
 
-    # Add remaining features
-    for key in DEFAULT_FEATURES[4:]:
+    # Add updated semantic features
+    for key in DEFAULT_FEATURES:
         row[key] = features.get(key, '')
 
     file_exists = os.path.exists(DATA_PATH)
