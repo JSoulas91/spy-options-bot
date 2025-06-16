@@ -7,18 +7,22 @@ from utils.logger import bot_logger
 from technical_analysis.indicators import compute_trade_indicators
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
-OUTPUT_DATASET = Path("ml/dataset.npz")
-CSV_OUTPUT_PATH = Path("ml/spy_data.csv")
+OUTPUT_NPZ = Path("ml/dataset.npz")
+OUTPUT_CSV = Path("ml/spy_data.csv")
 
 def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
-    """
-    Transform a meta log entry into ML features and binary label (1 = good trade).
-    Returns None if trade is invalid or unusable.
-    """
     trade = entry.get("trade", {})
     market = entry.get("market", {})
+    prices = entry.get("prices", {})
+
+    if not prices or not all(k in prices for k in ("open", "high", "low", "close", "volume")):
+        bot_logger.warning("[Feature Extract] Skipping entry due to missing price data")
+        return None
 
     try:
+        df = pd.DataFrame(prices)
+        indicators = compute_trade_indicators(df)
+
         pnl = float(trade.get("pnl", 0))
         confidence = float(trade.get("confidence", 0))
         setup_quality = float(trade.get("setup_quality", 0))
@@ -27,14 +31,8 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
         trade_type = int(trade.get("trade_type", 0))  # 0=Day, 1=Swing
         total_signals_today = int(trade.get("total_signals_today", 10))
 
-        open_price = float(market.get("open", 0))
-        high = float(market.get("high", 0))
-        low = float(market.get("low", 0))
-        close = float(market.get("close", 0))
-        volume = float(market.get("volume", 0))
-
-        # Compute technical indicators
-        indicators = compute_trade_indicators(open_price, high, low, close, volume)
+        # Select most recent row of indicators
+        latest = indicators.iloc[-1]
 
         features = np.array([
             pnl,
@@ -44,13 +42,21 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int] | None:
             realized_vol,
             trade_type,
             total_signals_today,
-            indicators["rsi"],
-            indicators["macd"],
-            indicators["sma_ratio"],
-            indicators["volume_zscore"]
+            latest["EMA_20"],
+            latest["RSI_14"],
+            latest["MACD"],
+            latest["MACD_signal"],
+            latest["MACD_hist"],
+            latest["BB_upper"],
+            latest["BB_middle"],
+            latest["BB_lower"],
+            latest["VWAP"],
+            latest["ATR_14"],
+            latest["ADX_14"]
         ], dtype=np.float32)
 
-        label = 1 if pnl > 5 else 0
+        label = 1 if pnl > 5 else 0  # Good trades only
+
         return features, label
 
     except Exception as e:
@@ -77,29 +83,19 @@ def build_dataset():
             except json.JSONDecodeError:
                 continue
 
-    features = np.array(features, dtype=np.float32)
-    labels = np.array(labels, dtype=np.int32)
-
     if len(features) == 0:
         bot_logger.error("[Build Dataset] No valid entries found.")
         return
 
-    # Save .npz
-    np.savez_compressed(OUTPUT_DATASET, X=features, y=labels)
-    bot_logger.info(f"[Build Dataset] ✅ Saved {len(features)} entries to {OUTPUT_DATASET}")
+    features = np.array(features, dtype=np.float32)
+    labels = np.array(labels, dtype=np.int32)
 
-    # Save to CSV
-    try:
-        df = pd.DataFrame(features, columns=[
-            "pnl", "confidence", "setup_quality", "vix",
-            "realized_vol", "trade_type", "total_signals_today",
-            "rsi", "macd", "sma_ratio", "volume_zscore"
-        ])
-        df["label"] = labels
-        df.to_csv(CSV_OUTPUT_PATH, index=False)
-        bot_logger.info(f"[Build Dataset] 📝 Saved CSV to {CSV_OUTPUT_PATH}")
-    except Exception as e:
-        bot_logger.warning(f"[Build Dataset] Failed to save CSV: {e}")
+    np.savez_compressed(OUTPUT_NPZ, X=features, y=labels)
+    df_out = pd.DataFrame(features)
+    df_out["label"] = labels
+    df_out.to_csv(OUTPUT_CSV, index=False)
+
+    bot_logger.info(f"[Build Dataset] ✅ Saved {len(features)} entries to {OUTPUT_NPZ} and {OUTPUT_CSV}")
 
 if __name__ == "__main__":
     build_dataset()
