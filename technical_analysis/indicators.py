@@ -27,50 +27,69 @@ def calculate_bollinger_bands(data: pd.Series, period: int = 20):
     lower = middle - 2 * std
     return upper, middle, lower
 
-def calculate_atr(data: pd.Series, period: int = 14):
-    vwap_high = data.rolling(window=2).max()
-    vwap_low = data.rolling(window=2).min()
-    tr = vwap_high - vwap_low
+def calculate_atr(df: pd.DataFrame, period: int = 14):
+    high_low = df["high"] - df["low"]
+    high_close = (df["high"] - df["close"].shift()).abs()
+    low_close = (df["low"] - df["close"].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(window=period).mean()
     return atr
 
-def calculate_adx(data: pd.Series, period: int = 14):
-    up_move = data.diff().clip(lower=0)
-    down_move = -data.diff().clip(upper=0)
-    tr = data.diff().abs()
-    plus_dm = up_move.rolling(period).mean()
-    minus_dm = down_move.rolling(period).mean()
-    tr14 = tr.rolling(period).mean()
-    plus_di = 100 * (plus_dm / (tr14 + 1e-9))
-    minus_di = 100 * (minus_dm / (tr14 + 1e-9))
+def calculate_adx(df: pd.DataFrame, period: int = 14):
+    plus_dm = df["high"].diff()
+    minus_dm = df["low"].diff()
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+
+    tr1 = df["high"] - df["low"]
+    tr2 = (df["high"] - df["close"].shift()).abs()
+    tr3 = (df["low"] - df["close"].shift()).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(window=period).mean()
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / (atr + 1e-9))
+    minus_di = 100 * (minus_dm.rolling(window=period).mean() / (atr + 1e-9))
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)) * 100
-    adx = dx.rolling(period).mean()
+    adx = dx.rolling(window=period).mean()
     return adx
 
-def calculate_indicators(data: pd.DataFrame):
-    df = data.copy()
+def calculate_indicators(df: pd.DataFrame):
+    df = df.copy()
+
+    # Ensure required columns
+    required = {"open", "high", "low", "close", "volume"}
+    if not required.issubset(df.columns):
+        raise ValueError(f"Missing required columns: {required - set(df.columns)}")
+
+    # Compute VWAP internally
+    typical_price = (df["high"] + df["low"] + df["close"]) / 3
+    df["vwap"] = (typical_price * df["volume"]).cumsum() / df["volume"].cumsum()
+
     price = df["vwap"]
 
     df["ema_20"] = calculate_ema(price, 20)
     df["rsi_14"] = calculate_rsi(price, 14)
     df["macd"], df["macd_signal"], df["macd_hist"] = calculate_macd(price)
     df["bb_upper"], df["bb_middle"], df["bb_lower"] = calculate_bollinger_bands(price, 20)
-    df["atr_14"] = calculate_atr(price, 14)
-    df["adx_14"] = calculate_adx(price, 14)
+    df["atr_14"] = calculate_atr(df, 14)
+    df["adx_14"] = calculate_adx(df, 14)
 
     return df
 
 def compute_trade_indicators(vwap: float, volume: float) -> dict:
     """
-    Create a synthetic 30-bar DataFrame with the latest vwap + volume,
-    allowing indicators to be calculated on sparse history.
+    Create a synthetic 30-bar DataFrame with estimated OHLC values from VWAP.
     """
     num_bars = 30
-    vwap_series = np.append(np.full(num_bars - 1, np.nan), vwap)
+    close_series = np.append(np.full(num_bars - 1, np.nan), vwap)
     volume_series = np.append(np.full(num_bars - 1, np.nan), volume)
 
+    # Assume close = high = low = open = vwap (best-effort for synthetic indicators)
     df = pd.DataFrame({
-        'vwap': vwap_series,
+        'open': close_series,
+        'high': close_series,
+        'low': close_series,
+        'close': close_series,
         'volume': volume_series,
     })
 
