@@ -5,6 +5,7 @@ from datetime import datetime
 from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.model_selection import train_test_split
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+from sklearn.base import BaseEstimator, ClassifierMixin
 import xgboost as xgb
 import joblib
 import matplotlib.pyplot as plt
@@ -81,36 +82,24 @@ def plot_calibration(y_true, prob_pos, filename):
     plt.savefig(filename)
     plt.close()
 
-class XGBWrapper:
-    def __init__(self, booster):
+class XGBWrapper(BaseEstimator, ClassifierMixin):
+    def __init__(self, booster=None):
         self.booster = booster
-        self._is_fitted = False
+        self._fitted = booster is not None
+
+    def fit(self, X=None, y=None):
+        self._fitted = True
+        return self
 
     def predict_proba(self, X):
+        if not self._fitted:
+            raise ValueError("This XGBWrapper instance is not fitted yet.")
         dmatrix = xgb.DMatrix(X)
         probs = self.booster.predict(dmatrix)
         return np.vstack([1 - probs, probs]).T
 
     def predict(self, X):
         return (self.predict_proba(X)[:, 1] > 0.5).astype(int)
-
-    def fit(self, X, y):
-        self._is_fitted = True  # Needed to satisfy CalibratedClassifierCV
-
-    def get_params(self, deep=True):
-        return {"booster": self.booster}
-
-    def set_params(self, **params):
-        for key, value in params.items():
-            setattr(self, key, value)
-        return self
-
-    def is_trained(self, X_sample):
-        try:
-            self.predict_proba(X_sample[:5])
-            return True
-        except Exception:
-            return False
 
 def retrain_model():
     try:
@@ -161,20 +150,11 @@ def retrain_model():
         booster.save_model(RAW_MODEL_PATH)
 
         wrapper = XGBWrapper(booster)
-        wrapper.fit(None, None)
+        wrapper.fit()
 
-        if wrapper.is_trained(X_val):
-            logger.info("[Calibration] Booster already trained — running calibration only …")
-            from sklearn.calibration import CalibratedClassifierCV
-            calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
-            calibrator.fit(X_val, y_val)
-        else:
-            logger.warning("[Calibration] Booster not trained — fallback to full training + calibration")
-            wrapper = XGBWrapper(booster)
-            wrapper.fit(None, None)
-            from sklearn.calibration import CalibratedClassifierCV
-            calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv=5)
-            calibrator.fit(X, y)
+        logger.info("[Calibration] Booster already trained — running calibration only …")
+        calibrator = CalibratedClassifierCV(base_estimator=wrapper, method="sigmoid", cv="prefit")
+        calibrator.fit(X_val, y_val)
 
         y_val_pred = calibrator.predict(X_val)
         y_val_proba = calibrator.predict_proba(X_val)[:, 1]
@@ -203,7 +183,7 @@ def retrain_model():
             f"📉 Brier Score: *{brier:.4f}* (Lower is better)\n"
             f"📈 {comparison}\n"
             f"🔥 Warm Start: Enabled\n"
-            f"🎛️ Calibration: {'Prefit' if wrapper.is_trained(X_val) else 'Full CV'}\n"
+            f"🎛️ Calibration: Sigmoid (Platt Scaling)\n"
             f"💾 Models: Raw booster + Calibrated sklearn wrapper\n"
             f"✅ Status: Saved & Logged\n"
             f"📊 Calibration plot attached."
