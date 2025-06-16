@@ -91,8 +91,11 @@ class XGBWrapper:
         probs = self.booster.predict(dmatrix)
         return np.vstack([1 - probs, probs]).T
 
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] > 0.5).astype(int)
+
     def fit(self, X, y):
-        self._is_fitted = True  # Only needed to satisfy CalibratedClassifierCV
+        self._is_fitted = True  # Needed to satisfy CalibratedClassifierCV
 
     def get_params(self, deep=True):
         return {"booster": self.booster}
@@ -101,6 +104,13 @@ class XGBWrapper:
         for key, value in params.items():
             setattr(self, key, value)
         return self
+
+    def is_trained(self, X_sample):
+        try:
+            self.predict_proba(X_sample[:5])
+            return True
+        except Exception:
+            return False
 
 def retrain_model():
     try:
@@ -115,13 +125,9 @@ def retrain_model():
         else:
             logger.info("[Indicators] Skipped indicator calculation — OHLCV columns missing.")
 
-        before = len(df)
         df = df.dropna().reset_index(drop=True)
-        after = len(df)
-        logger.info(f"[Clean Data] Dropped {before - after} corrupted rows. Remaining: {after}")
-
-        if after < 50:
-            raise ValueError(f"Not enough data to train. Need at least 50 rows, found {after}.")
+        if len(df) < 50:
+            raise ValueError(f"Not enough data to train. Need at least 50 rows, found {len(df)}.")
 
         df = prune_training_data(df)
         df = create_labels(df)
@@ -155,10 +161,20 @@ def retrain_model():
         booster.save_model(RAW_MODEL_PATH)
 
         wrapper = XGBWrapper(booster)
-        wrapper.fit(None, None)  # ✅ Manually mark as fitted
+        wrapper.fit(None, None)
 
-        calibrator = CalibratedClassifierCV(estimator=wrapper, method="sigmoid", cv="prefit")
-        calibrator.fit(X_val, y_val)
+        if wrapper.is_trained(X_val):
+            logger.info("[Calibration] Booster already trained — running calibration only …")
+            from sklearn.calibration import CalibratedClassifierCV
+            calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
+            calibrator.fit(X_val, y_val)
+        else:
+            logger.warning("[Calibration] Booster not trained — fallback to full training + calibration")
+            wrapper = XGBWrapper(booster)
+            wrapper.fit(None, None)
+            from sklearn.calibration import CalibratedClassifierCV
+            calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv=5)
+            calibrator.fit(X, y)
 
         y_val_pred = calibrator.predict(X_val)
         y_val_proba = calibrator.predict_proba(X_val)[:, 1]
@@ -187,7 +203,7 @@ def retrain_model():
             f"📉 Brier Score: *{brier:.4f}* (Lower is better)\n"
             f"📈 {comparison}\n"
             f"🔥 Warm Start: Enabled\n"
-            f"🎛️ Calibration: Sigmoid (Platt Scaling)\n"
+            f"🎛️ Calibration: {'Prefit' if wrapper.is_trained(X_val) else 'Full CV'}\n"
             f"💾 Models: Raw booster + Calibrated sklearn wrapper\n"
             f"✅ Status: Saved & Logged\n"
             f"📊 Calibration plot attached."
