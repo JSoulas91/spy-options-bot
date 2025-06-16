@@ -134,9 +134,10 @@ def retrain_model():
         logger.info("[Force Cold Start] Training new XGBoost model …")
         booster = xgb.train(params, dtrain, num_boost_round=100)
         booster.save_model(RAW_MODEL_PATH)
-
-        wrapper = XGBWrapper(booster)
-        wrapper._fitted = True  # ✅ Explicitly mark as fitted for calibrator
+        
+        # Fit wrapper from scratch (with full train set)
+        wrapper = XGBWrapper()
+        wrapper.fit(X_train, y_train)
 
         logger.info("[Calibration] Running calibration …")
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
