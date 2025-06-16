@@ -138,21 +138,28 @@ def retrain_model():
             "seed": 42,
         }
 
+        retrained = False
         if os.path.exists(RAW_MODEL_PATH):
-            logger.info("[Warm Start] Loading previous model …")
-            booster = xgb.Booster()
-            booster.load_model(RAW_MODEL_PATH)
-            booster = xgb.train(params, dtrain, num_boost_round=20, xgb_model=booster)
+            try:
+                logger.info("[Warm Start] Loading previous model …")
+                booster = xgb.Booster()
+                booster.load_model(RAW_MODEL_PATH)
+                booster = xgb.train(params, dtrain, num_boost_round=20, xgb_model=booster)
+                logger.info("[Warm Start] Booster updated with additional rounds.")
+            except Exception as e:
+                logger.warning(f"[Warm Start] Failed to load or update booster — retraining from scratch. Error: {e}")
+                booster = xgb.train(params, dtrain, num_boost_round=100)
+                retrained = True
         else:
             logger.info("[Cold Start] No previous model found — training new …")
             booster = xgb.train(params, dtrain, num_boost_round=100)
+            retrained = True
 
         booster.save_model(RAW_MODEL_PATH)
-
         wrapper = XGBWrapper(booster)
         wrapper.fit()
 
-        logger.info("[Calibration] Booster already trained — running calibration only …")
+        logger.info("[Calibration] Running calibration …")
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
@@ -177,12 +184,12 @@ def retrain_model():
         joblib.dump(calibrator, CAL_MODEL_PATH)
 
         message = (
-            f"📊 *ML Warm Retraining + Calibration Complete*\n"
+            f"📊 *ML {'Warm' if not retrained else 'Cold'} Retraining + Calibration Complete*\n"
             f"🗓️  Date: {now.split()[0]}\n"
             f"🎯 Accuracy: *{acc:.2%}*\n"
             f"📉 Brier Score: *{brier:.4f}* (Lower is better)\n"
             f"📈 {comparison}\n"
-            f"🔥 Warm Start: Enabled\n"
+            f"🔥 Warm Start: {'Yes' if not retrained else 'No'}\n"
             f"🎛️ Calibration: Sigmoid (Platt Scaling)\n"
             f"💾 Models: Raw booster + Calibrated sklearn wrapper\n"
             f"✅ Status: Saved & Logged\n"
