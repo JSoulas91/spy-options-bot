@@ -4,23 +4,23 @@ from pathlib import Path
 
 import numpy as np
 
-from meta.meta_state    import normalize_meta_state
-from meta.meta_agent    import MetaAgent
+from meta.meta_state import normalize_meta_state
+from meta.meta_agent import MetaAgent
 from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_utils import send_telegram_message
-from utils.logger        import bot_logger as logger
-from ml.logger           import log_training_example
+from utils.logger import bot_logger as logger
+from ml.logger import log_training_example
 
 # ───────── simulation params
-SIM_DAYS            = 500
-TRADES_PER_DAY      = 10
-GBM_MU              = 0.08
-GBM_SIGMA           = 0.22
-START_PRICE         = 450.0
+SIM_DAYS = 500
+TRADES_PER_DAY = 10
+GBM_MU = 0.08
+GBM_SIGMA = 0.22
+START_PRICE = 450.0
 
-META_LOG_PATH       = Path("meta/meta_log.jsonl")
-RNG                 = random.Random(42)
-GARBAGE_KEEP_PROB   = 0.05  # 5% chance to retain garbage trades
+META_LOG_PATH = Path("meta/meta_log.jsonl")
+RNG = random.Random(42)
+GARBAGE_KEEP_PROB = 0.05  # 5% chance to retain garbage trades
 
 meta_agent = MetaAgent()
 
@@ -31,8 +31,8 @@ def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
     for _ in range(1, n_steps):
         shock = RNG.normalvariate(0, 1)
-        s_t   = prices[-1] * math.exp((mu - 0.5 * sigma ** 2) * dt +
-                                      sigma * math.sqrt(dt) * shock)
+        s_t = prices[-1] * math.exp((mu - 0.5 * sigma ** 2) * dt +
+                                    sigma * math.sqrt(dt) * shock)
         prices.append(round(s_t, 2))
     return prices
 
@@ -45,18 +45,33 @@ def random_confidence() -> float:
     return round(np.random.beta(5, 2), 2)
 
 
-def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float):
-    option_type = RNG.choice(["C", "P"])
-    start_idx   = RNG.randint(30, len(prices) - 30)
-    price_sig   = prices[start_idx]
-    strike      = round(price_sig + RNG.uniform(-6, 6), 1)
-    option_sym  = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx),
-                                     strike, option_type)
+def compute_indicators(prices: list[float], volumes: list[int], idx: int):
+    window_20 = prices[max(0, idx - 19):idx + 1]
+    close = prices[idx]
+    volume = volumes[idx]
 
-    hour        = RNG.randint(10, 15)
-    confidence  = random_confidence()
-    atr         = RNG.uniform(2, 6)
-    meta_state  = normalize_meta_state({
+    vwap = np.average(window_20, weights=volumes[max(0, idx - 19):idx + 1]) if len(window_20) > 0 else close
+    ema_20 = sum(window_20) / len(window_20) if len(window_20) > 0 else close
+    rsi_14 = 50 + RNG.uniform(-10, 10)  # Simulate RSI
+
+    return {
+        "vwap": round(vwap, 2),
+        "ema_20": round(ema_20, 2),
+        "rsi_14": round(rsi_14, 2)
+    }
+
+
+def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: list[int], vix: float):
+    option_type = RNG.choice(["C", "P"])
+    start_idx = RNG.randint(30, len(prices) - 30)
+    price_sig = prices[start_idx]
+    strike = round(price_sig + RNG.uniform(-6, 6), 1)
+    option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
+
+    hour = RNG.randint(10, 15)
+    confidence = random_confidence()
+    atr = RNG.uniform(2, 6)
+    meta_state = normalize_meta_state({
         "confidence": confidence,
         "vix": vix,
         "hour": hour,
@@ -67,50 +82,51 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
     action_idx, agent_conf = meta_agent.select_action(meta_state)
     meta_agent.interpret_action(action_idx, agent_conf)
 
-    fill_delay  = RNG.randint(1, 5)
-    fill_idx    = min(start_idx + fill_delay, len(prices) - 1)
-    fill_price  = prices[fill_idx]
+    fill_delay = RNG.randint(1, 5)
+    fill_idx = min(start_idx + fill_delay, len(prices) - 1)
+    fill_price = prices[fill_idx]
 
     slippage_pct = (fill_price - price_sig) / price_sig + RNG.gauss(0, 0.001)
 
-    move_pct     = RNG.uniform(-0.6, 0.6)
-    raw_pnl_pct  = move_pct * RNG.uniform(0.8, 1.2) * 0.3
-    raw_pnl_pct  = abs(raw_pnl_pct) if RNG.random() < confidence else -abs(raw_pnl_pct)
-    raw_pnl_pct  = max(min(raw_pnl_pct, 1.8), -0.9)
+    move_pct = RNG.uniform(-0.6, 0.6)
+    raw_pnl_pct = move_pct * RNG.uniform(0.8, 1.2) * 0.3
+    raw_pnl_pct = abs(raw_pnl_pct) if RNG.random() < confidence else -abs(raw_pnl_pct)
+    raw_pnl_pct = max(min(raw_pnl_pct, 1.8), -0.9)
 
-    fill_ratio   = round(RNG.uniform(0.6, 1.0), 2)
-
+    fill_ratio = round(RNG.uniform(0.6, 1.0), 2)
     direction_outcome = 1 if raw_pnl_pct > 0 else 0
 
-    # Capture OHLCV snapshot for bar at trade entry
     bar_open = prices[start_idx]
     bar_high = round(bar_open * (1 + RNG.uniform(0, 0.001)), 2)
-    bar_low  = round(bar_open * (1 - RNG.uniform(0, 0.001)), 2)
+    bar_low = round(bar_open * (1 - RNG.uniform(0, 0.001)), 2)
     bar_close = round(prices[fill_idx], 2)
-    volume = int(RNG.uniform(1000, 10000))
+    volume = volumes[start_idx]
+
+    indicators = compute_indicators(prices, volumes, start_idx)
 
     trade = {
-        "id":            f"SIM.{day_idx}-{step_idx}",
-        "timestamp":     datetime.utcnow().isoformat(timespec="seconds"),
-        "symbol":        "SPY",
+        "id": f"SIM.{day_idx}-{step_idx}",
+        "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
+        "symbol": "SPY",
         "option_symbol": option_sym,
-        "trade_type":    0,
-        "confidence":    confidence,
-        "entry_price":   fill_price,
-        "slippage_pct":  round(slippage_pct * 100, 3),
+        "trade_type": 0,
+        "confidence": confidence,
+        "entry_price": fill_price,
+        "slippage_pct": round(slippage_pct * 100, 3),
         "fill_delay_min": fill_delay,
-        "fill_ratio":    fill_ratio,
-        "exit_price":    round(fill_price * (1 + move_pct / 100), 2),
-        "pnl":           round(raw_pnl_pct * 100 * fill_ratio, 2),
-        "meta_state":    meta_state.tolist(),
+        "fill_ratio": fill_ratio,
+        "exit_price": round(fill_price * (1 + move_pct / 100), 2),
+        "pnl": round(raw_pnl_pct * 100 * fill_ratio, 2),
+        "meta_state": meta_state.tolist(),
         "bar": {
             "open": bar_open,
             "high": bar_high,
             "low": bar_low,
             "close": bar_close,
-            "volume": volume
+            "volume": volume,
+            **indicators
         },
-        "meta_action":   int(action_idx),
+        "meta_action": int(action_idx),
         "direction_outcome": direction_outcome
     }
     return trade
@@ -124,7 +140,6 @@ def append_meta_log(trade: dict, vix_val: float):
         "exit_reason": "sim_exit"
     })
 
-    # Apply stricter filter for better training signal
     if (
         abs(shaped_reward) < 0.3 or
         abs(trade["pnl"]) < 1.5 or
@@ -134,14 +149,14 @@ def append_meta_log(trade: dict, vix_val: float):
             return
 
     payload = {
-        "timestamp":   trade["timestamp"],
-        "trade":       trade,
-        "market":      {"vix": vix_val},
+        "timestamp": trade["timestamp"],
+        "trade": trade,
+        "market": {"vix": vix_val},
         "exit_reason": "sim_exit",
-        "meta_state":  trade["meta_state"],
+        "meta_state": trade["meta_state"],
         "meta_action": trade["meta_action"],
-        "reward":      shaped_reward,
-        "bar":         trade["bar"],
+        "reward": shaped_reward,
+        "bar": trade["bar"],
         "done": True
     }
 
@@ -160,26 +175,20 @@ def simulate():
         logger.info(f"── Day {day+1}/{SIM_DAYS}")
         minutes_per_day = 390
         prices = gbm_path(minutes_per_day, current_price,
-                          GBM_MU / 252, GBM_SIGMA / np.sqrt(252), dt=1/390)
+                          GBM_MU / 252, GBM_SIGMA / np.sqrt(252), dt=1 / 390)
+        volumes = [int(RNG.uniform(1000, 10000)) for _ in prices]
         current_price = prices[-1]
-        vix_today     = RNG.uniform(14, 28)
+        vix_today = RNG.uniform(14, 28)
 
         for step in range(TRADES_PER_DAY):
-            trade = simulate_trade(day, step, prices, vix_today)
+            trade = simulate_trade(day, step, prices, volumes, vix_today)
             append_meta_log(trade, vix_today)
 
             # ML logging
             label = 1 if trade["pnl"] > 0 else 0
             try:
                 timestamp = datetime.strptime(trade["timestamp"], "%Y-%m-%dT%H:%M:%S")
-                close     = trade["entry_price"]
-
-                open_price = round(close * RNG.uniform(0.995, 1.005), 2)
-                high_price = round(max(open_price, close) * RNG.uniform(1.0, 1.01), 2)
-                low_price  = round(min(open_price, close) * RNG.uniform(0.99, 1.0), 2)
-                volume     = int(RNG.uniform(1000, 10000))
-
-                features  = {
+                features = {
                     "confidence": trade["confidence"],
                     "hour": int(trade["timestamp"][11:13]),
                     "vix": vix_today,
@@ -187,13 +196,16 @@ def simulate():
                     "pnl": trade["pnl"],
                     "regime_bull": 1 if vix_today < 18 else 0,
                     "regime_bear": 1 if vix_today >= 18 else 0,
-                    "open": open_price,
-                    "high": high_price,
-                    "low": low_price,
-                    "close": close,
-                    "volume": volume
+                    "open": trade["bar"]["open"],
+                    "high": trade["bar"]["high"],
+                    "low": trade["bar"]["low"],
+                    "close": trade["bar"]["close"],
+                    "volume": trade["bar"]["volume"],
+                    "vwap": trade["bar"]["vwap"],
+                    "ema_20": trade["bar"]["ema_20"],
+                    "rsi_14": trade["bar"]["rsi_14"]
                 }
-                log_training_example(timestamp, close, features, label)
+                log_training_example(timestamp, trade["entry_price"], features, label)
             except Exception as e:
                 logger.warning(f"Failed to log training example: {e}")
 
@@ -201,14 +213,6 @@ def simulate():
 
     logger.info("✅ Simulation finished.")
     send_telegram_message("✅ Simulation finished. PPO training not triggered.")
-
-    # PPO training is now manual
-    # try:
-    #     subprocess.run(["python3", "meta/train_meta_agent.py"], check=True)
-    #     logger.info("PPO training completed successfully.")
-    # except subprocess.CalledProcessError as e:
-    #     logger.error(f"❌ PPO training failed: {e}")
-    #     send_telegram_message("⚠️ PPO training failed – check VPS logs.")
 
 
 if __name__ == "__main__":
