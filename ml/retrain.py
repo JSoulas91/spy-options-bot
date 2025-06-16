@@ -47,8 +47,8 @@ def load_data():
     return df.sort_values("timestamp")
 
 def create_labels(df: pd.DataFrame) -> pd.DataFrame:
-    df["future_close"] = df["close"].shift(-1)
-    df["label"] = (df["future_close"] > df["close"]).astype(int)
+    df["future_price"] = df["vwap"].shift(-1)
+    df["label"] = (df["future_price"] > df["vwap"]).astype(int)
     return df
 
 def prune_training_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -100,13 +100,7 @@ def retrain_model():
         df = load_data()
         df = calculate_indicators(df)
 
-        # Check required columns
-        expected_cols = {"open", "high", "low", "close", "volume"}
-        missing_cols = expected_cols - set(df.columns)
-        if missing_cols:
-            raise ValueError(f"Missing required columns in data: {missing_cols}")
-
-        # Create labels
+        # Create labels based on future VWAP direction
         df = create_labels(df)
 
         # Drop rows with NaNs (from indicators or shifting)
@@ -122,7 +116,7 @@ def retrain_model():
         df = prune_training_data(df)
 
         # Prepare training data
-        X = df.drop(columns=["timestamp", "future_close", "label"])
+        X = df.drop(columns=["timestamp", "future_price", "label"])
         y = df["label"]
 
         # Split train/validation sets
