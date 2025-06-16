@@ -79,7 +79,7 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
         self.feature_names = None
 
     def fit(self, X, y):
-        logger.info("[XGBWrapper] Running fit() …")
+        logger.info("[XGBWrapper] Running fit() via calibrator …")
         if isinstance(X, pd.DataFrame):
             self.feature_names = X.columns.tolist()
             X = X.values
@@ -87,7 +87,7 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
         self.booster = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=100)
         self._fitted = True
         assert self.booster is not None, "Booster failed to initialize"
-        logger.info("[XGBWrapper] Fit complete. Booster and _fitted set.")
+        logger.info("[XGBWrapper] Fit complete.")
         return self
 
     def predict_proba(self, X):
@@ -109,8 +109,7 @@ def retrain_model():
 
         df = load_data()
 
-        required_cols = ["open", "high", "low", "close", "volume"]
-        if all(col in df.columns for col in required_cols):
+        if all(col in df.columns for col in ["open", "high", "low", "close", "volume"]):
             df = calculate_indicators(df)
         else:
             logger.info("[Indicators] Skipped indicator calculation — OHLCV columns missing.")
@@ -129,27 +128,27 @@ def retrain_model():
             X, y, test_size=0.2, random_state=42, stratify=y
         )
 
-        logger.info("[Force Cold Start] Training new XGBoost model wrapper …")
-        wrapper = XGBWrapper()
-        wrapper.fit(X_train, y_train)
+        logger.info("[Calibrator] Fitting XGBoost wrapper directly via CalibratedClassifierCV …")
+        calibrator = CalibratedClassifierCV(XGBWrapper(), method="sigmoid", cv=3)
+        calibrator.fit(X_train, y_train)
 
-        logger.info("[Calibration] Running calibration …")
-        calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
-        calibrator.fit(X_val, y_val)
+        # Save raw model separately
+        raw_wrapper = XGBWrapper()
+        raw_wrapper.fit(X_train, y_train)
+        if raw_wrapper.booster:
+            raw_wrapper.booster.save_model(RAW_MODEL_PATH)
 
+        # Save calibrated model
+        joblib.dump(calibrator, CAL_MODEL_PATH)
+
+        # Evaluate
         y_val_pred = calibrator.predict(X_val)
         y_val_proba = calibrator.predict_proba(X_val)[:, 1]
-
         acc = accuracy_score(y_val, y_val_pred)
         brier = brier_score_loss(y_val, y_val_proba)
 
-        # Save models
-        if wrapper.booster:
-            wrapper.booster.save_model(RAW_MODEL_PATH)
-        joblib.dump(calibrator, CAL_MODEL_PATH)
-
-        # Calibration plot + log
         plot_calibration(y_val, y_val_proba, CAL_PLOT_PATH)
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_exists = os.path.exists(LOG_PATH)
         with open(LOG_PATH, "a") as f:
@@ -162,7 +161,7 @@ def retrain_model():
             f"🗓️  Date: {now.split()[0]}\n"
             f"🎯 Accuracy: *{acc:.2%}*\n"
             f"📉 Brier Score: *{brier:.4f}*\n"
-            f"🔥 Warm Start: No (forced cold start)\n"
+            f"🔥 Warm Start: No (cold start)\n"
             f"💾 Models: Raw booster + Calibrated wrapper\n"
             f"✅ Status: Saved & Logged\n"
         )
