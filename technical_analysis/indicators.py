@@ -45,3 +45,41 @@ def calculate_indicators(data):
     df['ATR_14'] = calculate_atr(df, 14)
     df['ADX_14'] = calculate_adx(df, 14)
     return df
+
+def compute_trade_indicators(open_price, high, low, close, volume) -> dict:
+    """
+    Create a fake 30-bar DataFrame with the current OHLCV values as the latest bar,
+    allowing talib-based indicators to be computed.
+    """
+    num_bars = 30
+    df = pd.DataFrame({
+        'open': np.append(np.full(num_bars - 1, np.nan), open_price),
+        'high': np.append(np.full(num_bars - 1, np.nan), high),
+        'low': np.append(np.full(num_bars - 1, np.nan), low),
+        'close': np.append(np.full(num_bars - 1, np.nan), close),
+        'volume': np.append(np.full(num_bars - 1, np.nan), volume),
+    })
+
+    try:
+        df = calculate_indicators(df)
+        latest = df.iloc[-1]
+
+        ema = latest['EMA_20'] if not pd.isna(latest['EMA_20']) and latest['EMA_20'] != 0 else close
+        sma_ratio = close / ema
+        volume_mean = df['volume'].mean()
+        volume_std = df['volume'].std()
+        volume_zscore = (volume - volume_mean) / volume_std if volume_std > 0 else 0
+
+        return {
+            "rsi": float(latest['RSI_14']) if not pd.isna(latest['RSI_14']) else 50.0,
+            "macd": float(latest['MACD']) if not pd.isna(latest['MACD']) else 0.0,
+            "sma_ratio": float(sma_ratio),
+            "volume_zscore": float(volume_zscore)
+        }
+    except Exception:
+        return {
+            "rsi": 50.0,
+            "macd": 0.0,
+            "sma_ratio": 1.0,
+            "volume_zscore": 0.0
+        }
