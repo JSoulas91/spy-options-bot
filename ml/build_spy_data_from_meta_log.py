@@ -71,7 +71,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         def safe_val(name: str, fallback: float = 0.0):
             return float(row[name]) if name in row and pd.notna(row[name]) else fallback
 
-        vwap_value = close if "VWAP" not in row else safe_val("VWAP", fallback=close)
+        vwap_value = safe_val("VWAP", fallback=close)
 
         features = np.array([
             pnl,
