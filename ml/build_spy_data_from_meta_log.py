@@ -4,12 +4,33 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from utils.logger import bot_logger
-from technical_analysis.indicators import calculate_indicators  # Use updated indicator function
+from technical_analysis.indicators import calculate_indicators
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_NPZ = Path("ml/dataset.npz")
 OUTPUT_CSV = Path("ml/spy_data.csv")
 
+# Semantic feature column names
+FEATURE_NAMES = [
+    "pnl",
+    "confidence",
+    "setup_quality",
+    "vix",
+    "realized_vol",
+    "trade_type",
+    "total_signals_today",
+    "ema_20",
+    "rsi_14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_upper",
+    "bb_middle",
+    "bb_lower",
+    "vwap",
+    "atr_14",
+    "adx_14"
+]
 
 def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     trade = entry.get("trade", {})
@@ -104,7 +125,7 @@ def build_dataset():
 
     np.savez_compressed(OUTPUT_NPZ, X=features, y=labels, timestamps=np.array(timestamps))
 
-    df_out = pd.DataFrame(features)
+    df_out = pd.DataFrame(features, columns=FEATURE_NAMES)
     df_out.insert(0, "timestamp", timestamps)
     df_out["label"] = labels
     df_out.to_csv(OUTPUT_CSV, index=False)
