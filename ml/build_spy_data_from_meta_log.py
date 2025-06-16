@@ -32,6 +32,7 @@ FEATURE_NAMES = [
     "adx_14"
 ]
 
+
 def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     trade = entry.get("trade", {})
     bar = entry.get("bar", {})
@@ -57,22 +58,22 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             'volume': volume
         }])
 
-        # Compute indicators
         df_ind = calculate_indicators(df_bar)
         row = df_ind.iloc[0]
 
-        # Primary features from logs
+        # Features from logs
         pnl = float(trade.get("pnl", 0.0))
         confidence = float(trade.get("confidence", 0.0))
         setup_quality = float(trade.get("setup_quality", 0.5))
         vix = float(market.get("vix", 20.0))
         realized_vol = float(market.get("realized_vol", 0.02))
-        trade_type = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
+        trade_type = int(trade.get("trade_type", 0))
         total_signals_today = int(trade.get("total_signals_today", 0))
 
-        # Indicator values with defaults
-        def get_safe(val, default=0.0):
-            return float(val) if pd.notna(val) else default
+        def safe_val(name: str, fallback: float = 0.0):
+            return float(row[name]) if name in row and pd.notna(row[name]) else fallback
+
+        vwap_value = safe_val("VWAP", fallback=close)  # fallback to close if VWAP missing
 
         features = np.array([
             pnl,
@@ -82,20 +83,20 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             realized_vol,
             trade_type,
             total_signals_today,
-            get_safe(row.get("EMA_20")),
-            get_safe(row.get("RSI_14"), 50.0),
-            get_safe(row.get("MACD")),
-            get_safe(row.get("MACD_signal")),
-            get_safe(row.get("MACD_hist")),
-            get_safe(row.get("BB_upper")),
-            get_safe(row.get("BB_middle")),
-            get_safe(row.get("BB_lower")),
-            get_safe(row.get("VWAP", close)),
-            get_safe(row.get("ATR_14")),
-            get_safe(row.get("ADX_14"))
+            safe_val("EMA_20"),
+            safe_val("RSI_14", fallback=50.0),
+            safe_val("MACD"),
+            safe_val("MACD_signal"),
+            safe_val("MACD_hist"),
+            safe_val("BB_upper"),
+            safe_val("BB_middle"),
+            safe_val("BB_lower"),
+            vwap_value,
+            safe_val("ATR_14"),
+            safe_val("ADX_14")
         ], dtype=np.float32)
 
-        label = 1 if pnl > 5 else 0  # Good trade threshold
+        label = 1 if pnl > 5 else 0
 
         return features, label, timestamp
 
