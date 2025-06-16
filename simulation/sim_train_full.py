@@ -82,6 +82,13 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
 
     direction_outcome = 1 if raw_pnl_pct > 0 else 0
 
+    # Capture OHLCV snapshot for bar at trade entry
+    bar_open = prices[start_idx]
+    bar_high = round(bar_open * (1 + RNG.uniform(0, 0.001)), 2)
+    bar_low  = round(bar_open * (1 - RNG.uniform(0, 0.001)), 2)
+    bar_close = round(prices[fill_idx], 2)
+    volume = int(RNG.uniform(1000, 10000))
+
     trade = {
         "id":            f"SIM.{day_idx}-{step_idx}",
         "timestamp":     datetime.utcnow().isoformat(timespec="seconds"),
@@ -96,6 +103,13 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], vix: float)
         "exit_price":    round(fill_price * (1 + move_pct / 100), 2),
         "pnl":           round(raw_pnl_pct * 100 * fill_ratio, 2),
         "meta_state":    meta_state.tolist(),
+        "bar": {
+            "open": bar_open,
+            "high": bar_high,
+            "low": bar_low,
+            "close": bar_close,
+            "volume": volume
+        },
         "meta_action":   int(action_idx),
         "direction_outcome": direction_outcome
     }
@@ -127,6 +141,7 @@ def append_meta_log(trade: dict, vix_val: float):
         "meta_state":  trade["meta_state"],
         "meta_action": trade["meta_action"],
         "reward":      shaped_reward,
+        "bar":         trade["bar"],
         "done": True
     }
 
