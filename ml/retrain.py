@@ -134,7 +134,7 @@ def retrain_model():
         booster.save_model(RAW_MODEL_PATH)
 
         wrapper = XGBWrapper(booster)
-        wrapper.fit()
+        wrapper._fitted = True  # ✅ Explicitly mark as fitted for calibrator
 
         logger.info("[Calibration] Running calibration …")
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
