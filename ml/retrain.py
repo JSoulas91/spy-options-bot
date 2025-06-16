@@ -77,7 +77,9 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
         self.booster = booster
         self._fitted = booster is not None
 
-    def fit(self, X=None, y=None):
+    def fit(self, X, y):
+        dtrain = xgb.DMatrix(X, label=y)
+        self.booster = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=100)
         self._fitted = True
         return self
 
