@@ -79,12 +79,15 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
         self.feature_names = None
 
     def fit(self, X, y):
+        logger.info("[XGBWrapper] Running fit() …")
         if isinstance(X, pd.DataFrame):
             self.feature_names = X.columns.tolist()
             X = X.values
         dtrain = xgb.DMatrix(X, label=y)
         self.booster = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=100)
         self._fitted = True
+        assert self.booster is not None, "Booster failed to initialize"
+        logger.info("[XGBWrapper] Fit complete. Booster and _fitted set.")
         return self
 
     def predict_proba(self, X):
@@ -129,9 +132,6 @@ def retrain_model():
         logger.info("[Force Cold Start] Training new XGBoost model wrapper …")
         wrapper = XGBWrapper()
         wrapper.fit(X_train, y_train)
-
-        if not wrapper._fitted:
-            raise RuntimeError("XGBWrapper was not fitted before calibration.")
 
         logger.info("[Calibration] Running calibration …")
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv="prefit")
