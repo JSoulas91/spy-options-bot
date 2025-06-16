@@ -84,12 +84,23 @@ def plot_calibration(y_true, prob_pos, filename):
 class XGBWrapper:
     def __init__(self, booster):
         self.booster = booster
+        self._is_fitted = False
+
     def predict_proba(self, X):
         dmatrix = xgb.DMatrix(X)
         probs = self.booster.predict(dmatrix)
         return np.vstack([1 - probs, probs]).T
+
     def fit(self, X, y):
-        pass  # Required by CalibratedClassifierCV but not used because cv="prefit"
+        self._is_fitted = True  # Only needed to satisfy CalibratedClassifierCV
+
+    def get_params(self, deep=True):
+        return {"booster": self.booster}
+
+    def set_params(self, **params):
+        for key, value in params.items():
+            setattr(self, key, value)
+        return self
 
 def retrain_model():
     try:
@@ -143,7 +154,10 @@ def retrain_model():
 
         booster.save_model(RAW_MODEL_PATH)
 
-        calibrator = CalibratedClassifierCV(estimator=XGBWrapper(booster), method="sigmoid", cv="prefit")
+        wrapper = XGBWrapper(booster)
+        wrapper.fit(None, None)  # ✅ Manually mark as fitted
+
+        calibrator = CalibratedClassifierCV(base_estimator=wrapper, method="sigmoid", cv="prefit")
         calibrator.fit(X_val, y_val)
 
         y_val_pred = calibrator.predict(X_val)
