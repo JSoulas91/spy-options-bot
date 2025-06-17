@@ -240,4 +240,4 @@ def simulate():
 
         time.sleep(0.05)
 
-    send_telegram_message("
+    send_telegram_message("🧪 Synthetic back-test complete.")
