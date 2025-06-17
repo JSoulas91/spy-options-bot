@@ -1,37 +1,56 @@
-# ml/model_handler.py
 import os
-import xgboost as xgb
-import traceback
-import numpy as np
-from utils.logger import bot_logger
+import joblib
+import pandas as pd
+from typing import Dict
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "xgb_raw.json")
+from ml.constants import MODEL_PATH, BASE_DIR
 
-def load_model():
-    """Load the trained XGBoost model from disk."""
-    if os.path.exists(MODEL_PATH):
-        try:
-            model = xgb.XGBClassifier()
-            model.load_model(MODEL_PATH)
-            bot_logger.info("🧠 [Model Handler] XGBoost model loaded successfully.")
-            return model
-        except Exception as e:
-            bot_logger.error(f"[Model Load Error] {e}")
-            bot_logger.debug(traceback.format_exc())
-            return None
-    else:
-        bot_logger.warning("⚠️ [Model Handler] No model file found.")
-        return None
+CALIBRATED_MODEL_PATH = os.path.join(BASE_DIR, "xgb_calibrated.pkl")
 
-def predict(model, features: np.ndarray):
-    """Predict using the loaded XGBoost model."""
-    if model is None:
-        bot_logger.warning("[Prediction Warning] Model not loaded. Returning default prediction: 0.5")
-        return 0.5
-    try:
-        prob = model.predict_proba(np.array([features]))[0][1]
-        return float(round(prob, 4))
-    except Exception as e:
-        bot_logger.error(f"[Prediction Error] {e}")
-        bot_logger.debug(traceback.format_exc())
-        return 0.5
+def load_model(path: str = CALIBRATED_MODEL_PATH):
+    """
+    Load the calibrated XGBoost classifier model from disk.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Model file not found at {path}")
+    model = joblib.load(path)
+    return model
+
+def predict(input_features: Dict[str, float]) -> float:
+    """
+    Predict the probability of a successful trade using the calibrated model.
+    """
+    model = load_model()
+    X = pd.DataFrame([input_features])
+
+    # Ensure all expected features are present in input
+    if hasattr(model, "feature_names_in_"):
+        missing = set(model.feature_names_in_) - set(X.columns)
+        if missing:
+            raise ValueError(f"Missing required input features: {missing}")
+        X = X[model.feature_names_in_]
+
+    if not hasattr(model, "predict_proba"):
+        raise TypeError("Loaded model does not support predict_proba — expected a calibrated classifier.")
+
+    y_prob = model.predict_proba(X)[0, 1]
+    return float(y_prob)
+
+def predict_label(input_features: Dict[str, float]) -> int:
+    """
+    Predict a binary label (0 or 1) based on the model.
+    """
+    model = load_model()
+    X = pd.DataFrame([input_features])
+
+    if hasattr(model, "feature_names_in_"):
+        missing = set(model.feature_names_in_) - set(X.columns)
+        if missing:
+            raise ValueError(f"Missing required input features: {missing}")
+        X = X[model.feature_names_in_]
+
+    if not hasattr(model, "predict"):
+        raise TypeError("Loaded model does not support predict — expected a classifier.")
+    
+    y_pred = model.predict(X)[0]
+    return int(y_pred)
