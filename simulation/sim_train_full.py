@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from meta.meta_state import normalize_meta_state
+from meta.meta_state import build_meta_state_for_entry  # ✅ FIXED
 from meta.meta_agent import MetaAgent
 from meta.reward_shaper import compute_shaped_reward
 from utils.telegram_utils import send_telegram_message
@@ -132,7 +132,7 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     })
 
     # Normalize full meta state including classifier outputs
-    meta_state = normalize_meta_state(base_meta_state_dict)
+    meta_state = build_meta_state_for_entry(base_meta_state_dict)  # ✅ FIXED
 
     action_idx, agent_conf = meta_agent.select_action(meta_state)
     meta_agent.interpret_action(action_idx, agent_conf)
