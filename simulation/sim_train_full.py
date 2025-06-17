@@ -16,6 +16,7 @@ from utils.telegram_utils import send_telegram_message
 from utils.logger import bot_logger as logger
 from ml.logger import log_training_example
 from ml.model_inference import ModelInference
+from ml.feature_pipeline import build_features_for_trade  # <-- new import
 
 # ───────── simulation params ───────────────
 SIM_DAYS = 500
@@ -91,6 +92,7 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     volume = volumes[start_idx]
     indicators = compute_indicators(prices, volumes, start_idx)
 
+    # Build classifier feature dict matching training schema
     feature_dict = {
         "confidence": confidence,
         "hour": hour,
@@ -107,7 +109,9 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
         "regime_bull": 1 if vix < 18 else 0,
         "regime_bear": 1 if vix >= 18 else 0,
     }
-    features_df = pd.DataFrame([feature_dict])
+
+    # Build features DataFrame using your feature pipeline
+    features_df = build_features_for_trade(feature_dict)
 
     trade_success_prob = float(model_inference.predict_proba(features_df)[0])
     predicted_direction = int(model_inference.predict(features_df)[0])
@@ -236,9 +240,4 @@ def simulate():
 
         time.sleep(0.05)
 
-    send_telegram_message("🧪 Synthetic back-test complete.")
-    logger.info("🧪 Synthetic back-test complete.")
-
-
-if __name__ == "__main__":
-    simulate()
+    send_telegram_message("
