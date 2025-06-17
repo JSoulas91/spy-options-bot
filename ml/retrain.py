@@ -1,129 +1,106 @@
-import logging
-import traceback
-import pandas as pd
+import os
+import joblib
 import numpy as np
+import pandas as pd
 from pathlib import Path
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.exceptions import NotFittedError
+from sklearn.model_selection import cross_val_predict, StratifiedKFold
+from sklearn.metrics import accuracy_score
 from xgboost import XGBClassifier
-from xgboost import Booster
-from build_spy_data_from_meta_log import build_dataset
+
+from ml.build_spy_data_from_meta_log import build_dataset
 from utils.logger import bot_logger
 from utils.telegram_utils import send_telegram_message
 from monitor.health_check import update_status
-from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
-from sklearn.isotonic import IsotonicRegression
-from sklearn.calibration import calibration_curve
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 MODEL_PATH = Path("models/xgb_raw.json")
-CALIBRATED_MODEL_PATH = Path("models/xgb_calibrated.json")
-DATA_PATH = Path("ml/spy_data.csv")
-ACCURACY_LOG = Path("ml/accuracy_log.txt")
+CALIBRATED_MODEL_PATH = Path("models/xgb_calibrated.pkl")
+CSV_PATH = Path("ml/spy_data.csv")
+ACCURACY_LOG_PATH = Path("ml/accuracy_log.txt")
 
-logger = bot_logger
-
-def safe_telegram_message(text: str):
-    """Escape markdown special chars or remove problematic chars for Telegram."""
-    replacements = {
-        '_': '\\_',
-        '*': '\\*',
-        '[': '\\[',
-        ']': '\\]',
-        '(': '\\(',
-        ')': '\\)',
-        '~': '\\~',
-        '`': '\\`',
-        '>': '\\>',
-        '#': '\\#',
-        '+': '\\+',
-        '-': '\\-',
-        '=': '\\=',
-        '|': '\\|',
-        '{': '\\{',
-        '}': '\\}',
-        '.': '\\.',
-        '!': '\\!'
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    return text
+FEATURE_COLS = [
+    "pnl", "confidence", "setup_quality", "vix", "realized_vol", "trade_type", "total_signals_today",
+    "ema_20", "rsi_14", "macd", "macd_signal", "macd_hist",
+    "bb_upper", "bb_middle", "bb_lower", "vwap", "atr_14", "adx_14"
+]
 
 def load_data():
-    if not DATA_PATH.exists():
-        logger.error(f"[Load Data] Data file not found: {DATA_PATH}")
-        raise FileNotFoundError(f"Data file not found: {DATA_PATH}")
-    df = pd.read_csv(DATA_PATH)
-    # Filter or clean if necessary here
-    # Drop columns not used as features or label
-    features = df.drop(columns=["timestamp", "label"], errors='ignore')
-    labels = df["label"]
-    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(features.columns)}")
-    return features, labels
+    if not CSV_PATH.exists():
+        raise FileNotFoundError(f"{CSV_PATH} not found")
+    df = pd.read_csv(CSV_PATH)
+    df = df.dropna(subset=FEATURE_COLS + ["label"])
+    X = df[FEATURE_COLS].values.astype(np.float32)
+    y = df["label"].values.astype(np.int32)
+    return X, y, df
 
 def retrain_model():
-    logger.info("[ML Retraining] Started")
-
-    # Build latest dataset (append new data and prune)
-    logger.info("[Preprocess] Running feature builder...")
-    build_dataset()
-    logger.info("[Preprocess] Feature builder completed successfully.")
-
-    # Load dataset
-    X, y = load_data()
-
     try:
-        # Train XGBoost classifier
-        model = XGBClassifier(
-            n_estimators=100,
-            max_depth=5,
-            learning_rate=0.1,
+        bot_logger.info("[ML Retraining] Started")
+
+        # Step 1: Build or update dataset
+        bot_logger.info("[Preprocess] Running feature builder...")
+        build_dataset()
+        bot_logger.info("[Preprocess] Feature builder completed successfully.")
+
+        # Step 2: Load dataset
+        X, y, df = load_data()
+        bot_logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
+
+        # Step 3: Train XGBoost model
+        xgb = XGBClassifier(
+            n_estimators=200,
+            max_depth=4,
+            learning_rate=0.08,
+            subsample=0.9,
+            colsample_bytree=0.8,
             use_label_encoder=False,
-            eval_metric="logloss",
-            verbosity=0,
+            eval_metric="logloss"
         )
-        model.fit(X, y)
+        xgb.fit(X, y)
 
-        # In-sample accuracy
-        preds = model.predict(X)
-        acc = accuracy_score(y, preds)
-        logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
+        # Save raw model
+        xgb.save_model(str(MODEL_PATH))
+        bot_logger.info(f"[Save Model] Raw XGBoost booster saved to {MODEL_PATH}")
 
-        # Save raw model booster
-        model.get_booster().save_model(str(MODEL_PATH))
-        logger.info(f"[Save Model] Raw XGBoost booster saved to {MODEL_PATH}")
-
-        # Calibration with isotonic regression using cross-validation
-        calibrator = CalibratedClassifierCV(model, method='isotonic', cv=5)
+        # Step 4: Calibrate model with 5-fold isotonic calibration
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        calibrator = CalibratedClassifierCV(base_estimator=xgb, method="isotonic", cv=skf)
         calibrator.fit(X, y)
-        # Save the underlying base estimator's booster after calibration
-        base_estimator = calibrator.base_estimator_
-        base_estimator.get_booster().save_model(str(MODEL_PATH))  # overwrite raw model file with calibrated base
 
-        # Save calibrated model separately using joblib or pickle
-        import joblib
-        joblib.dump(calibrator, CALIBRATED_MODEL_PATH.with_suffix(".joblib"))
-        logger.info(f"[Save Model] Calibrated model saved to {CALIBRATED_MODEL_PATH.with_suffix('.joblib')}")
+        # Save calibrated model
+        joblib.dump(calibrator, CALIBRATED_MODEL_PATH)
+        bot_logger.info(f"[Save Model] Calibrated model saved to {CALIBRATED_MODEL_PATH}")
 
-        # Log accuracy to file with timestamp
-        from datetime import datetime
-        with open(ACCURACY_LOG, "a") as f:
-            f.write(f"{datetime.utcnow().isoformat()} - accuracy: {acc:.4f}\n")
+        # Step 5: Evaluate accuracy
+        y_pred = cross_val_predict(calibrator, X, y, cv=skf, method='predict')
+        acc = accuracy_score(y, y_pred)
+        bot_logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
 
-        # Send Telegram notification
-        message = f"✅ ML Retraining completed.\nIn-sample accuracy: {acc:.4f}"
-        send_telegram_message(safe_telegram_message(message))
+        # Step 6: Log accuracy
+        with open(ACCURACY_LOG_PATH, "a") as f:
+            f.write(f"{pd.Timestamp.now()},rows={len(df)},accuracy={acc:.4f}\n")
 
-        update_status("ml_retrain")  # success, no extra args
+        # Step 7: Send Telegram alert
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+            send_telegram_message(
+                f"✅ Model retrained ({len(df)} rows)\n"
+                f"Accuracy: {acc:.4f}\n"
+                f"Saved to: `{MODEL_PATH.name}`, `{CALIBRATED_MODEL_PATH.name}`",
+                TELEGRAM_BOT_TOKEN,
+                TELEGRAM_CHAT_ID
+            )
+
+        update_status("ml_retrain", "ok")
 
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.critical(f"Fatal error during retraining: {e}\n{tb}")
-        try:
-            send_telegram_message(f"❌ ML Retraining failed:\n{safe_telegram_message(str(e))}")
-        except Exception:
-            logger.error("Failed to send Telegram failure message.")
-        update_status("ml_retrain", status="fail")  # pass one arg keyword-style if your update_status supports it
+        bot_logger.critical(f"Fatal error during retraining: {e}")
+
+        # Notify via Telegram
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+            send_telegram_message(f"❌ ML retrain failed: {e}", TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+
+        update_status("ml_retrain", "fail")
 
 if __name__ == "__main__":
     retrain_model()
