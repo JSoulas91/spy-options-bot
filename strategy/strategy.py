@@ -255,4 +255,4 @@ def _no_trade() -> Dict[str, Any]:
         "predicted_direction": 0,
         "class_probabilities": [0.0, 0.0],
         "entropy": 0.0,
-    }
+    } 
