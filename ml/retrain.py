@@ -1,106 +1,93 @@
 import os
+import json
 import joblib
+import logging
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import cross_val_predict, StratifiedKFold
-from sklearn.metrics import accuracy_score
+from sklearn.model_selection import StratifiedKFold
 from xgboost import XGBClassifier
 
 from ml.build_spy_data_from_meta_log import build_dataset
-from utils.logger import bot_logger
-from utils.telegram_utils import send_telegram_message
 from monitor.health_check import update_status
+from utils.telegram_utils import send_telegram_message
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-MODEL_PATH = Path("models/xgb_raw.json")
-CALIBRATED_MODEL_PATH = Path("models/xgb_calibrated.pkl")
-CSV_PATH = Path("ml/spy_data.csv")
-ACCURACY_LOG_PATH = Path("ml/accuracy_log.txt")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s — %(levelname)s — %(name)s — %(funcName)s — Line %(lineno)d — %(message)s"
+)
+logger = logging.getLogger("retrain")
 
-FEATURE_COLS = [
-    "pnl", "confidence", "setup_quality", "vix", "realized_vol", "trade_type", "total_signals_today",
-    "ema_20", "rsi_14", "macd", "macd_signal", "macd_hist",
-    "bb_upper", "bb_middle", "bb_lower", "vwap", "atr_14", "adx_14"
-]
+DATA_CSV = Path("ml/spy_data.csv")
+RAW_MODEL_PATH = Path("models/xgb_raw.json")
+CAL_MODEL_PATH = Path("models/xgb_calibrated.pkl")
+ACCURACY_LOG = Path("ml/accuracy_log.txt")
+
 
 def load_data():
-    if not CSV_PATH.exists():
-        raise FileNotFoundError(f"{CSV_PATH} not found")
-    df = pd.read_csv(CSV_PATH)
-    df = df.dropna(subset=FEATURE_COLS + ["label"])
-    X = df[FEATURE_COLS].values.astype(np.float32)
-    y = df["label"].values.astype(np.int32)
-    return X, y, df
+    df = pd.read_csv(DATA_CSV)
+    df = df.dropna()
+    y = df["label"].astype(int).values
+    X = df.drop(columns=["timestamp", "label", "pnl"]).values.astype(np.float32)
+    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
+    return X, y
+
 
 def retrain_model():
+    logger.info("[ML Retraining] Started")
+
     try:
-        bot_logger.info("[ML Retraining] Started")
-
-        # Step 1: Build or update dataset
-        bot_logger.info("[Preprocess] Running feature builder...")
+        logger.info("[Preprocess] Running feature builder...")
         build_dataset()
-        bot_logger.info("[Preprocess] Feature builder completed successfully.")
+        logger.info("[Preprocess] Feature builder completed successfully.")
+    except Exception as e:
+        logger.exception(f"Feature builder failed: {e}")
+        send_telegram_message(f"❌ Feature builder failed: {e}")
+        update_status("ml_retrain", "fail")
+        return
 
-        # Step 2: Load dataset
-        X, y, df = load_data()
-        bot_logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
+    try:
+        X, y = load_data()
 
-        # Step 3: Train XGBoost model
         xgb = XGBClassifier(
-            n_estimators=200,
-            max_depth=4,
-            learning_rate=0.08,
-            subsample=0.9,
-            colsample_bytree=0.8,
+            objective="binary:logistic",
+            eval_metric="logloss",
             use_label_encoder=False,
-            eval_metric="logloss"
+            n_estimators=200,
+            max_depth=5,
+            learning_rate=0.05,
+            verbosity=0
         )
         xgb.fit(X, y)
 
         # Save raw model
-        xgb.save_model(str(MODEL_PATH))
-        bot_logger.info(f"[Save Model] Raw XGBoost booster saved to {MODEL_PATH}")
+        xgb.save_model(RAW_MODEL_PATH)
+        logger.info(f"[Save Model] Raw XGBoost booster saved to {RAW_MODEL_PATH}")
 
-        # Step 4: Calibrate model with 5-fold isotonic calibration
+        # Calibration
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-        calibrator = CalibratedClassifierCV(base_estimator=xgb, method="isotonic", cv=skf)
+        calibrator = CalibratedClassifierCV(estimator=xgb, method="isotonic", cv=skf)
         calibrator.fit(X, y)
+        joblib.dump(calibrator, CAL_MODEL_PATH)
+        logger.info(f"[Save Model] Calibrated model saved to {CAL_MODEL_PATH}")
 
-        # Save calibrated model
-        joblib.dump(calibrator, CALIBRATED_MODEL_PATH)
-        bot_logger.info(f"[Save Model] Calibrated model saved to {CALIBRATED_MODEL_PATH}")
+        accuracy = calibrator.score(X, y)
+        logger.info(f"[Accuracy] In-sample accuracy: {accuracy:.4f}")
+        with ACCURACY_LOG.open("a") as f:
+            f.write(f"{datetime.utcnow().isoformat()} — Accuracy: {accuracy:.4f}\n")
 
-        # Step 5: Evaluate accuracy
-        y_pred = cross_val_predict(calibrator, X, y, cv=skf, method='predict')
-        acc = accuracy_score(y, y_pred)
-        bot_logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
-
-        # Step 6: Log accuracy
-        with open(ACCURACY_LOG_PATH, "a") as f:
-            f.write(f"{pd.Timestamp.now()},rows={len(df)},accuracy={acc:.4f}\n")
-
-        # Step 7: Send Telegram alert
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            send_telegram_message(
-                f"✅ Model retrained ({len(df)} rows)\n"
-                f"Accuracy: {acc:.4f}\n"
-                f"Saved to: `{MODEL_PATH.name}`, `{CALIBRATED_MODEL_PATH.name}`",
-                TELEGRAM_BOT_TOKEN,
-                TELEGRAM_CHAT_ID
-            )
-
+        send_telegram_message(f"✅ ML retrained. Accuracy: {accuracy:.4f}")
         update_status("ml_retrain", "ok")
 
     except Exception as e:
-        bot_logger.critical(f"Fatal error during retraining: {e}")
-
-        # Notify via Telegram
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            send_telegram_message(f"❌ ML retrain failed: {e}", TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
-
+        logger.critical(f"Fatal error during retraining: {e}")
+        send_telegram_message(f"❌ ML retrain failed: {e}")
         update_status("ml_retrain", "fail")
+
 
 if __name__ == "__main__":
     retrain_model()
