@@ -8,7 +8,6 @@ import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.model_selection import train_test_split
-from sklearn.exceptions import NotFittedError
 
 # Config paths
 RAW_MODEL_PATH = "models/xgb_raw.json"
@@ -23,16 +22,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("retrain")
 
-
 def send_telegram_message(text, photo_path=None):
     # Placeholder: implement your Telegram bot send logic here
     pass
 
-
 def update_status(key):
     # Placeholder: implement your heartbeat/status update logic here
     pass
-
 
 def load_data():
     path = "ml/spy_data.csv"
@@ -40,28 +36,26 @@ def load_data():
     logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
     return df
 
-
 def prune_training_data(df, max_rows=10000):
     if len(df) > max_rows:
         df = df.tail(max_rows).reset_index(drop=True)
         logger.info(f"[Data Prune] Limited to last {max_rows} rows")
     return df
 
-
 def calculate_indicators(df):
-    return df  # Add your OHLCV indicator logic here if needed
-
+    # If you have OHLCV data, calculate indicators here
+    # Example: placeholder
+    return df
 
 def create_labels(df):
     df['label'] = df['label'].astype(int)
     return df
 
-
 def plot_calibration(y_true, y_prob, save_path):
     plt.figure(figsize=(8, 6))
     prob_true, prob_pred = calibration_curve(y_true, y_prob, n_bins=10)
     plt.plot(prob_pred, prob_true, marker='o', linewidth=2, label="Calibration curve")
-    plt.plot([0, 1], [0, 1], linestyle='--', label="Perfectly calibrated")
+    plt.plot([0,1], [0,1], linestyle='--', label="Perfectly calibrated")
     plt.xlabel("Mean predicted probability")
     plt.ylabel("Fraction of positives")
     plt.title("Calibration Curve")
@@ -72,7 +66,6 @@ def plot_calibration(y_true, y_prob, save_path):
     plt.close()
     logger.info(f"[Plot] Saved calibration curve to {save_path}")
 
-
 def retrain_model():
     try:
         logger.info("[ML Retraining] Started")
@@ -80,7 +73,7 @@ def retrain_model():
 
         df = load_data()
 
-        if all(c in df.columns for c in ["open", "high", "low", "close", "volume"]):
+        if all(c in df.columns for c in ["open","high","low","close","volume"]):
             df = calculate_indicators(df)
         else:
             logger.info("[Indicators] Skipped — no OHLCV")
@@ -92,7 +85,7 @@ def retrain_model():
         df = prune_training_data(df)
         df = create_labels(df)
 
-        X = df.drop(columns=["timestamp", "label", "pnl"], errors="ignore")
+        X = df.drop(columns=["timestamp","label"])
         y = df["label"]
 
         X_train, X_val, y_train, y_val = train_test_split(
@@ -100,30 +93,33 @@ def retrain_model():
         )
 
         model = xgb.XGBClassifier(
-            objective="binary:logistic",
-            eval_metric="logloss",
+            objective='binary:logistic',
+            eval_metric='logloss',
             n_estimators=100,
             random_state=42,
+            # use_label_encoder deprecated, removed
         )
 
         calibrator = CalibratedClassifierCV(model, method="sigmoid", cv=3)
         calibrator.fit(X_train, y_train)
 
-        # Save raw model after calibration (access the fitted model)
-        fitted_model = calibrator.base_estimator_
-        if isinstance(fitted_model, xgb.XGBClassifier):
-            booster = fitted_model.get_booster()
-            booster.save_model(RAW_MODEL_PATH)
-            logger.info(f"[Model] Saved raw XGB model to {RAW_MODEL_PATH}")
-        else:
-            logger.warning("[Model] Unable to access fitted model booster — raw model not saved.")
+        # Save raw model (uncalibrated) from one fold of calibrated classifiers
+        try:
+            fitted_model = calibrator.calibrated_classifiers_[0][0]
+            if isinstance(fitted_model, xgb.XGBClassifier):
+                fitted_model.get_booster().save_model(RAW_MODEL_PATH)
+                logger.info(f"[Model] Saved raw XGB model to {RAW_MODEL_PATH}")
+            else:
+                logger.warning("[Model] Calibrated base is not an XGBClassifier — skipping raw model save")
+        except Exception as e:
+            logger.warning(f"[Model] Could not save raw model: {e}")
 
         # Save calibrated model
         joblib.dump(calibrator, CAL_MODEL_PATH)
         logger.info(f"[Model] Saved calibrated model to {CAL_MODEL_PATH}")
 
         y_pred = calibrator.predict(X_val)
-        y_proba = calibrator.predict_proba(X_val)[:, 1]
+        y_proba = calibrator.predict_proba(X_val)[:,1]
         acc = accuracy_score(y_val, y_pred)
         brier = brier_score_loss(y_val, y_proba)
 
@@ -152,7 +148,6 @@ def retrain_model():
         logger.critical(f"Fatal error: {e}", exc_info=True)
         send_telegram_message(f"❌ Retrain error: {e}")
         update_status("last_retrain_failed")
-
 
 if __name__ == "__main__":
     retrain_model()
