@@ -10,6 +10,10 @@ from __future__ import annotations
 import traceback
 from datetime import datetime
 from typing import Dict, Any
+import os
+import joblib
+import numpy as np
+import pandas as pd
 
 from strategy.helpers import is_day_trade, is_swing_trade
 from config import (
@@ -32,6 +36,69 @@ from meta.meta_state import normalize_meta_state
 # ─────────────────────────────────────────────────────────
 meta_agent = MetaAgent()
 
+# Load calibrated classifier once at module load
+CALIBRATED_MODEL_PATH = "models/xgb_calibrated.pkl"
+calibrated_model = None
+try:
+    if os.path.exists(CALIBRATED_MODEL_PATH):
+        calibrated_model = joblib.load(CALIBRATED_MODEL_PATH)
+        logger.info(f"[Strategy] Loaded calibrated classifier from {CALIBRATED_MODEL_PATH}")
+    else:
+        logger.warning(f"[Strategy] Calibrated model not found at {CALIBRATED_MODEL_PATH}")
+except Exception as e:
+    logger.error(f"[Strategy] Failed to load calibrated model: {e}")
+    calibrated_model = None
+
+def predict_trade_outcome(features: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Predict trade outcome probabilities and direction using the calibrated classifier.
+
+    Args:
+        features: Dict of features matching the classifier input schema.
+
+    Returns:
+        Dict with:
+          - trade_success_prob (float)
+          - predicted_direction (int)  # e.g., 1=long, 0=neutral, -1=short
+          - class_probabilities (list of floats)
+          - entropy (float)
+    """
+    if calibrated_model is None:
+        # Model not loaded, return safe defaults
+        logger.warning("[Strategy] Calibrated model unavailable, skipping prediction.")
+        return {
+            "trade_success_prob": 0.0,
+            "predicted_direction": 0,
+            "class_probabilities": [0.0, 0.0],
+            "entropy": 0.0,
+        }
+
+    try:
+        # Convert features dict to dataframe with single row
+        input_df = pd.DataFrame([features])
+        proba = calibrated_model.predict_proba(input_df)[0]
+        pred_class = np.argmax(proba)
+        entropy = -np.sum(proba * np.log(proba + 1e-12))  # add small epsilon to avoid log(0)
+
+        # Assuming class 1 = success (long), class 0 = failure (neutral/short)
+        trade_success_prob = proba[1]
+        predicted_direction = 1 if pred_class == 1 else 0
+
+        return {
+            "trade_success_prob": float(trade_success_prob),
+            "predicted_direction": int(predicted_direction),
+            "class_probabilities": proba.tolist(),
+            "entropy": float(entropy),
+        }
+    except Exception as e:
+        logger.error(f"[Strategy] Prediction error: {e}")
+        return {
+            "trade_success_prob": 0.0,
+            "predicted_direction": 0,
+            "class_probabilities": [0.0, 0.0],
+            "entropy": 0.0,
+        }
+
 # ─────────────────────────────────────────────────────────
 # ----------   1.  Trade‑Signal (entry side)   ------------
 # ─────────────────────────────────────────────────────────
@@ -53,7 +120,7 @@ def evaluate_trade_signal(market_snap: Dict) -> Dict[str, Any]:
         tf_1d = market_snap.get("tf_1d")
         long_term_data = fetch_long_term_features("SPY")
 
-        atr = tf_1d["atr"].iloc[-1] if "atr" in tf_1d.columns else 2.0
+        atr = tf_1d["atr"].iloc[-1] if tf_1d is not None and "atr" in tf_1d.columns else 2.0
         confidence = market_snap.get("confidence", 0.0)
 
         regime_features = {
@@ -64,6 +131,7 @@ def evaluate_trade_signal(market_snap: Dict) -> Dict[str, Any]:
             "atr": atr,
         }
 
+        # Normalize meta state for meta-agent decision
         meta_state = normalize_meta_state(regime_features)
         meta_decision = meta_agent.should_enter(meta_state)
 
@@ -76,13 +144,30 @@ def evaluate_trade_signal(market_snap: Dict) -> Dict[str, Any]:
             logger.info(f"[Strategy] Confidence {confidence:.2f} below threshold.")
             return _no_trade()
 
+        # Prepare features for classifier prediction
+        # Use market_snap features plus regime features as needed
+        # Assuming market_snap keys match classifier feature columns
+        classifier_features = dict(market_snap)  # shallow copy
+        # Add any additional features if needed, e.g.:
+        classifier_features.update({
+            "vix": vix,
+            "hour": datetime.now().hour,
+            "is_swing": float(is_swing_trade()),
+            "atr": atr,
+            "confidence": confidence,
+        })
+
+        clf_out = predict_trade_outcome(classifier_features)
+
         trade_type = 1 if is_swing_trade() else 0
         trade_setup = {
             "symbol": "SPY",
             "stop_loss_pct": atr * STOP_LOSS_ATR_MULTIPLIER / 100,
         }
 
-        logger.info(f"[Strategy] Entry signal passed with confidence {confidence:.2f}")
+        logger.info(f"[Strategy] Entry signal passed with confidence {confidence:.2f}, "
+                    f"Classifier trade_success_prob={clf_out['trade_success_prob']:.3f}")
+
         return {
             "should_trade": True,
             "confidence": confidence,
@@ -94,6 +179,11 @@ def evaluate_trade_signal(market_snap: Dict) -> Dict[str, Any]:
             "tf_1h": tf_1h,
             "tf_1d": tf_1d,
             "long_term_data": long_term_data,
+            # Classifier outputs included for downstream use
+            "trade_success_prob": clf_out["trade_success_prob"],
+            "predicted_direction": clf_out["predicted_direction"],
+            "class_probabilities": clf_out["class_probabilities"],
+            "entropy": clf_out["entropy"],
         }
 
     except Exception as e:
@@ -160,4 +250,9 @@ def _no_trade() -> Dict[str, Any]:
         "tf_1h": None,
         "tf_1d": None,
         "long_term_data": {},
+        # Classifier outputs default to zero
+        "trade_success_prob": 0.0,
+        "predicted_direction": 0,
+        "class_probabilities": [0.0, 0.0],
+        "entropy": 0.0,
     }
