@@ -10,10 +10,11 @@ from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.model_selection import train_test_split
 
 # Config paths
-RAW_MODEL_PATH = "models/xgb_raw.json"
-CAL_MODEL_PATH = "models/xgb_calibrated.pkl"
-CAL_PLOT_PATH = "reports/calibration_plot.png"
-LOG_PATH = "logs/retrain_log.csv"
+RAW_MODEL_PATH = "ml/models/xgb_raw.json"
+CAL_MODEL_PATH = "ml/models/xgb_calibrated.pkl"
+CAL_PLOT_PATH = "ml/reports/calibration_plot.png"
+LOG_PATH = "ml/models/accuracy_log.txt"
+DATA_PATH = "ml/spy_data.csv"
 
 # Set up logging
 logging.basicConfig(
@@ -31,10 +32,7 @@ def update_status(key):
     pass
 
 def load_data():
-    # Implement your own data loading logic here
-    # For example loading a CSV with features + label
-    path = "ml/spy_data.csv"
-    df = pd.read_csv(path)
+    df = pd.read_csv(DATA_PATH)
     logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
     return df
 
@@ -45,12 +43,11 @@ def prune_training_data(df, max_rows=10000):
     return df
 
 def calculate_indicators(df):
-    # If you have OHLCV data, calculate indicators here
-    # Example: placeholder
+    # Optional: placeholder for technical indicators
     return df
 
 def create_labels(df):
-    # Ensure 'label' column exists and is correct type
+    df = df[df['label'].notna()]
     df['label'] = df['label'].astype(int)
     return df
 
@@ -58,7 +55,7 @@ def plot_calibration(y_true, y_prob, save_path):
     plt.figure(figsize=(8, 6))
     prob_true, prob_pred = calibration_curve(y_true, y_prob, n_bins=10)
     plt.plot(prob_pred, prob_true, marker='o', linewidth=2, label="Calibration curve")
-    plt.plot([0,1], [0,1], linestyle='--', label="Perfectly calibrated")
+    plt.plot([0,1], [0,1], linestyle='--', label="Perfect calibration")
     plt.xlabel("Mean predicted probability")
     plt.ylabel("Fraction of positives")
     plt.title("Calibration Curve")
@@ -76,7 +73,7 @@ def retrain_model():
 
         df = load_data()
 
-        if all(c in df.columns for c in ["open","high","low","close","volume"]):
+        if all(c in df.columns for c in ["open", "high", "low", "close", "volume"]):
             df = calculate_indicators(df)
         else:
             logger.info("[Indicators] Skipped — no OHLCV")
@@ -88,7 +85,8 @@ def retrain_model():
         df = prune_training_data(df)
         df = create_labels(df)
 
-        X = df.drop(columns=["timestamp","label"])
+        feature_cols = [col for col in df.columns if col not in ['timestamp', 'label', 'pnl']]
+        X = df[feature_cols]
         y = df["label"]
 
         X_train, X_val, y_train, y_val = train_test_split(
@@ -100,31 +98,32 @@ def retrain_model():
             eval_metric='logloss',
             n_estimators=100,
             random_state=42,
-            use_label_encoder=False,  # safer to include explicitly
+            use_label_encoder=False,
         )
 
-        calibrator = CalibratedClassifierCV(model, method="sigmoid", cv=3)
+        calibrator = CalibratedClassifierCV(model, method="isotonic", cv=5)
         calibrator.fit(X_train, y_train)
 
-        # Save raw model (uncalibrated)
+        # Save raw (pre-calibrated) model
         model.save_model(RAW_MODEL_PATH)
         logger.info(f"[Model] Saved raw XGBClassifier model to {RAW_MODEL_PATH}")
 
-        # Save calibrated model
+        # Save calibrated model via joblib
         joblib.dump(calibrator, CAL_MODEL_PATH)
         logger.info(f"[Model] Saved calibrated model to {CAL_MODEL_PATH}")
 
         y_pred = calibrator.predict(X_val)
-        y_proba = calibrator.predict_proba(X_val)[:,1]
+        y_proba = calibrator.predict_proba(X_val)[:, 1]
         acc = accuracy_score(y_val, y_pred)
         brier = brier_score_loss(y_val, y_proba)
 
         plot_calibration(y_val, y_proba, CAL_PLOT_PATH)
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        exists = os.path.exists(LOG_PATH)
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        new_header = not os.path.exists(LOG_PATH)
         with open(LOG_PATH, "a") as f:
-            if not exists:
+            if new_header:
                 f.write("timestamp,accuracy,brier\n")
             f.write(f"{now},{acc:.4f},{brier:.4f}\n")
 
@@ -133,6 +132,7 @@ def retrain_model():
             f"Date: {now}\n"
             f"Accuracy: {acc:.2%}\n"
             f"Brier Score: {brier:.4f}\n"
+            f"Samples: {len(df)}\n"
             "Cold start with calibration"
         )
         logger.info(msg)
@@ -144,7 +144,6 @@ def retrain_model():
         logger.critical(f"Fatal error: {e}", exc_info=True)
         send_telegram_message(f"❌ Retrain error: {e}")
         update_status("last_retrain_failed")
-
 
 if __name__ == "__main__":
     retrain_model()
