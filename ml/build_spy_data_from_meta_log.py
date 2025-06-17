@@ -1,5 +1,3 @@
-# ml/build_spy_data_from_meta_log.py
-
 import json
 import numpy as np
 import pandas as pd
@@ -10,6 +8,7 @@ from technical_analysis.indicators import calculate_indicators
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_NPZ = Path("ml/dataset.npz")
 OUTPUT_CSV = Path("ml/spy_data.csv")
+MAX_ROWS = 10000  # For pruning CSV if it grows too large
 
 FEATURE_NAMES = [
     "pnl",
@@ -32,7 +31,6 @@ FEATURE_NAMES = [
     "adx_14"
 ]
 
-
 def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     trade = entry.get("trade", {})
     bar = entry.get("bar", {})
@@ -54,11 +52,9 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             'close': close,
             'volume': volume
         }])
-
         df_ind = calculate_indicators(df_bar)
         row = df_ind.iloc[0]
 
-        # Helper to get value or fallback
         def safe_val(name: str, fallback: float = 0.0):
             return float(row[name]) if name in row and pd.notna(row[name]) else fallback
 
@@ -69,8 +65,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         realized_vol = float(market.get("realized_vol", 0.02))
         trade_type = int(trade.get("trade_type", 0))
         total_signals_today = int(trade.get("total_signals_today", 0))
-
-        # VWAP fallback to close if not present
         vwap_value = safe_val("VWAP", fallback=close)
 
         features = np.array([
@@ -95,14 +89,11 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         ], dtype=np.float32)
 
         label = 1 if pnl > 5 else 0
-
         return features, label, timestamp
 
     except Exception as e:
-        available_cols = list(df_ind.columns)
-        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}. Available columns: {available_cols}")
+        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}")
         return None
-
 
 def build_dataset():
     if not META_LOG_PATH.exists():
@@ -128,18 +119,28 @@ def build_dataset():
         bot_logger.error("[Build Dataset] No valid entries found.")
         return
 
-    features = np.array(features, dtype=np.float32)
-    labels = np.array(labels, dtype=np.int32)
+    df_new = pd.DataFrame(features, columns=FEATURE_NAMES)
+    df_new.insert(0, "timestamp", timestamps)
+    df_new["label"] = labels
 
-    np.savez_compressed(OUTPUT_NPZ, X=features, y=labels, timestamps=np.array(timestamps))
+    # Append to CSV and deduplicate by timestamp
+    if OUTPUT_CSV.exists():
+        df_existing = pd.read_csv(OUTPUT_CSV)
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        df_combined = df_combined.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+    else:
+        df_combined = df_new
 
-    df_out = pd.DataFrame(features, columns=FEATURE_NAMES)
-    df_out.insert(0, "timestamp", timestamps)
-    df_out["label"] = labels
-    df_out.to_csv(OUTPUT_CSV, index=False)
+    # Prune to max rows
+    if len(df_combined) > MAX_ROWS:
+        df_combined = df_combined.tail(MAX_ROWS)
 
-    bot_logger.info(f"[Build Dataset] ✅ Saved {len(features)} entries to {OUTPUT_NPZ} and {OUTPUT_CSV}")
+    df_combined.to_csv(OUTPUT_CSV, index=False)
+    np.savez_compressed(OUTPUT_NPZ, X=df_combined[FEATURE_NAMES].values.astype(np.float32),
+                        y=df_combined["label"].values.astype(np.int32),
+                        timestamps=df_combined["timestamp"].values)
 
+    bot_logger.info(f"[Build Dataset] ✅ Appended and saved {len(df_new)} new entries. Total: {len(df_combined)} rows.")
 
 if __name__ == "__main__":
     build_dataset()
