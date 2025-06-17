@@ -1,87 +1,79 @@
 import os
-import pickle
-import logging
-import xgboost as xgb
 import pandas as pd
+import logging
+import joblib
+from datetime import datetime
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import accuracy_score
-from ml.build_spy_data_from_meta_log import build_dataset
-from monitor.health_check import update_status
+import xgboost as xgb
+
 from utils.telegram_utils import send_telegram_message
+from monitor.health_check import update_status
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from ml.build_spy_data_from_meta_log import build_dataset
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s — %(levelname)s — %(name)s — %(funcName)s — Line %(lineno)d — %(message)s",
+    format="%(asctime)s — %(levelname)s — %(name)s — %(funcName)s — Line %(lineno)d — %(message)s"
 )
 logger = logging.getLogger("retrain")
 
 def load_data():
     df = pd.read_csv("ml/spy_data.csv")
-    df.dropna(inplace=True)
-    if "timestamp" in df.columns:
-        df = df.drop(columns=["timestamp"])
-    if "label" in df.columns:
-        y = df["label"]
-        X = df.drop(columns=["label", "pnl"])
-    else:
-        raise ValueError("Missing label column in spy_data.csv")
-    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
-    return X, y
+    df = df.drop(columns=["timestamp"], errors="ignore")
+    df = df.dropna()
+    return df
 
 def retrain_model():
     try:
         logger.info("[ML Retraining] Started")
 
-        # Build features first
         logger.info("[Preprocess] Running feature builder...")
         build_dataset()
         logger.info("[Preprocess] Feature builder completed successfully.")
 
-        # Load data
-        X, y = load_data()
+        df = load_data()
+        logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
 
-        # Train base XGBoost classifier
+        y = df["label"]
+        X = df.drop(columns=["label", "pnl"], errors="ignore")
+
         xgb_model = xgb.XGBClassifier(
             n_estimators=100,
-            max_depth=3,
+            max_depth=5,
             learning_rate=0.1,
-            objective="binary:logistic",
-            eval_metric="logloss",
-            verbosity=0,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42,
+            n_jobs=1,
+            verbosity=0
         )
         xgb_model.fit(X, y)
 
-        # Save raw booster
+        os.makedirs("models", exist_ok=True)
         xgb_model.get_booster().save_model("models/xgb_raw.json")
         logger.info("[Save Model] Raw XGBoost booster saved to models/xgb_raw.json")
 
-        # Calibrate
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         calibrator = CalibratedClassifierCV(estimator=xgb_model, method="isotonic", cv=skf)
         calibrator.fit(X, y)
 
-        # Save calibrated model
-        with open("models/xgb_calibrated.pkl", "wb") as f:
-            pickle.dump(calibrator, f)
+        joblib.dump(calibrator, "models/xgb_calibrated.pkl")
         logger.info("[Save Model] Calibrated model saved to models/xgb_calibrated.pkl")
 
-        # Evaluate
-        preds = calibrator.predict(X)
-        acc = accuracy_score(y, preds)
+        acc = calibrator.score(X, y)
         logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
 
-        send_telegram_message(f"✅ ML retrained. Accuracy: {acc:.4f}")
-        update_status("ml_retrain", "ok")
+        update_status({"ml_retrain": "ok"})
+        send_telegram_message(f"✅ ML retrained successfully.\nAccuracy: {acc:.4f}", TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 
     except Exception as e:
         logger.critical(f"Fatal error during retraining: {e}")
+        update_status({"ml_retrain": "fail"})
         try:
-            send_telegram_message(f"❌ ML retrain failed: {e}")
-        except Exception as tg_error:
-            logger.warning(f"❌ Failed to send Telegram message: {tg_error}")
-        update_status("ml_retrain", "fail")
+            send_telegram_message(f"❌ ML retrain failed:\n{e}", TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+        except Exception as inner:
+            logger.warning(f"❌ Failed to send Telegram message: {inner}")
 
 if __name__ == "__main__":
     retrain_model()
