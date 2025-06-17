@@ -2,28 +2,30 @@ import os
 import csv
 import json
 from datetime import datetime
+import numpy as np
 
 # Paths for data logging
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "spy_data.csv")
 TRAINING_LOG_PATH = os.path.join(BASE_DIR, "training_log.jsonl")
 
-# Define the updated feature schema with semantic indicator names
-DEFAULT_FEATURES = [
-    'vix',
-    'rsi_14',
-    'ema_20',
-    'vwap',
-    'regime_bull',
-    'regime_bear',
-    'confidence',
-    'hour',
-    'atr',
-    'pnl'
-]
-
 # Limit for how many rows to retain
 MAX_ROWS = 5000
+
+DEBUG = False  # Set to True to print all logged features
+
+
+def _safe_scalar(value):
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return value[0] if len(value) > 0 else ''
+    return value
+
+
+def _get_all_feature_keys(features: dict) -> list:
+    static = ['vix', 'confidence', 'regime_bull', 'regime_bear']
+    dynamic = sorted([k for k in features.keys() if k not in static])
+    return static + dynamic
+
 
 def log_training_example(timestamp, close, features: dict, label: int = None):
     """
@@ -31,22 +33,28 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
     Ensures consistent header and trims file if it grows too large.
     Also logs JSONL version to training_log.jsonl.
     """
-    fieldnames = ['timestamp', 'open', 'high', 'low', 'close', 'volume'] + DEFAULT_FEATURES + ['label']
+    if isinstance(timestamp, str):
+        timestamp = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+
+    feature_keys = _get_all_feature_keys(features)
+    fieldnames = ['timestamp', 'open', 'high', 'low', 'close', 'volume'] + feature_keys + ['label']
 
     # Build row for CSV
     row = {
         'timestamp': timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-        'open': features.get('open', ''),
-        'high': features.get('high', ''),
-        'low': features.get('low', ''),
+        'open': _safe_scalar(features.get('open', '')),
+        'high': _safe_scalar(features.get('high', '')),
+        'low': _safe_scalar(features.get('low', '')),
         'close': close,
-        'volume': features.get('volume', ''),
+        'volume': _safe_scalar(features.get('volume', '')),
         'label': label if label is not None else ''
     }
 
-    # Add updated semantic features
-    for key in DEFAULT_FEATURES:
-        row[key] = features.get(key, '')
+    for key in feature_keys:
+        row[key] = _safe_scalar(features.get(key, ''))
+
+    if DEBUG:
+        print(f"[logger] Logging row: {row}")
 
     file_exists = os.path.exists(DATA_PATH)
 
@@ -65,7 +73,6 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
     except Exception as e:
         print(f"[logger.py] Failed to prune spy_data.csv: {e}")
 
-    # Also log JSONL version
     try:
         log_training_jsonl(timestamp, close, features, label)
     except Exception as e:
@@ -77,14 +84,14 @@ def log_training_jsonl(timestamp, close, features: dict, label: int = None):
     Logs the training data as JSONL to training_log.jsonl for ML tracking/debugging.
     """
     payload = {
-        "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S") if isinstance(timestamp, datetime) else str(timestamp),
         "close": close,
         "features": features,
         "label": label,
     }
     try:
         with open(TRAINING_LOG_PATH, "a") as f:
-            f.write(json.dumps(payload) + "\n")
+            f.write(json.dumps(payload, default=str) + "\n")
     except Exception as e:
         print(f"[logger.py] Failed to write to training_log.jsonl: {e}")
 
@@ -94,6 +101,9 @@ def _prune_if_necessary(fieldnames: list):
     Prunes spy_data.csv to retain only the most recent MAX_ROWS.
     Avoids unbounded file growth.
     """
+    if not os.path.exists(DATA_PATH):
+        return
+
     with open(DATA_PATH, "r", newline="") as f:
         rows = list(csv.DictReader(f))
     if len(rows) <= MAX_ROWS:
