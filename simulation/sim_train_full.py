@@ -34,7 +34,7 @@ model_inference = ModelInference()
 
 def simulate():
     logger.info("🧪 simulate() function started successfully!")
-    
+
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
     for _ in range(1, n_steps):
@@ -243,3 +243,7 @@ def simulate():
         time.sleep(0.05)
 
     send_telegram_message("🧪 Synthetic back-test complete.")
+
+# 🧠 ENTRYPOINT
+if __name__ == "__main__":
+    simulate()
