@@ -64,14 +64,14 @@ def retrain_model():
         acc = calibrator.score(X, y)
         logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
 
-        update_status("last_retrain")
-        send_telegram_message(f"✅ ML retrained successfully.\nAccuracy: {acc:.4f}", TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+        update_status("last_retrain", "ok")
+        send_telegram_message(f"✅ ML retrained successfully.\nAccuracy: {acc:.4f}")
 
     except Exception as e:
         logger.critical(f"Fatal error during retraining: {e}")
-        update_status("last_retrain")
+        update_status("last_retrain", "fail")
         try:
-            send_telegram_message(f"❌ ML retrain failed:\n{e}", TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+            send_telegram_message(f"❌ ML retrain failed:\n{e}")
         except Exception as inner:
             logger.warning(f"❌ Failed to send Telegram message: {inner}")
 
