@@ -20,11 +20,14 @@ def _save_status(status):
     with open(STATUS_FILE, "w") as f:
         json.dump(status, f, indent=2)
 
-def update_status(event_type: str):
+def update_status(event_type: str, status_value: str = "ok"):
     status = _load_status()
-    status[event_type] = datetime.utcnow().isoformat()
+    status[event_type] = {
+        "status": status_value,
+        "timestamp": datetime.utcnow().isoformat()
+    }
     _save_status(status)
-    bot_logger.info(f"✅ Updated heartbeat status: {event_type}")
+    bot_logger.info(f"✅ Updated status: {event_type} → {status_value}")
 
 def check_health():
     status = _load_status()
