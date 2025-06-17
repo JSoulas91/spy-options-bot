@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 BASE_DIR       = os.path.dirname(__file__)
-CAL_MODEL_PATH = os.path.join(BASE_DIR, "xgb_calibrated.pkl")
+CAL_MODEL_PATH = os.path.join(BASE_DIR, "models/xgb_calibrated.pkl")
 
 class ModelInference:
     def __init__(self):
