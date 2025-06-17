@@ -167,6 +167,18 @@ def build_meta_state_for_entry(
             else:
                 state += [PAD_VAL, PAD_VAL, PAD_VAL]
 
+        # ────────── NEW: Append classifier features if present ─────────────
+        if classifier_output:
+            # Here add numeric features for PPO agent input from classifier
+            # Use defaults if keys missing to keep vector length consistent
+            # For example:
+            trade_succ_prob = normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"])
+            # You can add more classifier features here if available
+            # Append them:
+            state.append(trade_succ_prob)
+            # If you want to add more classifier output features, do it here,
+            # and adjust STATE_DIM accordingly if you add more than 1.
+
         return _pad(state)
 
     except Exception as e:
@@ -196,68 +208,4 @@ def build_meta_state_for_exit(
         spy_price = spy_q.get("price", 0)
 
         opt_sym   = trade.get("option_symbol")
-        opt_q     = _cached_option_quote(opt_sym) if opt_sym else {}
-        iv, delta = float(opt_q.get("iv", 0) or 0), float(opt_q.get("delta", 0) or 0)
-
-        dur_rng   = DEFAULT_RANGES["DURATION"]
-        prof_rng  = DEFAULT_RANGES["PROFIT"]
-        spy_abs   = DEFAULT_RANGES["SPY_ABS"]
-
-        confidence = trade.get("confidence", 0.5)
-        t_type     = trade.get("trade_type", 0)
-        entry      = trade.get("entry_price", 0)
-        pnl_pct    = (spy_price - entry) / max(entry, 1e-9)
-
-        try:
-            entry_time   = datetime.fromisoformat(trade.get("timestamp")).astimezone(eastern)
-            minutes_open = (datetime.now(eastern) - entry_time).total_seconds() // 60
-        except Exception:
-            minutes_open = 0
-
-        state: List[float] = [
-            normalize(confidence, DEFAULT_RANGES["CONF"]),
-            1.0 if t_type == 1 else 0.0,
-            normalize(get_minutes_since_open(), dur_rng),
-            normalize(minutes_open, dur_rng),
-            normalize(pnl_pct, prof_rng),
-            normalize(fetch_vix_price() or 20.0, DEFAULT_RANGES["VIX"]),
-            *summarise_past(past_trades, prof_rng, dur_rng),
-            normalize(spy_price - entry, DEFAULT_RANGES["EMA_DIST"]),
-            normalize(spy_price, spy_abs),
-            normalize(iv, DEFAULT_RANGES["IV"]),
-            normalize(delta, DEFAULT_RANGES["DELTA"]),
-        ]
-        return _pad(state)
-    except Exception as e:
-        logger.error(f"[MetaState] exit build error: {e}")
-        return np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
-
-# ───────────────────────────────────────────────
-def build_meta_state_from_log(row: dict) -> np.ndarray:
-    vec = row.get("meta_state")
-    if vec is not None:
-        return _pad(list(vec))
-    return np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
-
-# ───────────────────────────────────────────────
-# 5‑feature normaliser used by strategy.py – padded to 73
-_SIMPLE_BOUNDS = {
-    "confidence": (0, 1),
-    "vix":        (10, 40),
-    "hour":       (0, 23),
-    "is_swing":   (0, 1),
-    "atr":        (0, 10),
-}
-
-def _to_unit(val: float, lo: float, hi: float) -> float:
-    if hi - lo == 0:
-        return 0.0
-    return float(np.clip(2 * (val - lo) / (hi - lo) - 1, -1, 1))
-
-def normalize_meta_state(feat: dict) -> np.ndarray:
-    """Normalise {confidence, vix, hour, is_swing, atr} → 73‑dim vector."""
-    vals = []
-    for key in ("confidence", "vix", "hour", "is_swing", "atr"):
-        lo, hi = _SIMPLE_BOUNDS.get(key, (0, 1))
-        vals.append(_to_unit(float(feat.get(key, 0)), lo, hi))
-    return _pad(vals)
+        opt_q     = _cached_option_quote(opt_sym
