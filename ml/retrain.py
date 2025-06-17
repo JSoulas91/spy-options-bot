@@ -10,7 +10,7 @@ from xgboost import Booster
 from build_spy_data_from_meta_log import build_dataset
 from utils.logger import bot_logger
 from utils.telegram_utils import send_telegram_message
-from utils.health_check import update_status
+from monitor.health_check import update_status
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.isotonic import IsotonicRegression
