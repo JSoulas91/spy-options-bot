@@ -32,7 +32,9 @@ GARBAGE_KEEP_PROB = 0.05
 meta_agent = MetaAgent()
 model_inference = ModelInference()
 
-
+def simulate():
+    logger.info("🧪 simulate() function started successfully!")
+    
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
     for _ in range(1, n_steps):
