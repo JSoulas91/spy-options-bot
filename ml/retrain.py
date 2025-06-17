@@ -50,7 +50,7 @@ def retrain_model():
     run_build_dataset()
     X, y, df = load_data()
 
-    model = XGBClassifier(n_estimators=150, max_depth=4, learning_rate=0.1, subsample=0.9, use_label_encoder=False, eval_metric='logloss')
+    model = XGBClassifier(n_estimators=150, max_depth=4, learning_rate=0.1, subsample=0.9, eval_metric='logloss')
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
     try:
@@ -61,33 +61,38 @@ def retrain_model():
 
         logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
 
-        # Save raw model
-        calibrator.base_estimator.save_model(MODEL_PATH)
+        # Extract the trained XGB model from the calibrator
+        trained_model = calibrator.estimator
+        trained_model.save_model(MODEL_PATH)
 
-        # Save backup with timestamp
+        # Save backup
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(BACKUP_DIR, f"xgb_model_{timestamp}.json")
         os.makedirs(BACKUP_DIR, exist_ok=True)
-        calibrator.base_estimator.save_model(backup_path)
+        trained_model.save_model(backup_path)
 
         # Log accuracy
         with open(ACCURACY_LOG, "a") as f:
             f.write(f"{timestamp},{acc:.4f}\n")
 
-        # Telegram alert (HTML formatted)
+        # Telegram alert
         send_telegram_message(
             f"✅ <b>Classifier Retrained</b>\n"
             f"<b>Samples:</b> {len(df)}\n"
             f"<b>Accuracy:</b> {acc:.4f}"
         )
 
-        update_status("ml_retrain", "success")
+        update_status("ml_retrain:success")
     except Exception as e:
         logger.critical(f"Fatal error during retraining: {e}", exc_info=True)
+
+        # Sanitize and truncate error for Telegram
+        err_msg = str(e).replace("<", "&lt;").replace(">", "&gt;")
         send_telegram_message(
-            f"❌ <b>Retraining failed</b>\n<pre>{str(e)}</pre>"
+            f"❌ <b>Retraining failed</b>\n<pre>{err_msg[:1000]}</pre>"
         )
-        update_status("ml_retrain", "fail")
+
+        update_status("ml_retrain:fail")
 
 if __name__ == "__main__":
     retrain_model()
