@@ -16,7 +16,7 @@ from utils.telegram_utils import send_telegram_message
 from utils.logger import bot_logger as logger
 from ml.logger import log_training_example
 from ml.model_inference import ModelInference
-from ml.feature_pipeline import build_features_for_trade  # <-- new import
+from ml.feature_pipeline import build_features_for_trade
 
 # ───────── simulation params ───────────────
 SIM_DAYS = 500
@@ -31,9 +31,6 @@ GARBAGE_KEEP_PROB = 0.05
 
 meta_agent = MetaAgent()
 model_inference = ModelInference()
-
-def simulate():
-    logger.info("🧪 simulate() function started successfully!")
 
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
@@ -94,7 +91,6 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     volume = volumes[start_idx]
     indicators = compute_indicators(prices, volumes, start_idx)
 
-    # Build classifier feature dict matching training schema
     feature_dict = {
         "confidence": confidence,
         "hour": hour,
@@ -112,7 +108,6 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
         "regime_bear": 1 if vix >= 18 else 0,
     }
 
-    # Build features DataFrame using your feature pipeline
     features_df = build_features_for_trade(feature_dict)
 
     trade_success_prob = float(model_inference.predict_proba(features_df)[0])
@@ -129,7 +124,16 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
         "entropy": entropy,
     })
 
-    meta_state = build_meta_state_for_entry(base_meta_state_dict)
+    # ✅ FIX: provide full required args
+    meta_state = build_meta_state_for_entry(
+        base_meta_state_dict,
+        data_5m={},
+        data_15m={},
+        data_1h={},
+        data_1d={},
+        confidence_score=confidence,
+        trade_type=0
+    )
 
     action_idx, agent_conf = meta_agent.select_action(meta_state)
     meta_agent.interpret_action(action_idx, agent_conf)
@@ -244,6 +248,6 @@ def simulate():
 
     send_telegram_message("🧪 Synthetic back-test complete.")
 
-# 🧠 ENTRYPOINT
+
 if __name__ == "__main__":
     simulate()
