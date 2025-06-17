@@ -63,7 +63,7 @@ def plot_calibration(y_true, prob_pos, filename):
     plt.figure(figsize=(6,6))
     plt.plot(prob_pred, prob_true, marker='o', label='Calibrated')
     plt.plot([0,1],[0,1], linestyle='--', label='Ideal')
-    plt.xlabel('Predicted P')
+    plt.xlabel('Predicted Probability')
     plt.ylabel('True Fraction')
     plt.title('Calibration Plot')
     plt.legend()
@@ -75,32 +75,29 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
     _estimator_type = "classifier"
 
     def __init__(self):
-        self.booster = None
+        self.model = xgb.XGBClassifier(
+            objective='binary:logistic',
+            use_label_encoder=False,
+            eval_metric='logloss',
+            n_estimators=100,
+            random_state=42,
+        )
         self._fitted = False
-        self.feature_names = None
 
     def fit(self, X, y):
         logger.info("[XGBWrapper] fit() called")
-        if isinstance(X, pd.DataFrame):
-            self.feature_names = X.columns.tolist()
-            X = X.values
-        dtrain = xgb.DMatrix(X, label=y)
-        self.booster = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=100)
+        self.model.fit(X, y)
         self._fitted = True
-        logger.info("[XGBWrapper] Booster trained")
+        logger.info("[XGBWrapper] Model trained")
         return self
 
     def predict_proba(self, X):
         if not self._fitted:
             raise ValueError("Wrapper not fitted yet")
-        if isinstance(X, pd.DataFrame):
-            X = X[self.feature_names].values
-        dmat = xgb.DMatrix(X)
-        p = self.booster.predict(dmat)
-        return np.vstack([1 - p, p]).T
+        return self.model.predict_proba(X)
 
     def predict(self, X):
-        return (self.predict_proba(X)[:,1] > 0.5).astype(int)
+        return self.model.predict(X)
 
 def retrain_model():
     try:
@@ -108,6 +105,7 @@ def retrain_model():
         update_status("last_retrain_attempt")
 
         df = load_data()
+
         if all(c in df.columns for c in ["open","high","low","close","volume"]):
             df = calculate_indicators(df)
         else:
@@ -122,17 +120,18 @@ def retrain_model():
 
         X = df.drop(columns=["timestamp","future_price","label"])
         y = df["label"]
-        X_train, X_val, y_train, y_val = train_test_split(X,y,test_size=0.2,stratify=y,random_state=42)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, stratify=y, random_state=42
+        )
 
         wrapper = XGBWrapper()
         calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv=3)
         calibrator.fit(X_train, y_train)  # wrapper.fit is called internally
 
         # Save raw model
-        wrapper_raw = wrapper
-        wrapper_raw.booster.save_model(RAW_MODEL_PATH)
+        wrapper.model.save_model(RAW_MODEL_PATH)
 
-        # Save calibrated
+        # Save calibrated model
         joblib.dump(calibrator, CAL_MODEL_PATH)
 
         # Evaluate
@@ -152,7 +151,8 @@ def retrain_model():
         msg = (
             "📊 ML retrain ✅\n"
             f"Date: {now}\n"
-            f"Acc: {acc:.2%}, Brier: {brier:.4f}\n"
+            f"Accuracy: {acc:.2%}\n"
+            f"Brier Score: {brier:.4f}\n"
             "Cold start with calibration"
         )
         logger.info(msg)
