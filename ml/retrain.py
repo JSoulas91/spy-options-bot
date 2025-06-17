@@ -1,153 +1,129 @@
-import os
 import logging
-from datetime import datetime
+import traceback
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import accuracy_score
-import xgboost as xgb
-
+from sklearn.exceptions import NotFittedError
+from xgboost import XGBClassifier
+from xgboost import Booster
+from build_spy_data_from_meta_log import build_dataset
+from utils.logger import bot_logger
 from utils.telegram_utils import send_telegram_message
-from monitor.health_check import update_status
-from build_spy_data_from_meta_log import run_build_dataset
+from utils.health_check import update_status
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+from sklearn.isotonic import IsotonicRegression
+from sklearn.calibration import calibration_curve
 
-# Constants
-DATA_PATH = "ml/spy_data.csv"
-MODEL_PATH = "models/xgb_raw.json"
-BACKUP_DIR = "models/backups"
-ACCURACY_LOG = "ml/accuracy_log.txt"
+MODEL_PATH = Path("models/xgb_raw.json")
+CALIBRATED_MODEL_PATH = Path("models/xgb_calibrated.json")
+DATA_PATH = Path("ml/spy_data.csv")
+ACCURACY_LOG = Path("ml/accuracy_log.txt")
 
-# Setup logger
-logger = logging.getLogger("retrain")
-logging.basicConfig(
-    format="%(asctime)s — %(levelname)s — %(name)s — %(funcName)s — Line %(lineno)d — %(message)s",
-    level=logging.INFO,
-)
+logger = bot_logger
 
-
-class XGBWrapper:
-    """Wrapper for XGBClassifier with raw model save/load support."""
-
-    def __init__(self, **params):
-        self.model = xgb.XGBClassifier(**params)
-
-    def fit(self, X, y):
-        self.model.fit(X, y)
-        return self
-
-    def predict(self, X):
-        return self.model.predict(X)
-
-    def save_model(self, path):
-        self.model.save_model(path)
-
-    def load_model(self, path):
-        self.model.load_model(path)
-
+def safe_telegram_message(text: str):
+    """Escape markdown special chars or remove problematic chars for Telegram."""
+    replacements = {
+        '_': '\\_',
+        '*': '\\*',
+        '[': '\\[',
+        ']': '\\]',
+        '(': '\\(',
+        ')': '\\)',
+        '~': '\\~',
+        '`': '\\`',
+        '>': '\\>',
+        '#': '\\#',
+        '+': '\\+',
+        '-': '\\-',
+        '=': '\\=',
+        '|': '\\|',
+        '{': '\\{',
+        '}': '\\}',
+        '.': '\\.',
+        '!': '\\!'
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
 
 def load_data():
-    logger.info(f"[Load Data] Loading dataset from {DATA_PATH}")
+    if not DATA_PATH.exists():
+        logger.error(f"[Load Data] Data file not found: {DATA_PATH}")
+        raise FileNotFoundError(f"Data file not found: {DATA_PATH}")
     df = pd.read_csv(DATA_PATH)
-    # Drop any rows with NaNs if necessary
-    df = df.dropna()
-    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
-
-    # Define features and label
-    features = [
-        "confidence",
-        "setup_quality",
-        "vix",
-        "realized_vol",
-        "trade_type",
-        "total_signals_today",
-        "ema_20",
-        "rsi_14",
-        "macd",
-        "macd_signal",
-        "macd_hist",
-        "bb_upper",
-        "bb_middle",
-        "bb_lower",
-        "vwap",
-        "atr_14",
-        "adx_14",
-    ]
-
-    X = df[features].values
-    y = df["label"].values
-    return X, y, df
-
+    # Filter or clean if necessary here
+    # Drop columns not used as features or label
+    features = df.drop(columns=["timestamp", "label"], errors='ignore')
+    labels = df["label"]
+    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(features.columns)}")
+    return features, labels
 
 def retrain_model():
     logger.info("[ML Retraining] Started")
+
+    # Build latest dataset (append new data and prune)
+    logger.info("[Preprocess] Running feature builder...")
+    build_dataset()
+    logger.info("[Preprocess] Feature builder completed successfully.")
+
+    # Load dataset
+    X, y = load_data()
+
     try:
-        # Step 1: Build dataset (append new data)
-        logger.info("[Preprocess] Running feature builder...")
-        run_build_dataset()
-        logger.info("[Preprocess] Feature builder completed successfully.")
-
-        # Step 2: Load data for training
-        X, y, df = load_data()
-
-        # Step 3: Setup model and stratified folds for calibration
-        model = XGBWrapper(
-            max_depth=4,
-            n_estimators=200,
+        # Train XGBoost classifier
+        model = XGBClassifier(
+            n_estimators=100,
+            max_depth=5,
             learning_rate=0.1,
-            objective="binary:logistic",
             use_label_encoder=False,
             eval_metric="logloss",
             verbosity=0,
-            random_state=42,
         )
+        model.fit(X, y)
 
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-        # Step 4: Calibrated classifier with isotonic calibration
-        calibrator = CalibratedClassifierCV(estimator=model.model, method="isotonic", cv=skf)
-        calibrator.fit(X, y)
-
-        preds = calibrator.predict(X)
+        # In-sample accuracy
+        preds = model.predict(X)
         acc = accuracy_score(y, preds)
-
         logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
 
-        # Step 5: Save the underlying fitted XGB model from calibrated classifier
-        trained_model = calibrator.calibrated_classifiers_[0].base_estimator
-        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-        trained_model.save_model(MODEL_PATH)
+        # Save raw model booster
+        model.get_booster().save_model(str(MODEL_PATH))
+        logger.info(f"[Save Model] Raw XGBoost booster saved to {MODEL_PATH}")
 
-        # Backup with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        os.makedirs(BACKUP_DIR, exist_ok=True)
-        backup_path = os.path.join(BACKUP_DIR, f"xgb_model_{timestamp}.json")
-        trained_model.save_model(backup_path)
+        # Calibration with isotonic regression using cross-validation
+        calibrator = CalibratedClassifierCV(model, method='isotonic', cv=5)
+        calibrator.fit(X, y)
+        # Save the underlying base estimator's booster after calibration
+        base_estimator = calibrator.base_estimator_
+        base_estimator.get_booster().save_model(str(MODEL_PATH))  # overwrite raw model file with calibrated base
 
-        # Log accuracy to file
+        # Save calibrated model separately using joblib or pickle
+        import joblib
+        joblib.dump(calibrator, CALIBRATED_MODEL_PATH.with_suffix(".joblib"))
+        logger.info(f"[Save Model] Calibrated model saved to {CALIBRATED_MODEL_PATH.with_suffix('.joblib')}")
+
+        # Log accuracy to file with timestamp
+        from datetime import datetime
         with open(ACCURACY_LOG, "a") as f:
-            f.write(f"{timestamp},{acc:.4f}\n")
+            f.write(f"{datetime.utcnow().isoformat()} - accuracy: {acc:.4f}\n")
 
-        # Telegram alert on success
-        send_telegram_message(
-            f"✅ <b>Classifier Retrained</b>\n"
-            f"<b>Samples:</b> {len(df)}\n"
-            f"<b>Accuracy:</b> {acc:.4f}"
-        )
+        # Send Telegram notification
+        message = f"✅ ML Retraining completed.\nIn-sample accuracy: {acc:.4f}"
+        send_telegram_message(safe_telegram_message(message))
 
-        update_status("ml_retrain:success")
+        update_status("ml_retrain")  # success, no extra args
 
     except Exception as e:
-        logger.critical(f"Fatal error during retraining: {e}", exc_info=True)
-
-        # Sanitize error message for Telegram
-        err_msg = str(e).replace("<", "&lt;").replace(">", "&gt;")
-        send_telegram_message(
-            f"❌ <b>Retraining failed</b>\n<pre>{err_msg[:1000]}</pre>"
-        )
-
-        update_status("ml_retrain:fail")
-
+        tb = traceback.format_exc()
+        logger.critical(f"Fatal error during retraining: {e}\n{tb}")
+        try:
+            send_telegram_message(f"❌ ML Retraining failed:\n{safe_telegram_message(str(e))}")
+        except Exception:
+            logger.error("Failed to send Telegram failure message.")
+        update_status("ml_retrain", status="fail")  # pass one arg keyword-style if your update_status supports it
 
 if __name__ == "__main__":
     retrain_model()
