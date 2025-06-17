@@ -73,7 +73,7 @@ def plot_calibration(y_true, prob_pos, filename):
     plt.close()
 
 class XGBWrapper(BaseEstimator, ClassifierMixin):
-    _estimator_type = "classifier"  # ✅ Required for sklearn compatibility
+    _estimator_type = "classifier"
 
     def __init__(self):
         self.booster = None
@@ -99,7 +99,7 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
             X = X[self.feature_names].values
         dmatrix = xgb.DMatrix(X)
         probs = self.booster.predict(dmatrix)
-        return np.vstack([1 - probs, probs]).T  # Shape: (n_samples, 2)
+        return np.vstack([1 - probs, probs]).T
 
     def predict(self, X):
         return (self.predict_proba(X)[:, 1] > 0.5).astype(int)
