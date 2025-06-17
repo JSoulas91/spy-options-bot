@@ -161,42 +161,38 @@ def build_meta_state_for_entry(
 
         # ───── Additional classifier outputs ─────
         if classifier_output:
-            # 1. Success prob (already added above but appended here for agent emphasis)
-            state.append(norm_conf)
-
-            # 2. Predicted direction: -1 = put, 0 = neutral, 1 = call
-            direction = classifier_output.get("predicted_direction", 0)
-            # normalize to [0,1]
-            state.append((direction + 1) / 2)
-
-            # 3. Class probs (put, neutral, call)
-            probs = classifier_output.get("class_probs", [1/3, 1/3, 1/3])
-            if len(probs) == 3:
-                state += probs
+            # 1. Success probability (trade success prob)
+            state.append(normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"]))
+            # 2. Predicted direction: one-hot for 3 classes (long, neutral, short)
+            pred_dir = classifier_output.get("predicted_direction", -1)
+            if pred_dir in (0,1,2):
+                dir_one_hot = [0, 0, 0]
+                dir_one_hot[pred_dir] = 1.0
             else:
-                state += [1/3, 1/3, 1/3]
-
-            # 4. Confidence entropy
-            entropy = -sum(p * np.log(p + 1e-8) for p in probs)
-            state.append(normalize(entropy, (0, 1.5)))
+                dir_one_hot = [PAD_VAL, PAD_VAL, PAD_VAL]
+            state.extend(dir_one_hot)
+            # 3. Class probabilities (3 floats)
+            class_probs = classifier_output.get("class_probabilities", [PAD_VAL, PAD_VAL, PAD_VAL])
+            if len(class_probs) != 3:
+                class_probs = [PAD_VAL, PAD_VAL, PAD_VAL]
+            state.extend(class_probs)
+            # 4. Entropy (uncertainty)
+            entropy_val = classifier_output.get("entropy", PAD_VAL)
+            state.append(normalize(entropy_val, (0, 1)))
+        else:
+            # Fill classifier outputs with PAD_VAL for entry
+            state += [PAD_VAL] * 8
 
         return _pad(state)
 
     except Exception as e:
-        logger.error(f"[MetaState] entry build error: {e}")
+        logger.error(f"Error building meta state for entry: {e}")
         return np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
 
-_OPTION_CACHE: Dict[str, Tuple[dict, float]] = {}
-def _cached_option_quote(sym: str, ttl=6):
-    now = time.time()
-    if sym in _OPTION_CACHE and now - _OPTION_CACHE[sym][1] < ttl:
-        return _OPTION_CACHE[sym][0]
-    q = get_option_quote(sym)
-    _OPTION_CACHE[sym] = (q, now)
-    return q
 
 def build_meta_state_for_exit(
-    trade: dict,
+    data_1m, data_5m, data_15m, data_1h, data_1d,
+    position_size: float = 0.0,
     past_trades=None,
     long_term_data=None,
     classifier_output: Optional[Dict] = None
@@ -205,76 +201,74 @@ def build_meta_state_for_exit(
     long_term_data= long_term_data or {}
 
     try:
-        prof_rng = DEFAULT_RANGES["PROFIT"]
-        dur_rng  = DEFAULT_RANGES["DURATION"]
         rsi_rng  = get_range("RSI",       long_term_data)
         macd_rng = get_range("MACD",      long_term_data)
         ema_rng  = get_range("EMA_DIST",  long_term_data)
         vol_rng  = get_range("VOL",       long_term_data)
-        vix_val  = fetch_vix_price() or 20.0
+        dur_rng  = DEFAULT_RANGES["DURATION"]
+        prof_rng = DEFAULT_RANGES["PROFIT"]
 
-        regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime({}, vix_val)
+        def tf_feats(df):
+            last = df.iloc[-1]
+            return [
+                normalize(last.get("rsi", 50), rsi_rng),
+                normalize(last.get("macd", 0), macd_rng),
+                normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
+                normalize(last.get("volume", 0), vol_rng),
+            ]
 
-        position_size = trade.get("size", 0)
-        profit = trade.get("profit", 0)
-        duration = trade.get("duration", 0)
-        exit_type = trade.get("exit_type", 0)
+        vix_val = fetch_vix_price() or 20.0
 
-        # Basic exit state features
-        state = [
-            normalize(profit, prof_rng),
-            normalize(duration, dur_rng),
+        regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
+
+        state: List[float] = [
             normalize(position_size, DEFAULT_RANGES["SIZE"]),
+            normalize(get_minutes_since_open(), dur_rng),
             normalize(vix_val, DEFAULT_RANGES["VIX"]),
             *_regime_one_hot(regime),
+            *summarise_past(past_trades, prof_rng, dur_rng),
+            *tf_feats(data_1m), *tf_feats(data_5m),
+            *tf_feats(data_15m), *tf_feats(data_1h), *tf_feats(data_1d),
         ]
 
-        # Option features if available
-        option_symbol = trade.get("option_symbol")
-        if option_symbol:
-            q = _cached_option_quote(option_symbol)
-            if q:
-                iv = q.get("implied_volatility", 0.0)
-                delta = q.get("delta", 0.0)
+        for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
+            df = long_term_data.get(p)
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
                 state += [
-                    normalize(iv, DEFAULT_RANGES["IV"]),
-                    normalize(delta, DEFAULT_RANGES["DELTA"]),
+                    normalize(last.get("rsi", 50), rsi_rng),
+                    normalize(last.get("macd", 0), macd_rng),
+                    normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                 ]
             else:
-                state += [PAD_VAL, PAD_VAL]
-        else:
-            state += [PAD_VAL, PAD_VAL]
+                state += [PAD_VAL, PAD_VAL, PAD_VAL]
 
-        # Summarise past trades features
-        state += summarise_past(past_trades, prof_rng, dur_rng)
-
-        # Exit type (one-hot or scalar)
-        state.append(float(exit_type))
-
-        # ───── Additional classifier outputs ─────
+        # ───── Additional classifier outputs for exit ─────
         if classifier_output:
-            # 1. Success prob
-            clf_conf = classifier_output.get("trade_success_prob")
-            norm_conf = normalize(clf_conf if clf_conf is not None else 0.5, DEFAULT_RANGES["CONF"])
-            state.append(norm_conf)
-
-            # 2. Predicted direction: -1 = put, 0 = neutral, 1 = call → normalized [0,1]
-            direction = classifier_output.get("predicted_direction", 0)
-            state.append((direction + 1) / 2)
-
-            # 3. Class probs (put, neutral, call)
-            probs = classifier_output.get("class_probs", [1/3, 1/3, 1/3])
-            if len(probs) == 3:
-                state += probs
+            # 1. Success probability (trade success prob)
+            state.append(normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"]))
+            # 2. Predicted direction: one-hot for 3 classes (long, neutral, short)
+            pred_dir = classifier_output.get("predicted_direction", -1)
+            if pred_dir in (0,1,2):
+                dir_one_hot = [0, 0, 0]
+                dir_one_hot[pred_dir] = 1.0
             else:
-                state += [1/3, 1/3, 1/3]
-
-            # 4. Confidence entropy
-            entropy = -sum(p * np.log(p + 1e-8) for p in probs)
-            state.append(normalize(entropy, (0, 1.5)))
+                dir_one_hot = [PAD_VAL, PAD_VAL, PAD_VAL]
+            state.extend(dir_one_hot)
+            # 3. Class probabilities (3 floats)
+            class_probs = classifier_output.get("class_probabilities", [PAD_VAL, PAD_VAL, PAD_VAL])
+            if len(class_probs) != 3:
+                class_probs = [PAD_VAL, PAD_VAL, PAD_VAL]
+            state.extend(class_probs)
+            # 4. Entropy (uncertainty)
+            entropy_val = classifier_output.get("entropy", PAD_VAL)
+            state.append(normalize(entropy_val, (0, 1)))
+        else:
+            # Fill classifier outputs with PAD_VAL for exit
+            state += [PAD_VAL] * 8
 
         return _pad(state)
 
     except Exception as e:
-        logger.error(f"[MetaState] exit build error: {e}")
+        logger.error(f"Error building meta state for exit: {e}")
         return np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
