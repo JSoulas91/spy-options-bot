@@ -72,16 +72,16 @@ def retrain_model():
         acc = accuracy_score(y, preds)
         logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
 
-        send_telegram_message(f"✅ ML retrained. Accuracy: {acc:.4f}", parse_mode=None)
-        update_status({"ml_retrain": "ok"})
+        send_telegram_message(f"✅ ML retrained. Accuracy: {acc:.4f}")
+        update_status("ml_retrain", "ok")
 
     except Exception as e:
         logger.critical(f"Fatal error during retraining: {e}")
         try:
-            send_telegram_message(f"❌ ML retrain failed: {e}", parse_mode=None)
+            send_telegram_message(f"❌ ML retrain failed: {e}")
         except Exception as tg_error:
             logger.warning(f"❌ Failed to send Telegram message: {tg_error}")
-        update_status({"ml_retrain": "fail"})
+        update_status("ml_retrain", "fail")
 
 if __name__ == "__main__":
     retrain_model()
