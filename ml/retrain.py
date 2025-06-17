@@ -33,7 +33,7 @@ def update_status(key):
 def load_data():
     # Implement your own data loading logic here
     # For example loading a CSV with features + label
-    path = "data/training_data.csv"
+    path = "ml/spy_data.csv"
     df = pd.read_csv(path)
     logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
     return df
