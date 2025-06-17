@@ -33,10 +33,10 @@ def send_telegram_message(message: str, photo_path: str = None):
         data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
         requests.post(url, data=data, timeout=10)
         if photo_path and os.path.exists(photo_path):
-            url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+            url2 = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
             with open(photo_path, "rb") as f:
                 files = {"photo": f}
-                requests.post(url_photo, data={"chat_id": TELEGRAM_CHAT_ID}, files=files, timeout=10)
+                requests.post(url2, data={"chat_id": TELEGRAM_CHAT_ID}, files=files, timeout=10)
     except Exception as e:
         logger.error(f"[Telegram Error] {e}")
 
@@ -44,31 +44,30 @@ def load_data():
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"{DATA_PATH} not found.")
     df = pd.read_csv(DATA_PATH, parse_dates=["timestamp"])
-    logger.info(f"[Load Data] Loaded {len(df)} rows with semantic columns: {list(df.columns)}")
+    logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
     return df.sort_values("timestamp")
 
-def create_labels(df: pd.DataFrame) -> pd.DataFrame:
+def create_labels(df):
     df["future_price"] = df["vwap"].shift(-1)
     df["label"] = (df["future_price"] > df["vwap"]).astype(int)
     return df
 
-def prune_training_data(df: pd.DataFrame) -> pd.DataFrame:
+def prune_training_data(df):
     if len(df) > MAX_ROWS:
         df = df.iloc[-MAX_ROWS:]
-        logger.info(f"[Data Prune] Training data pruned to last {MAX_ROWS} rows.")
+        logger.info(f"[Data Prune] Limited to last {MAX_ROWS} rows")
     return df
 
 def plot_calibration(y_true, prob_pos, filename):
     prob_true, prob_pred = calibration_curve(y_true, prob_pos, n_bins=10)
     plt.figure(figsize=(6,6))
-    plt.plot(prob_pred, prob_true, marker='o', linewidth=2, label='Calibrated Model')
-    plt.plot([0,1],[0,1], linestyle='--', label='Perfectly Calibrated')
-    plt.xlabel('Mean Predicted Probability')
-    plt.ylabel('Fraction of Positives')
-    plt.title('Calibration Plot (Reliability Curve)')
+    plt.plot(prob_pred, prob_true, marker='o', label='Calibrated')
+    plt.plot([0,1],[0,1], linestyle='--', label='Ideal')
+    plt.xlabel('Predicted P')
+    plt.ylabel('True Fraction')
+    plt.title('Calibration Plot')
     plt.legend()
     plt.grid(True)
-    plt.tight_layout()
     plt.savefig(filename)
     plt.close()
 
@@ -81,105 +80,89 @@ class XGBWrapper(BaseEstimator, ClassifierMixin):
         self.feature_names = None
 
     def fit(self, X, y):
-        logger.info("[XGBWrapper] Running fit() via calibrator …")
+        logger.info("[XGBWrapper] fit() called")
         if isinstance(X, pd.DataFrame):
             self.feature_names = X.columns.tolist()
             X = X.values
         dtrain = xgb.DMatrix(X, label=y)
         self.booster = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=100)
         self._fitted = True
-        assert self.booster is not None, "Booster failed to initialize"
-        logger.info("[XGBWrapper] Fit complete.")
+        logger.info("[XGBWrapper] Booster trained")
         return self
 
     def predict_proba(self, X):
         if not self._fitted:
-            raise ValueError("This XGBWrapper instance is not fitted yet.")
+            raise ValueError("Wrapper not fitted yet")
         if isinstance(X, pd.DataFrame):
             X = X[self.feature_names].values
-        dmatrix = xgb.DMatrix(X)
-        probs = self.booster.predict(dmatrix)
-        return np.vstack([1 - probs, probs]).T
+        dmat = xgb.DMatrix(X)
+        p = self.booster.predict(dmat)
+        return np.vstack([1 - p, p]).T
 
     def predict(self, X):
-        return (self.predict_proba(X)[:, 1] > 0.5).astype(int)
+        return (self.predict_proba(X)[:,1] > 0.5).astype(int)
 
 def retrain_model():
     try:
-        logger.info("[ML Retraining] Starting forced cold-start XGBoost retraining …")
+        logger.info("[ML Retraining] Started")
         update_status("last_retrain_attempt")
 
         df = load_data()
-
-        if all(col in df.columns for col in ["open", "high", "low", "close", "volume"]):
+        if all(c in df.columns for c in ["open","high","low","close","volume"]):
             df = calculate_indicators(df)
         else:
-            logger.info("[Indicators] Skipped indicator calculation — OHLCV columns missing.")
+            logger.info("[Indicators] Skipped — no OHLCV")
 
         df = df.dropna().reset_index(drop=True)
         if len(df) < 50:
-            raise ValueError(f"Not enough data to train. Need at least 50 rows, found {len(df)}.")
+            raise ValueError("Need ≥50 rows to train")
 
         df = prune_training_data(df)
         df = create_labels(df)
 
-        X = df.drop(columns=["timestamp", "future_price", "label"])
+        X = df.drop(columns=["timestamp","future_price","label"])
         y = df["label"]
+        X_train, X_val, y_train, y_val = train_test_split(X,y,test_size=0.2,stratify=y,random_state=42)
 
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
+        wrapper = XGBWrapper()
+        calibrator = CalibratedClassifierCV(wrapper, method="sigmoid", cv=3)
+        calibrator.fit(X_train, y_train)  # wrapper.fit is called internally
 
-        logger.info("[Calibrator] Fitting XGBoost wrapper directly via CalibratedClassifierCV …")
-        calibrator = CalibratedClassifierCV(XGBWrapper(), method="sigmoid", cv=3)
-        calibrator.fit(X_train, y_train)
+        # Save raw model
+        wrapper_raw = wrapper
+        wrapper_raw.booster.save_model(RAW_MODEL_PATH)
 
-        # Save raw model separately
-        raw_wrapper = XGBWrapper()
-        raw_wrapper.fit(X_train, y_train)
-        if raw_wrapper.booster:
-            raw_wrapper.booster.save_model(RAW_MODEL_PATH)
-
-        # Save calibrated model
+        # Save calibrated
         joblib.dump(calibrator, CAL_MODEL_PATH)
 
         # Evaluate
-        y_val_pred = calibrator.predict(X_val)
-        y_val_proba = calibrator.predict_proba(X_val)[:, 1]
-        acc = accuracy_score(y_val, y_val_pred)
-        brier = brier_score_loss(y_val, y_val_proba)
-
-        plot_calibration(y_val, y_val_proba, CAL_PLOT_PATH)
+        y_pred = calibrator.predict(X_val)
+        y_proba = calibrator.predict_proba(X_val)[:,1]
+        acc = accuracy_score(y_val, y_pred)
+        brier = brier_score_loss(y_val, y_proba)
+        plot_calibration(y_val, y_proba, CAL_PLOT_PATH)
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_exists = os.path.exists(LOG_PATH)
-        with open(LOG_PATH, "a") as f:
-            if not log_exists:
-                f.write("timestamp,accuracy,brier_score\n")
+        exists = os.path.exists(LOG_PATH)
+        with open(LOG_PATH,"a") as f:
+            if not exists:
+                f.write("timestamp,accuracy,brier\n")
             f.write(f"{now},{acc:.4f},{brier:.4f}\n")
 
-        message = (
-            f"📊 *ML Cold Retraining + Calibration Complete*\n"
-            f"🗓️  Date: {now.split()[0]}\n"
-            f"🎯 Accuracy: *{acc:.2%}*\n"
-            f"📉 Brier Score: *{brier:.4f}*\n"
-            f"🔥 Warm Start: No (cold start)\n"
-            f"💾 Models: Raw booster + Calibrated wrapper\n"
-            f"✅ Status: Saved & Logged\n"
+        msg = (
+            "📊 ML retrain ✅\n"
+            f"Date: {now}\n"
+            f"Acc: {acc:.2%}, Brier: {brier:.4f}\n"
+            "Cold start with calibration"
         )
-
-        logger.info(f"[ML Retraining] Success — Accuracy: {acc:.2%}, Brier: {brier:.4f}")
-        send_telegram_message(message, photo_path=CAL_PLOT_PATH)
+        logger.info(msg)
+        send_telegram_message(msg, photo_path=CAL_PLOT_PATH)
         update_status("last_retrain")
 
     except Exception as e:
-        logger.critical(f"[ML Retraining] Fatal error: {e}")
-        logger.debug(traceback.format_exc())
-        send_telegram_message(
-            f"❌ *ML Retraining Failed*\n"
-            f"🧨 Error: `{str(e)}`\n"
-            f"📉 Recovery will be attempted tomorrow."
-        )
+        logger.critical(f"Fatal error: {e}", exc_info=True)
+        send_telegram_message(f"❌ Retrain error: {e}")
+        update_status("last_retrain_failed")
 
 if __name__ == "__main__":
     retrain_model()
