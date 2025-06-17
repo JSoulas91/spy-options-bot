@@ -73,6 +73,8 @@ def plot_calibration(y_true, prob_pos, filename):
     plt.close()
 
 class XGBWrapper(BaseEstimator, ClassifierMixin):
+    _estimator_type = "classifier"  # ✅ Required for compatibility with CalibratedClassifierCV
+
     def __init__(self):
         self.booster = None
         self._fitted = False
