@@ -28,13 +28,17 @@ FEATURE_NAMES = [
     "bb_lower",
     "vwap",
     "atr_14",
-    "adx_14"
+    "adx_14",
+    "trade_success_prob",
+    "predicted_direction",
+    "classifier_entropy"
 ]
 
 def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     trade = entry.get("trade", {})
     bar = entry.get("bar", {})
     market = entry.get("market", {})
+    classifier = trade.get("classifier", {})
     timestamp = entry.get("timestamp")
 
     open_, high, low, close = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close")
@@ -58,6 +62,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         def safe_val(name: str, fallback: float = 0.0):
             return float(row[name]) if name in row and pd.notna(row[name]) else fallback
 
+        # Base trade features
         pnl = float(trade.get("pnl", 0.0))
         confidence = float(trade.get("confidence", 0.0))
         setup_quality = float(trade.get("setup_quality", 0.5))
@@ -66,6 +71,11 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         trade_type = int(trade.get("trade_type", 0))
         total_signals_today = int(trade.get("total_signals_today", 0))
         vwap_value = safe_val("VWAP", fallback=close)
+
+        # Classifier outputs
+        trade_success_prob = float(classifier.get("trade_success_prob", 0.0))
+        predicted_direction = int(classifier.get("predicted_direction", -1))
+        classifier_entropy = float(classifier.get("entropy", 0.0))
 
         features = np.array([
             pnl,
@@ -85,7 +95,10 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             safe_val("BB_lower"),
             vwap_value,
             safe_val("ATR_14"),
-            safe_val("ADX_14")
+            safe_val("ADX_14"),
+            trade_success_prob,
+            predicted_direction,
+            classifier_entropy
         ], dtype=np.float32)
 
         label = 1 if pnl > 5 else 0
