@@ -12,7 +12,7 @@ from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-from utils.telegram import send_telegram_message, send_telegram_file
+from utils.telegram_utils import send_telegram_message, send_plot as send_telegram_file
 from utils.logger import bot_logger as logger
 from monitor.health_check import update_status
 
