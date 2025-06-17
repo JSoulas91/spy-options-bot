@@ -8,7 +8,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score
 import xgboost as xgb
 
-from utils.telegram_bot import send_telegram_message
+from utils.telegram_utils import send_telegram_message
 from utils.health_check import update_status
 from build_spy_data_from_meta_log import run_build_dataset
 
