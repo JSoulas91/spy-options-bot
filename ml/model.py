@@ -1,41 +1,54 @@
-# ml/model.py
 import os
+import json
 import numpy as np
-import traceback
+import pandas as pd
 import xgboost as xgb
-from utils.logger import bot_logger
+from sklearn.base import BaseEstimator, ClassifierMixin
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'xgb_raw.json')
 
-class SPYModel:
-    def __init__(self):
-        self.model = None
-        self.load_model()
+class XGBWrapper(BaseEstimator, ClassifierMixin):
+    __estimator_type__ = "classifier"  # <- Fix: tells sklearn this is a classifier
 
-    def load_model(self):
-        """Load XGBoost model from disk (raw JSON format)."""
-        if os.path.exists(MODEL_PATH):
-            try:
-                self.model = xgb.XGBClassifier()
-                self.model.load_model(MODEL_PATH)
-                bot_logger.info("🧠 [Model] XGBoost model loaded successfully.")
-            except Exception as e:
-                bot_logger.error(f"[Model Load Error] {e}")
-                bot_logger.debug(traceback.format_exc())
-                self.model = None
+    def __init__(self, booster=None):
+        self.booster = booster
+        self._fitted = booster is not None
+        self.feature_names = None
+
+    def fit(self, X, y):
+        if isinstance(X, pd.DataFrame):
+            self.feature_names = X.columns.tolist()
+            X = X.values
         else:
-            bot_logger.warning("⚠️ [Model] No model file found. ML predictions will be skipped.")
-            self.model = None
+            self.feature_names = [f"f{i}" for i in range(X.shape[1])]
 
-    def predict(self, features: np.ndarray):
-        """Predict confidence score (0.0 to 1.0). Return 0.5 if model unavailable or error."""
-        if self.model is None:
-            bot_logger.warning("[Model] No model loaded. Returning neutral confidence (0.5).")
-            return 0.5
-        try:
-            prob = self.model.predict_proba(np.array([features]))[0][1]
-            return float(round(prob, 4))
-        except Exception as e:
-            bot_logger.error(f"[Model Prediction Error] {e}")
-            bot_logger.debug(traceback.format_exc())
-            return 0.5
+        dtrain = xgb.DMatrix(X, label=y, feature_names=self.feature_names)
+        self.booster = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=100)
+        self._fitted = True
+        return self
+
+    def predict_proba(self, X):
+        if not self._fitted:
+            raise ValueError("Wrapper not fitted yet.")
+        if isinstance(X, pd.DataFrame):
+            X = X[self.feature_names].values
+        dmatrix = xgb.DMatrix(X, feature_names=self.feature_names)
+        prob = self.booster.predict(dmatrix)
+        return np.vstack([1 - prob, prob]).T
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] > 0.5).astype(int)
+
+    def save_model(self, path: str):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if self.booster:
+            self.booster.save_model(path)
+
+    def load_model(self, path: str):
+        self.booster = xgb.Booster()
+        self.booster.load_model(path)
+        self._fitted = True
+
+    def get_feature_importance(self):
+        if not self._fitted:
+            return {}
+        return self.booster.get_score(importance_type='gain')
