@@ -60,6 +60,7 @@ class PPOAgent:
                  grad_clip_norm: float = 1.0):
         loaded = False
         if state_dim is None:
+            # ✅ FIXED: dynamically fetch correct state dim (was hardcoded 73)
             state_dim, _ = get_meta_agent_dims()
 
         self.net = DualHeadLSTM(state_dim)
