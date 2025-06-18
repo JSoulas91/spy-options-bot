@@ -1,5 +1,7 @@
 import os
 import json
+import pandas as pd
+import numpy as np
 from config import META_INFO_PATH
 from utils.logger import bot_logger as logger
 
@@ -34,13 +36,36 @@ def get_meta_agent_dims():
     try:
         from meta.meta_state import build_meta_state_for_entry
 
+        # 🛠️ Build dummy DataFrame with semantic indicators
+        dummy_features = pd.DataFrame([{
+            "rsi_14": 50.0,
+            "vwap": 400.0,
+            "ema_8": 398.0,
+            "ema_21": 395.0,
+            "sma_50": 390.0,
+            "sma_200": 385.0,
+            "macd": 0.5,
+            "macd_signal": 0.3,
+            "atr_14": 2.5,
+            "volume": 1_000_000,
+            "returns": 0.01,
+            "price": 500.0,
+            # pad with dummy cols if you use more indicators
+        }])
+
         dummy_state = build_meta_state_for_entry(
             price=500,
             vix=15.0,
             volume=1e6,
             timestamp="2023-01-01 09:30:00",
-            features={},
-            classifier_outputs={}
+            features=dummy_features,
+            classifier_outputs={
+                "trade_success_prob": 0.5,
+                "predicted_direction": 1,
+                "class_probabilities": [0.2, 0.3, 0.5],
+                "entropy": 1.0,
+                "regime_class": 1,
+            }
         )
         state_dim = dummy_state.shape[0]
         action_dim = 3  # [long, short, hold]
