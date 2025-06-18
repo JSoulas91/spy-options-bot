@@ -317,7 +317,7 @@ def build_meta_state_for_exit(
         regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
 
         clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
-        norm_conf = normalize(clf_conf if clf
+        norm_conf = normalize(clf_conf if clf)
         state: List[float] = [
             norm_conf,
             1.0 if trade_type == 1 else 0.0,
