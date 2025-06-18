@@ -52,7 +52,9 @@ def retrain_model():
         logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
 
         y = df["label"]
-        X = df.drop(columns=["label", "pnl"], errors="ignore")
+        # Drop model outputs to avoid leakage and feature name mismatch
+        drop_cols = ["label", "pnl", "trade_success_prob", "predicted_direction", "classifier_entropy"]
+        X = df.drop(columns=drop_cols, errors="ignore")
 
         xgb_model = xgb.XGBClassifier(
             n_estimators=100,
