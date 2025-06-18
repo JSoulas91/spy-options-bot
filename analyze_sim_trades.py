@@ -1,5 +1,5 @@
 import json
-from reward_shaper import compute_reward
+from meta.reward_shaper import compute_reward
 
 def load_trades(filename, max_trades=100):
     trades = []
