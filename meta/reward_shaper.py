@@ -119,8 +119,8 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         reward -= 0.4
 
     # ❌ Classifier disagreement penalty
-    if setup_quality < 0.3 and confidence > 0.8:
-        reward -= 0.4
+    if setup_quality < 0.3 and confidence > 0.8 and pnl < 0:
+        reward -= 0.5
 
     # 💰 Extra large win bonus
     if abs(pnl) > 30:
