@@ -324,11 +324,14 @@ def build_meta_state_for_exit(
             state.extend(dir_one_hot)
             class_probs = classifier_output.get("class_probabilities", [PAD_VAL, PAD_VAL, PAD_VAL])
             if len(class_probs) != 3:
-                class_probs = [PAD_VAL, PAD_VAL, PAD_VAL]
+            class_probs = [PAD_VAL, PAD_VAL, PAD_VAL]
             state.extend(class_probs)
+
+            # 4. Entropy (normalized 0 to 1)
             entropy = classifier_output.get("entropy", PAD_VAL)
             state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
         else:
+            # No classifier output, pad with PAD_VAL for 8 features
             state += [PAD_VAL] * 8
 
         return _pad(state)
