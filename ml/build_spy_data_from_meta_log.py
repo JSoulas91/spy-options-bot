@@ -8,7 +8,7 @@ from technical_analysis.indicators import calculate_indicators
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_NPZ = Path("ml/dataset.npz")
 OUTPUT_CSV = Path("ml/spy_data.csv")
-MAX_ROWS = 30000  # For pruning CSV if it grows too large
+MAX_ROWS = 30000
 
 FEATURE_NAMES = [
     "pnl",
@@ -45,7 +45,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     volume = bar.get("volume", 1.0)
 
     if None in (open_, high, low, close):
-        bot_logger.warning("[Feature Extract] Skipping entry due to missing OHLC data")
+        bot_logger.warning("[Feature Extract] Skipping entry: Missing OHLC data")
         return None
 
     try:
@@ -60,9 +60,12 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         row = df_ind.iloc[0]
 
         def safe_val(name: str, fallback: float = 0.0):
-            return float(row[name]) if name in row and pd.notna(row[name]) else fallback
+            val = row.get(name)
+            if pd.isna(val):
+                bot_logger.debug(f"[Indicator] Missing {name}, using fallback={fallback}")
+                return fallback
+            return float(val)
 
-        # Base trade features
         pnl = float(trade.get("pnl", 0.0))
         confidence = float(trade.get("confidence", 0.0))
         setup_quality = float(trade.get("setup_quality", 0.5))
@@ -72,7 +75,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         total_signals_today = int(trade.get("total_signals_today", 0))
         vwap_value = safe_val("VWAP", fallback=close)
 
-        # Classifier outputs
         trade_success_prob = float(classifier.get("trade_success_prob", 0.0))
         predicted_direction = int(classifier.get("predicted_direction", -1))
         classifier_entropy = float(classifier.get("entropy", 0.0))
@@ -105,7 +107,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         return features, label, timestamp
 
     except Exception as e:
-        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}")
+        bot_logger.warning(f"[Feature Extract] Skipping entry due to exception: {e}")
         return None
 
 def build_dataset():
@@ -117,7 +119,7 @@ def build_dataset():
     skipped = 0
 
     with META_LOG_PATH.open("r") as f:
-        for line in f:
+        for line_num, line in enumerate(f, start=1):
             try:
                 entry = json.loads(line)
                 result = extract_features(entry)
@@ -130,6 +132,7 @@ def build_dataset():
                     skipped += 1
             except json.JSONDecodeError:
                 skipped += 1
+                bot_logger.warning(f"[Build Dataset] Skipping malformed JSON at line {line_num}")
 
     if len(features) == 0:
         bot_logger.error("[Build Dataset] No valid entries found.")
@@ -139,27 +142,30 @@ def build_dataset():
     df_new.insert(0, "timestamp", timestamps)
     df_new["label"] = labels
 
-    # Append to CSV without deduplication by timestamp (KEEP all trades)
     if OUTPUT_CSV.exists():
         df_existing = pd.read_csv(OUTPUT_CSV)
         df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-        # Remove this line to prevent dropping trades:
-        # df_combined = df_combined.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
         df_combined = df_combined.sort_values("timestamp")
     else:
         df_combined = df_new
 
-    # Prune to max rows
     if len(df_combined) > MAX_ROWS:
         df_combined = df_combined.tail(MAX_ROWS)
 
     df_combined.to_csv(OUTPUT_CSV, index=False)
-    np.savez_compressed(OUTPUT_NPZ, X=df_combined[FEATURE_NAMES].values.astype(np.float32),
-                        y=df_combined["label"].values.astype(np.int32),
-                        timestamps=df_combined["timestamp"].values)
+    np.savez_compressed(OUTPUT_NPZ,
+        X=df_combined[FEATURE_NAMES].values.astype(np.float32),
+        y=df_combined["label"].values.astype(np.int32),
+        timestamps=df_combined["timestamp"].values
+    )
 
-    bot_logger.info(f"[Build Dataset] ✅ Appended and saved {len(df_new)} new entries. Total: {len(df_combined)} rows.")
+    bot_logger.info(f"[Build Dataset] ✅ Appended {len(df_new)} new entries. Total rows: {len(df_combined)}")
     bot_logger.info(f"[Build Dataset] Skipped {skipped} entries due to missing data or errors.")
+
+    # 🔍 Debug print summary
+    print(f"\n[Debug] Final dataset shape: {df_combined.shape}")
+    print(f"[Debug] Feature columns: {list(df_combined.columns)}")
+    print("[Debug] Sample rows:\n", df_combined.head(5))
 
 if __name__ == "__main__":
     build_dataset()
