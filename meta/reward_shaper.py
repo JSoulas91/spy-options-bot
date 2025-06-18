@@ -94,8 +94,8 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     elif setup_quality < 0.3 and pnl < 0:
         reward += 0.2
 
-    if confidence > 0.75 and setup_quality > 0.7:
-        reward += 0.3
+    if confidence > 0.85 and setup_quality > 0.8:
+        reward += 0.4
 
     # 📈 PnL scaling tiers (adjusted)
     if abs(pnl) < 5:
