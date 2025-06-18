@@ -1,3 +1,5 @@
+# simulation/sim_train_full.py
+
 import os
 import json
 import math
@@ -127,13 +129,9 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
         "entropy": entropy,
     })
 
-    # ✅ FIX: provide full required args
     meta_state = build_meta_state_for_entry(
         base_meta_state_dict,
-        data_5m={},
-        data_15m={},
-        data_1h={},
-        data_1d={},
+        data_5m={}, data_15m={}, data_1h={}, data_1d={},
         confidence_score=confidence,
         trade_type=0
     )
@@ -221,6 +219,33 @@ def append_meta_log(trade: dict, vix_val: float):
         fh.write(json.dumps(payload) + "\n")
 
 
+def summarize_sim_results():
+    if not META_LOG_PATH.exists():
+        return
+
+    with META_LOG_PATH.open() as fh:
+        lines = [json.loads(line) for line in fh if line.strip()]
+
+    trades = [t["trade"] for t in lines]
+    rewards = [t["reward"] for t in lines]
+    win_trades = [t for t in trades if t["pnl"] > 0]
+
+    summary = {
+        "n_trades": len(trades),
+        "avg_reward": round(np.mean(rewards), 3) if rewards else 0.0,
+        "accuracy": round(len(win_trades) / len(trades), 3) if trades else 0.0,
+        "avg_pnl": round(np.mean([t["pnl"] for t in trades]), 2) if trades else 0.0
+    }
+
+    msg = (
+        f"🧪 Sim complete: {summary['n_trades']} trades\n"
+        f"✅ Accuracy: {summary['accuracy']*100:.1f}%\n"
+        f"📈 Avg PnL: {summary['avg_pnl']}%\n"
+        f"🎯 Avg Reward: {summary['avg_reward']}"
+    )
+    send_telegram_message(msg)
+
+
 def simulate():
     logger.info("🧪 Starting synthetic back-test with realism …")
     current_price = START_PRICE
@@ -249,7 +274,7 @@ def simulate():
 
         time.sleep(0.05)
 
-    send_telegram_message("🧪 Synthetic back-test complete.")
+    summarize_sim_results()
 
 
 if __name__ == "__main__":
