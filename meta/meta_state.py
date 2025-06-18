@@ -323,7 +323,7 @@ def build_meta_state_for_exit(
                 dir_one_hot = [PAD_VAL, PAD_VAL, PAD_VAL]
             state.extend(dir_one_hot)
             class_probs = classifier_output.get("class_probabilities", [PAD_VAL, PAD_VAL, PAD_VAL])
-            if len(class_probs) != 3:
+        if len(class_probs) != 3:
             class_probs = [PAD_VAL, PAD_VAL, PAD_VAL]
             state.extend(class_probs)
 
