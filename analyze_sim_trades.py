@@ -18,16 +18,24 @@ def analyze_trades(trades):
     rewards = []
     print(f"Analyzing {len(trades)} trades...\n")
     for i, trade in enumerate(trades):
-        # You need market info for reward, simulate or hardcode if missing
+        # Market info for reward calculation
         market = {
             "realized_vol": trade.get("realized_vol", 1.0),
             "vix": trade.get("vix", 15.0),
         }
         reward = compute_reward(trade, market, "Meta-agent signal")
         rewards.append(reward)
-        print(f"Trade {i+1}: pnl={trade.get('pnl', 'NA'):.2f}, confidence={trade.get('confidence', 'NA')}, "
-              f"setup_quality={trade.get('setup_quality', 'NA')}, reward={reward:.4f}")
-    
+
+        # Safely format pnl
+        pnl = trade.get('pnl')
+        pnl_str = f"{pnl:.2f}" if isinstance(pnl, (int, float)) else "NA"
+
+        # For other fields, just get or default "NA"
+        confidence = trade.get('confidence', 'NA')
+        setup_quality = trade.get('setup_quality', 'NA')
+
+        print(f"Trade {i+1}: pnl={pnl_str}, confidence={confidence}, setup_quality={setup_quality}, reward={reward:.4f}")
+
     avg_reward = sum(rewards) / len(rewards) if rewards else 0
     print(f"\nAverage reward: {avg_reward:.4f}")
     print(f"Min reward: {min(rewards):.4f}")
