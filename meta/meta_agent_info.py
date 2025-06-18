@@ -54,7 +54,6 @@ def get_meta_agent_dims():
         }])
 
         dummy_state = build_meta_state_for_entry(
-            price=500,
             vix=15.0,
             volume=1e6,
             timestamp="2023-01-01 09:30:00",
