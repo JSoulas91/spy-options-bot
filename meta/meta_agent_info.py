@@ -1,10 +1,9 @@
+# meta/meta_agent_info.py
+
 import os
 import json
-import pandas as pd
-import numpy as np
 from config import META_INFO_PATH
 from utils.logger import bot_logger as logger
-
 
 def save_meta_agent_dims(state_dim: int, action_dim: int):
     info = {"state_dim": state_dim, "action_dim": action_dim}
@@ -15,65 +14,15 @@ def save_meta_agent_dims(state_dim: int, action_dim: int):
     except Exception as e:
         logger.error(f"❌ Failed to save meta agent dims: {e}")
 
-
 def get_meta_agent_dims():
-    """
-    Return (state_dim, action_dim) for the meta agent.
-    If saved info is missing or invalid, fallback to dynamic dummy detection.
-    """
-    if os.path.exists(META_INFO_PATH):
-        try:
-            with open(META_INFO_PATH) as f:
-                info = json.load(f)
-            sd, ad = int(info.get("state_dim", -1)), int(info.get("action_dim", -1))
-            if sd > 0 and ad > 0:
-                return sd, ad
-            logger.warning("⚠️ Invalid dims in meta info file, using fallback detection...")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to load meta info: {e} — falling back to dynamic detection.")
-
-    # ✅ DYNAMIC fallback: use a dummy meta state to compute true shape
-    try:
-        from meta.meta_state import build_meta_state_for_entry
-
-        # 🛠️ Build dummy DataFrame with semantic indicators
-        dummy_features = pd.DataFrame([{
-            "rsi_14": 50.0,
-            "vwap": 400.0,
-            "ema_8": 398.0,
-            "ema_21": 395.0,
-            "sma_50": 390.0,
-            "sma_200": 385.0,
-            "macd": 0.5,
-            "macd_signal": 0.3,
-            "atr_14": 2.5,
-            "volume": 1_000_000,
-            "returns": 0.01,
-            "price": 500.0,
-            # pad with dummy cols if you use more indicators
-        }])
-
-        dummy_state = build_meta_state_for_entry(
-            vix=15.0,
-            volume=1e6,
-            timestamp="2023-01-01 09:30:00",
-            features=dummy_features,
-            classifier_outputs={
-                "trade_success_prob": 0.5,
-                "predicted_direction": 1,
-                "class_probabilities": [0.2, 0.3, 0.5],
-                "entropy": 1.0,
-                "regime_class": 1,
-            }
-        )
-        state_dim = dummy_state.shape[0]
-        action_dim = 3  # [long, short, hold]
-        logger.info(f"🧠 Fallback detected meta agent dims: state_dim={state_dim}, action_dim={action_dim}")
-        return state_dim, action_dim
-    except Exception as e:
-        logger.error(f"❌ Could not dynamically determine meta agent dims: {e}")
-        raise RuntimeError("Failed to get meta agent dims.")
-
+    if not os.path.exists(META_INFO_PATH):
+        raise FileNotFoundError(f"Meta info not found at {META_INFO_PATH}")
+    with open(META_INFO_PATH) as f:
+        info = json.load(f)
+    sd, ad = int(info.get("state_dim", -1)), int(info.get("action_dim", -1))
+    if sd <= 0 or ad <= 0:
+        raise ValueError(f"Invalid dims in meta info: {info}")
+    return sd, ad
 
 # Alias for compatibility
 get_meta_agent_info = get_meta_agent_dims
