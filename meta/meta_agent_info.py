@@ -19,7 +19,7 @@ def get_meta_agent_dims():
         raise FileNotFoundError(f"Meta info not found at {META_INFO_PATH}")
     with open(META_INFO_PATH) as f:
         info = json.load(f)
-    sd, ad = int(info.get("state_dim", -1)), int(info.get("action_dim", -1))
+    sd, ad = int(info.get("state_dim", 83)), int(info.get("action_dim", 3))
     if sd <= 0 or ad <= 0:
         raise ValueError(f"Invalid dims in meta info: {info}")
     return sd, ad
