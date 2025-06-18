@@ -117,8 +117,20 @@ def build_meta_state_for_entry(
     long_term_data=None,
     classifier_output: Optional[Dict] = None
 ) -> np.ndarray:
+    import pandas as pd
     past_trades = past_trades or []
     long_term_data = long_term_data or {}
+
+    def ensure_df(df):
+        if isinstance(df, dict):
+            return pd.DataFrame(df)
+        return df
+
+    data_1m = ensure_df(data_1m)
+    data_5m = ensure_df(data_5m)
+    data_15m = ensure_df(data_15m)
+    data_1h = ensure_df(data_1h)
+    data_1d = ensure_df(data_1d)
 
     try:
         rsi_rng = get_range("RSI", long_term_data)
@@ -130,14 +142,12 @@ def build_meta_state_for_entry(
 
         def tf_feats(df):
             if df is None:
-                # No data, return padding or neutral normalized values
                 return [
-                    normalize(50, rsi_rng),  # neutral RSI
+                    normalize(50, rsi_rng),
                     normalize(0, macd_rng),
                     normalize(0, ema_rng),
                     normalize(0, vol_rng),
                 ]
-            # If df has iloc (e.g. pandas DataFrame)
             if hasattr(df, "iloc") and len(df) > 0:
                 last = df.iloc[-1]
                 return [
@@ -146,7 +156,6 @@ def build_meta_state_for_entry(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                     normalize(last.get("volume", 0), vol_rng),
                 ]
-            # fallback for dict or other
             if isinstance(df, dict):
                 rsi = df.get("rsi", 50)
                 macd = df.get("macd", 0)
@@ -218,7 +227,6 @@ def build_meta_state_for_entry(
             entropy = classifier_output.get("entropy", PAD_VAL)
             state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
         else:
-            # No classifier output, pad with PAD_VAL for 8 features
             state += [PAD_VAL] * 8
 
         return _pad(state)
@@ -237,8 +245,20 @@ def build_meta_state_for_exit(
     long_term_data=None,
     classifier_output: Optional[Dict] = None
 ) -> np.ndarray:
+    import pandas as pd
     past_trades = past_trades or []
     long_term_data = long_term_data or {}
+
+    def ensure_df(df):
+        if isinstance(df, dict):
+            return pd.DataFrame(df)
+        return df
+
+    data_1m = ensure_df(data_1m)
+    data_5m = ensure_df(data_5m)
+    data_15m = ensure_df(data_15m)
+    data_1h = ensure_df(data_1h)
+    data_1d = ensure_df(data_1d)
 
     try:
         rsi_rng = get_range("RSI", long_term_data)
