@@ -26,7 +26,9 @@ NOTIFY_EVERY = 10
 BUFFER_CAPACITY = 30000
 ACTION_DIM = 3
 DEBUG = True
-MIN_HIGH_REWARD = 1.5  # Only train if at least one good reward exists
+MIN_HIGH_REWARD = 1.5
+MIN_REWARD_SPREAD = 0.5
+MAX_RECENT_SKIP = 300  # Skip the last N rows if they're likely poor
 
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
@@ -45,19 +47,32 @@ def _pad_or_trim(vec, dim):
     if not isinstance(vec, (list, np.ndarray)):
         return [0.0] * dim
     lst = list(vec)
-    if len(lst) >= dim:
-        return lst[:dim]
-    return lst + [0.0] * (dim - len(lst))
+    return lst[:dim] if len(lst) >= dim else lst + [0.0] * (dim - len(lst))
+
+def _log_classifier_correlation(rows):
+    # Optional: log correlation of classifier outputs vs reward
+    preds, rewards = [], []
+    for r in rows:
+        cls = r.get("classifier")
+        rew = r.get("reward")
+        if not cls or rew is None:
+            continue
+        p = cls.get("trade_success_prob") or cls.get("class_probabilities", [None, None])[1]
+        if p is not None:
+            preds.append(float(p))
+            rewards.append(float(rew))
+    if len(preds) >= 10:
+        corr = np.corrcoef(preds, rewards)[0, 1]
+        logger.info("🔍 Classifier-success vs reward correlation: %.4f", corr)
 
 def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
     rewards = []
 
-    # 🔀 Shuffle before adding to buffer to avoid recency bias
-    recent_rows = rows[-BUFFER_CAPACITY:]
-    np.random.shuffle(recent_rows)
+    filtered = rows[-BUFFER_CAPACITY - MAX_RECENT_SKIP:-MAX_RECENT_SKIP] if len(rows) > MAX_RECENT_SKIP else rows
+    np.random.shuffle(filtered)
 
-    for row in recent_rows:
+    for row in filtered:
         ms = row.get("meta_state")
         if not isinstance(ms, (list, np.ndarray)):
             continue
@@ -74,7 +89,7 @@ def _prep_buffer(rows, dim):
 
         buf.add(st, act, rew, st, True)
 
-    logger.info("Replay buffer populated: %d samples", len(buf))
+    logger.info("Replay buffer size: %d | Skipped most recent %d rows", len(buf), MAX_RECENT_SKIP)
     logger.info("Reward stats — avg: %.4f, std: %.4f, max: %.2f, min: %.2f",
                 np.mean(rewards), np.std(rewards), np.max(rewards), np.min(rewards))
     return buf, rewards
@@ -97,6 +112,8 @@ def train():
         logger.warning("No training data found.")
         return
 
+    _log_classifier_correlation(rows)
+
     state_dim = _discover_state_dim(rows)
     if state_dim <= 0:
         logger.error("Cannot infer state_dim from training data.")
@@ -108,17 +125,15 @@ def train():
         logger.error("Replay buffer too small to train.")
         return
 
-    # 🔍 Skip training if no meaningful high-quality samples
     if np.max(all_rewards) < MIN_HIGH_REWARD:
         logger.warning("No high-reward trades (reward > %.2f). Training skipped.", MIN_HIGH_REWARD)
         return
 
-    # Reward stratification for balanced sampling
     rewards_np = np.array(all_rewards)
-    high_rew_cutoff = np.percentile(rewards_np, 70)
-    low_rew_cutoff = np.percentile(rewards_np, 30)
-    if high_rew_cutoff <= low_rew_cutoff:
-        logger.warning("Insufficient reward spread. Training skipped.")
+    high_rew_cutoff = np.percentile(rewards_np, 75)
+    low_rew_cutoff = np.percentile(rewards_np, 25)
+    if high_rew_cutoff - low_rew_cutoff < MIN_REWARD_SPREAD:
+        logger.warning("Insufficient reward diversity. Training skipped.")
         return
 
     agent = PPOAgent(state_dim=state_dim)
