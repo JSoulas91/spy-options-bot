@@ -13,6 +13,7 @@ from utils.logger import bot_logger as logger
 class DualHeadLSTM(nn.Module):
     def __init__(self, state_dim: int, hidden: int = 64, lstm_hid: int = 32):
         super().__init__()
+        self.state_dim = state_dim
         self.lstm = nn.LSTM(state_dim, lstm_hid, batch_first=True)
         self.dropout = nn.Dropout(0.1)
         self.shared = nn.Sequential(
@@ -37,9 +38,7 @@ class DualHeadLSTM(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        if x.dim() == 2:
-            x = x.unsqueeze(1)  # [B, 1, state_dim]
-        out, _ = self.lstm(x)
+        out, _ = self.lstm(x.unsqueeze(1))
         h = self.dropout(out[:, -1, :])
         h = self.shared(h)
         dir_logits = self.dir_head(h)
@@ -59,8 +58,10 @@ class PPOAgent:
                  entropy_coef_start: float = 1e-2,
                  target_entropy: Optional[float] = None,
                  grad_clip_norm: float = 1.0):
+        loaded = False
         if state_dim is None:
-            state_dim, _ = get_meta_agent_dims()  # will return 83
+            state_dim, _ = get_meta_agent_dims()
+
         self.net = DualHeadLSTM(state_dim)
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
 
@@ -72,18 +73,28 @@ class PPOAgent:
         self.grad_clip_norm = grad_clip_norm
         self.tgt_entropy = target_entropy if target_entropy is not None else -1.0
 
-        self.load()
+        if os.path.exists(META_MODEL_PATH):
+            try:
+                ckpt = torch.load(META_MODEL_PATH, map_location="cpu")
+                self.net.load_state_dict(ckpt["net"])
+                self.optimizer.load_state_dict(ckpt["opt"])
+                ent_coef = ckpt.get("ent_coef", entropy_coef_start)
+                self.entropy_coef = torch.tensor(ent_coef)
 
-    def load(self, path: str = META_MODEL_PATH):
-        if not os.path.exists(path):
+                model_input_dim = self.net.state_dim
+                if model_input_dim != state_dim:
+                    logger.warning("⚠️ PPO model input dim mismatch: saved %d vs current %d → reinitializing fresh model.",
+                                   model_input_dim, state_dim)
+                    self.net = DualHeadLSTM(state_dim)
+                    self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
+                else:
+                    loaded = True
+                    logger.info("📥 PPO model loaded.")
+            except Exception as e:
+                logger.warning("⚠️ Failed to load PPO model due to error: %s — reinitializing.", str(e))
+
+        if not loaded:
             logger.warning("⚠️ No saved PPO model found – starting fresh.")
-            return
-        ckpt = torch.load(path, map_location="cpu")
-        self.net.load_state_dict(ckpt["net"])
-        self.optimizer.load_state_dict(ckpt["opt"])
-        ent_coef = ckpt.get("ent_coef", 1e-2)
-        self.entropy_coef = torch.tensor(ent_coef)
-        logger.info("📥 PPO model loaded.")
 
     def save(self, path: str = META_MODEL_PATH):
         device = next(self.net.parameters()).device
@@ -170,6 +181,7 @@ class PPOAgent:
             value_loss +
             entropy_loss
         )
+
         total_loss = (total_loss * weights).mean()
 
         self.optimizer.zero_grad()
@@ -184,4 +196,4 @@ class PPOAgent:
                      policy_loss.mean().item(), conf_loss.mean().item(), value_loss.mean().item(),
                      entropy.mean().item(), approx_kl)
 
-        return (advantages.detach() ** 2)  # TD error proxy
+        return (advantages.detach() ** 2)
