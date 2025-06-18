@@ -11,7 +11,6 @@ class MetaAgent:
         self.ckpt_path = ckpt_path
         self._model = PPOAgent()  # auto-loads state/action dims internally
         if os.path.exists(ckpt_path):
-            self._model.load(ckpt_path)
             logger.info(f"[MetaAgent] Loaded model from {ckpt_path}")
         else:
             logger.info("[MetaAgent] No checkpoint found; initialized new PPOAgent.")
