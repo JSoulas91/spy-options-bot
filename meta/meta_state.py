@@ -99,35 +99,51 @@ def _regime_one_hot(regime: str) -> List[float]:
         return [0.0, 1.0, 0.0]
     return [0.0, 0.0, 1.0]
 
-def build_meta_state_for_entry(
-    data_1m, data_5m, data_15m, data_1h, data_1d,
-    confidence_score: float,
-    trade_type: int,
-    past_trades=None,
-    long_term_data=None,
-    position_size: float = 0.0,
-    classifier_output: Optional[Dict] = None
-) -> np.ndarray:
-    past_trades   = past_trades or []
-    long_term_data= long_term_data or {}
+def tf_feats(df):
+    if df is None:
+        # No data, return padding or neutral normalized values
+        return [
+            normalize(50, rsi_rng),  # neutral RSI
+            normalize(0, macd_rng),
+            normalize(0, ema_rng),
+            normalize(0, vol_rng),
+        ]
 
-    try:
-        rsi_rng  = get_range("RSI",       long_term_data)
-        macd_rng = get_range("MACD",      long_term_data)
-        ema_rng  = get_range("EMA_DIST",  long_term_data)
-        vol_rng  = get_range("VOL",       long_term_data)
-        dur_rng  = DEFAULT_RANGES["DURATION"]
-        prof_rng = DEFAULT_RANGES["PROFIT"]
+    # If df is a DataFrame or similar with iloc, get last row
+    if hasattr(df, "iloc"):
+        last = df.iloc[-1]
+        # `last` may be a pandas Series or dict-like
+        return [
+            normalize(last.get("rsi", 50), rsi_rng),
+            normalize(last.get("macd", 0), macd_rng),
+            normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
+            normalize(last.get("volume", 0), vol_rng),
+        ]
 
-        def tf_feats(df):
-            last = df.iloc[-1]
-            return [
-                normalize(last.get("rsi", 50), rsi_rng),
-                normalize(last.get("macd", 0), macd_rng),
-                normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
-                normalize(last.get("volume", 0), vol_rng),
-            ]
+    # If df is dict or something else, fallback gracefully
+    # Example: last = df.get("last") or dict of values
+    if isinstance(df, dict):
+        # Try to extract expected keys safely
+        rsi = df.get("rsi", 50)
+        macd = df.get("macd", 0)
+        price = df.get("price", 0)
+        ema_20 = df.get("ema_20", 0)
+        volume = df.get("volume", 0)
 
+        return [
+            normalize(rsi, rsi_rng),
+            normalize(macd, macd_rng),
+            normalize(price - ema_20, ema_rng),
+            normalize(volume, vol_rng),
+        ]
+
+    # If nothing matches, return neutral padding
+    return [
+        normalize(50, rsi_rng),
+        normalize(0, macd_rng),
+        normalize(0, ema_rng),
+        normalize(0, vol_rng),
+    ]
         vix_val = fetch_vix_price() or 20.0
 
         regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
