@@ -118,12 +118,18 @@ def build_meta_state_for_entry(
     classifier_output: Optional[Dict] = None
 ) -> np.ndarray:
     import pandas as pd
+    import numpy as np
     past_trades = past_trades or []
     long_term_data = long_term_data or {}
 
     def ensure_df(df):
         if isinstance(df, dict):
-            return pd.DataFrame(df)
+            # Check if any value is list-like -> treat as tabular data
+            if any(isinstance(v, (list, tuple, np.ndarray, pd.Series)) for v in df.values()):
+                return pd.DataFrame(df)
+            else:
+                # All scalars: create single-row DataFrame
+                return pd.DataFrame([df])
         return df
 
     data_1m = ensure_df(data_1m)
@@ -246,12 +252,16 @@ def build_meta_state_for_exit(
     classifier_output: Optional[Dict] = None
 ) -> np.ndarray:
     import pandas as pd
+    import numpy as np
     past_trades = past_trades or []
     long_term_data = long_term_data or {}
 
     def ensure_df(df):
         if isinstance(df, dict):
-            return pd.DataFrame(df)
+            if any(isinstance(v, (list, tuple, np.ndarray, pd.Series)) for v in df.values()):
+                return pd.DataFrame(df)
+            else:
+                return pd.DataFrame([df])
         return df
 
     data_1m = ensure_df(data_1m)
@@ -307,8 +317,7 @@ def build_meta_state_for_exit(
         regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
 
         clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
-        norm_conf = normalize(clf_conf if clf_conf is not None else confidence_score, DEFAULT_RANGES["CONF"])
-
+        norm_conf = normalize(clf_conf if clf
         state: List[float] = [
             norm_conf,
             1.0 if trade_type == 1 else 0.0,
