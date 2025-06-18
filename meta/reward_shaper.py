@@ -131,6 +131,10 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         rolling_sharpe = compute_sharpe_style_reward(list(reward_window))
         if rolling_sharpe < 0.1 and random.random() < 0.2:
             reward += 0.3
+            
+    #Incentivize trades that win and match longer-term regime signal
+    if trade.get("regime_class") == trade.get("predicted_direction") and pnl > 5:
+        reward += 0.4
 
     return float(reward)
 
