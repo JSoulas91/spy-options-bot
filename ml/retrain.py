@@ -20,8 +20,24 @@ logger = logging.getLogger("retrain")
 
 def load_data():
     df = pd.read_csv("ml/spy_data.csv")
+    logger.info(f"[Load Data] Raw: {df.shape[0]} rows, {df.shape[1]} columns")
+
     df = df.drop(columns=["timestamp"], errors="ignore")
-    df = df.dropna()
+
+    null_counts = df.isnull().sum()
+    missing_cols = null_counts[null_counts > 0]
+    if not missing_cols.empty:
+        logger.info(f"[Load Data] Missing values before cleanup:\n{missing_cols}")
+
+    # Drop only rows with missing labels (and pnl if present)
+    df = df[df["label"].notnull()]
+    if "pnl" in df.columns:
+        df = df[df["pnl"].notnull()]
+
+    # Fill missing values in remaining columns
+    df = df.fillna(method="ffill").fillna(method="bfill")
+
+    logger.info(f"[Load Data] After cleaning: {df.shape[0]} rows, {df.shape[1]} columns")
     return df
 
 def retrain_model():
