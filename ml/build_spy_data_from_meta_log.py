@@ -8,7 +8,7 @@ from technical_analysis.indicators import calculate_indicators
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_NPZ = Path("ml/dataset.npz")
 OUTPUT_CSV = Path("ml/spy_data.csv")
-MAX_ROWS = 10000  # For pruning CSV if it grows too large
+MAX_ROWS = 30000  # For pruning CSV if it grows too large
 
 FEATURE_NAMES = [
     "pnl",
