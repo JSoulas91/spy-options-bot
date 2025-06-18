@@ -1,10 +1,11 @@
-# utils/vix_utils.py
 """
 Lightweight VIX helper that no longer depends on Alpaca.
 Fetches the latest VIX value from Yahoo Finance’s free quote API.
 """
 
+import os
 import requests
+from dotenv import load_dotenv
 from utils.logger import bot_logger
 from config import (
     ENABLE_VIX_THROTTLING,
@@ -12,8 +13,14 @@ from config import (
     VIX_MODERATE_THRESHOLD,
 )
 
+# Load .env variables (e.g., SIMULATION_MODE)
+load_dotenv()
+
 # Encoded “^VIX” for the Yahoo Finance quote endpoint
 VIX_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%5EVIX"
+
+# Default fallback VIX value for simulation mode
+DEFAULT_VIX = 20.0
 
 
 def fetch_vix_price() -> float | None:
@@ -25,6 +32,10 @@ def fetch_vix_price() -> float | None:
     float | None
         Latest VIX price, or None if unavailable.
     """
+    if os.getenv("SIMULATION_MODE", "").lower() == "true":
+        bot_logger.debug("🔁 SIMULATION_MODE enabled – using default VIX = %.2f", DEFAULT_VIX)
+        return DEFAULT_VIX
+
     try:
         resp = requests.get(VIX_QUOTE_URL, timeout=5)
         resp.raise_for_status()
