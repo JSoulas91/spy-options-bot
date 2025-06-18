@@ -114,6 +114,7 @@ def build_dataset():
         return
 
     features, labels, timestamps = [], [], []
+    skipped = 0
 
     with META_LOG_PATH.open("r") as f:
         for line in f:
@@ -125,8 +126,10 @@ def build_dataset():
                     features.append(feat)
                     labels.append(label)
                     timestamps.append(ts)
+                else:
+                    skipped += 1
             except json.JSONDecodeError:
-                continue
+                skipped += 1
 
     if len(features) == 0:
         bot_logger.error("[Build Dataset] No valid entries found.")
@@ -136,11 +139,13 @@ def build_dataset():
     df_new.insert(0, "timestamp", timestamps)
     df_new["label"] = labels
 
-    # Append to CSV and deduplicate by timestamp
+    # Append to CSV without deduplication by timestamp (KEEP all trades)
     if OUTPUT_CSV.exists():
         df_existing = pd.read_csv(OUTPUT_CSV)
         df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-        df_combined = df_combined.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+        # Remove this line to prevent dropping trades:
+        # df_combined = df_combined.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+        df_combined = df_combined.sort_values("timestamp")
     else:
         df_combined = df_new
 
@@ -154,6 +159,7 @@ def build_dataset():
                         timestamps=df_combined["timestamp"].values)
 
     bot_logger.info(f"[Build Dataset] ✅ Appended and saved {len(df_new)} new entries. Total: {len(df_combined)} rows.")
+    bot_logger.info(f"[Build Dataset] Skipped {skipped} entries due to missing data or errors.")
 
 if __name__ == "__main__":
     build_dataset()
