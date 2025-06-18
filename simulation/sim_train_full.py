@@ -9,6 +9,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from meta.meta_state import build_meta_state_for_entry
 from meta.meta_agent import MetaAgent
 from meta.reward_shaper import compute_shaped_reward
