@@ -62,7 +62,7 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         case "Contract near expiry": reward -= 0.3
         case "Meta-agent signal":    reward += 0.3
         case "Stop loss":            reward -= 0.2
-        case "Take profit":          reward += 0.3
+        case "Take profit":          reward += 0.4
         case "Time-based exit":      reward -= 0.1
 
     if exit_reason == "Meta-agent signal" and pnl > 10:
