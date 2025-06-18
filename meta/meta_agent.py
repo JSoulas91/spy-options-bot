@@ -47,6 +47,9 @@ class MetaAgent:
         self._model.save(self.ckpt_path)
         logger.info(f"[MetaAgent] Model saved to {self.ckpt_path}")
 
+    def save_model(self):  # ← Added for compatibility with training code
+        self.save()
+
 # singleton helper
 _meta_agent_instance = None
 def get_meta_agent():
