@@ -37,7 +37,9 @@ class DualHeadLSTM(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        out, _ = self.lstm(x.unsqueeze(1))
+        if x.dim() == 2:
+            x = x.unsqueeze(1)  # [B, 1, state_dim]
+        out, _ = self.lstm(x)
         h = self.dropout(out[:, -1, :])
         h = self.shared(h)
         dir_logits = self.dir_head(h)
@@ -58,8 +60,7 @@ class PPOAgent:
                  target_entropy: Optional[float] = None,
                  grad_clip_norm: float = 1.0):
         if state_dim is None:
-            state_dim, _ = get_meta_agent_dims()
-
+            state_dim, _ = get_meta_agent_dims()  # will return 83
         self.net = DualHeadLSTM(state_dim)
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
 
@@ -137,7 +138,6 @@ class PPOAgent:
             weights = torch.ones_like(actions_dir, dtype=torch.float32)
         weights = weights.to(device)
 
-        # Compute target values
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
             last_value = next_v.mean().item()
@@ -147,7 +147,6 @@ class PPOAgent:
         advantages = returns - values.detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # Forward pass
         dir_logits, conf_pred, value_pred = self.net(states)
         dist = Categorical(logits=dir_logits)
         log_probs = dist.log_prob(actions_dir)
@@ -155,19 +154,13 @@ class PPOAgent:
         if old_logp is None:
             old_logp = log_probs.detach()
 
-        # PPO clipped surrogate objective
         ratios = torch.exp(log_probs - old_logp)
         surrogate1 = ratios * advantages
         surrogate2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         policy_loss = -torch.min(surrogate1, surrogate2)
 
-        # Confidence supervision loss (MSE)
         conf_loss = nn.functional.mse_loss(conf_pred, target_conf, reduction="none")
-
-        # Value loss (critic)
         value_loss = nn.functional.mse_loss(value_pred, returns, reduction="none")
-
-        # Entropy bonus
         entropy = dist.entropy()
         entropy_loss = -self.entropy_coef * entropy
 
@@ -177,8 +170,6 @@ class PPOAgent:
             value_loss +
             entropy_loss
         )
-
-        # Apply sample weights from PER
         total_loss = (total_loss * weights).mean()
 
         self.optimizer.zero_grad()
@@ -186,7 +177,6 @@ class PPOAgent:
         torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
 
-        # KL divergence (for diagnostics or KL penalty)
         with torch.no_grad():
             approx_kl = (old_logp - log_probs).mean().item()
 
