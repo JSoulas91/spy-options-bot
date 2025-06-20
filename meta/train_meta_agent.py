@@ -39,7 +39,7 @@ def _load_rows() -> List[Dict]:
 def _discover_state_dim(rows):
     for r in rows:
         ms = r.get("meta_state")
-        if isinstance(ms, list) and len(ms) >= 15:
+        if isinstance(ms, list) and len(ms) >= 83:
             return len(ms)
     return -1
 
