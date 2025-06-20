@@ -31,7 +31,11 @@ FEATURE_NAMES = [
     "adx_14",
     "trade_success_prob",
     "predicted_direction",
-    "classifier_entropy"
+    "classifier_entropy",
+    "regime_class",
+    "class_prob_0",
+    "class_prob_1",
+    "class_prob_2"
 ]
 
 def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
@@ -66,6 +70,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
                 return fallback
             return float(val)
 
+        # Core features
         pnl = float(trade.get("pnl", 0.0))
         confidence = float(trade.get("confidence", 0.0))
         setup_quality = float(trade.get("setup_quality", 0.5))
@@ -75,9 +80,16 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         total_signals_today = int(trade.get("total_signals_today", 0))
         vwap_value = safe_val("VWAP", fallback=close)
 
+        # Classifier features
         trade_success_prob = float(classifier.get("trade_success_prob", 0.0))
         predicted_direction = int(classifier.get("predicted_direction", -1))
         classifier_entropy = float(classifier.get("entropy", 0.0))
+        regime_class = int(classifier.get("regime_class", 1))  # 0: bear, 1: neutral, 2: bull
+
+        class_probs = classifier.get("class_probabilities", [0.0, 1.0, 0.0])
+        prob_0 = float(class_probs[0]) if len(class_probs) > 0 else 0.0
+        prob_1 = float(class_probs[1]) if len(class_probs) > 1 else 1.0
+        prob_2 = float(class_probs[2]) if len(class_probs) > 2 else 0.0
 
         features = np.array([
             pnl,
@@ -100,7 +112,11 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             safe_val("ADX_14"),
             trade_success_prob,
             predicted_direction,
-            classifier_entropy
+            classifier_entropy,
+            regime_class,
+            prob_0,
+            prob_1,
+            prob_2
         ], dtype=np.float32)
 
         label = 1 if pnl > 5 else 0
@@ -145,7 +161,7 @@ def build_dataset():
     if OUTPUT_CSV.exists():
         df_existing = pd.read_csv(OUTPUT_CSV)
         df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-        df_combined = df_combined.sort_values("timestamp")
+        df_combined = df_combined.sort_values("timestamp").drop_duplicates(subset="timestamp")
     else:
         df_combined = df_new
 
