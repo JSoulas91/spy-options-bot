@@ -1,5 +1,5 @@
 import torch
-from meta.ppo import PPOAgent  # adjust if your agent is elsewhere
+from meta.ppo import PPOAgent
 import numpy as np
 
 STATE_DIM = 83       # Must match meta_state size
@@ -7,11 +7,8 @@ NUM_ACTIONS = 3      # Assuming short/neutral/long
 BATCH_SIZE = 5       # Test with small batch
 
 def test_model_output_shapes():
-    # 🔧 Initialize PPO agent
-    agent = PPOAgent(
-        state_dim=STATE_DIM,
-        action_dim=NUM_ACTIONS
-    )
+    # 🔧 Initialize PPO agent (only state_dim)
+    agent = PPOAgent(state_dim=STATE_DIM)
 
     # 🧪 Generate dummy input
     dummy_input = torch.randn(BATCH_SIZE, STATE_DIM)
