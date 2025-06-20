@@ -5,8 +5,8 @@ from collections import deque
 class PrioritizedReplayBuffer:
     def __init__(self, capacity, alpha=0.6, epsilon=1e-5):
         self.capacity = capacity
-        self.alpha = alpha  # controls how much prioritization is used
-        self.epsilon = epsilon  # small constant to ensure non-zero priority
+        self.alpha = alpha  # how much prioritization is used (0 = uniform, 1 = full)
+        self.epsilon = epsilon  # small constant to avoid zero priority
         self.buffer = deque(maxlen=capacity)
         self.priorities = deque(maxlen=capacity)
 
@@ -25,12 +25,11 @@ class PrioritizedReplayBuffer:
 
         samples = [self.buffer[idx] for idx in indices]
 
-        # Importance sampling weights
         total = len(self.buffer)
         weights = (total * probs[indices]) ** (-beta)
-        weights /= np.max(weights)  # normalize
+        weights /= np.max(weights)
 
-        batch = {
+        return {
             'states':      [s[0] for s in samples],
             'actions':     [s[1] for s in samples],
             'rewards':     [s[2] for s in samples],
@@ -39,13 +38,8 @@ class PrioritizedReplayBuffer:
             'weights':     weights,
             'indices':     indices
         }
-        return batch
 
     def sample_balanced(self, batch_size, beta=0.4, high_rew_cutoff=1.0, low_rew_cutoff=-1.0):
-        """
-        Balanced sampling: combines high, low, and neutral reward experiences
-        to improve PPO generalization and reduce overfitting.
-        """
         if not self.buffer:
             raise ValueError("Replay buffer is empty!")
 
@@ -60,8 +54,7 @@ class PrioritizedReplayBuffer:
             if len(indices) == 0:
                 return []
             local_priorities = priorities[indices]
-            probs = local_priorities ** self.alpha
-            probs /= probs.sum()
+            probs = local_priorities / local_priorities.sum()
             return np.random.choice(indices, size=min(count, len(indices)), replace=False, p=probs).tolist()
 
         third = batch_size // 3
@@ -70,16 +63,19 @@ class PrioritizedReplayBuffer:
         low = sample_idxs(low_idxs, batch_size - len(high) - len(mid))  # fill remainder
 
         final_idxs = high + mid + low
+        if len(final_idxs) < batch_size:
+            print(f"⚠️ Only sampled {len(final_idxs)} out of {batch_size} requested due to limited data")
+
         np.random.shuffle(final_idxs)
 
         selected = [self.buffer[i] for i in final_idxs]
         sampled_priorities = priorities[final_idxs]
-        probs = sampled_priorities / np.sum(priorities)
+        probs = sampled_priorities / np.sum(sampled_priorities)
 
         weights = (len(self.buffer) * probs) ** (-beta)
         weights /= np.max(weights)
 
-        batch = {
+        return {
             'states':      [s[0] for s in selected],
             'actions':     [s[1] for s in selected],
             'rewards':     [s[2] for s in selected],
@@ -88,7 +84,6 @@ class PrioritizedReplayBuffer:
             'weights':     weights,
             'indices':     final_idxs
         }
-        return batch
 
     def update_priorities(self, indices, errors):
         for idx, error in zip(indices, errors):
