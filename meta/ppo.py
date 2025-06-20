@@ -38,12 +38,12 @@ class DualHeadLSTM(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        out, _ = self.lstm(x.unsqueeze(1))
-        h = self.dropout(out[:, -1, :])
-        h = self.shared(h)
-        dir_logits = self.dir_head(h)
-        conf = self.conf_head(h).squeeze(-1)
-        value = self.value_head(h).squeeze(-1)
+        out, _ = self.lstm(x.unsqueeze(1))              # Shape: (B, 1, lstm_hid)
+        h = self.dropout(out[:, -1, :])                  # Shape: (B, lstm_hid)
+        h = self.shared(h)                               # Shape: (B, hidden)
+        dir_logits = self.dir_head(h)                    # Shape: (B, 3)
+        conf = self.conf_head(h)                         # ✅ Keep shape (B, 1)
+        value = self.value_head(h)                       # ✅ Keep shape (B, 1)
         return dir_logits, conf, value
 
 
