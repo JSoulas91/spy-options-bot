@@ -58,7 +58,7 @@ def check_npz():
     if not NPZ_PATH.exists():
         raise FileNotFoundError("🚨 dataset.npz not found")
 
-    data = np.load(NPZ_PATH)
+    data = np.load("ml/dataset.npz", allow_pickle=True)
     X, y, ts = data["X"], data["y"], data["timestamps"]
 
     if X.shape[1] != EXPECTED_FEATURE_COUNT:
