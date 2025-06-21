@@ -91,6 +91,17 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         prob_1 = float(class_probs[1]) if len(class_probs) > 1 else 1.0
         prob_2 = float(class_probs[2]) if len(class_probs) > 2 else 0.0
 
+        # ✂️ Skip noisy samples
+        if abs(pnl) < 3:
+            return None
+        if classifier_entropy > 1.0:
+            return None
+        if confidence < 0.3:
+            return None
+
+        # ✅ Smart label
+        label = 1 if pnl > 10 and confidence > 0.5 and setup_quality > 0.5 else 0
+
         features = np.array([
             pnl,
             confidence,
@@ -119,7 +130,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             prob_2
         ], dtype=np.float32)
 
-        label = 1 if pnl > 5 else 0
         return features, label, timestamp
 
     except Exception as e:
