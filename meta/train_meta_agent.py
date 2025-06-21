@@ -29,6 +29,7 @@ DEBUG = True
 MIN_HIGH_REWARD = 1.5
 MIN_REWARD_SPREAD = 0.5
 MAX_RECENT_SKIP = 300
+SEQ_LEN = 10  # sequence length for meta state
 
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
@@ -39,15 +40,19 @@ def _load_rows() -> List[Dict]:
 def _discover_state_dim(rows):
     for r in rows:
         ms = r.get("meta_state")
-        if isinstance(ms, list) and len(ms) >= 83:
-            return len(ms)
+        if isinstance(ms, list) and isinstance(ms[0], (list, np.ndarray)) and len(ms[0]) >= 83:
+            return len(ms[0])
     return -1
 
-def _pad_or_trim(vec, dim):
-    if not isinstance(vec, (list, np.ndarray)):
-        return [0.0] * dim
-    lst = list(vec)
-    return lst[:dim] if len(lst) >= dim else lst + [0.0] * (dim - len(lst))
+def _pad_or_trim(seq, dim, seq_len=SEQ_LEN):
+    if not isinstance(seq, list) or not all(isinstance(x, (list, np.ndarray)) for x in seq):
+        return np.zeros((seq_len, dim), dtype=np.float32)
+    arr = np.array(seq, dtype=np.float32)
+    if arr.shape[0] >= seq_len:
+        return arr[:seq_len]
+    else:
+        pad = np.zeros((seq_len - arr.shape[0], dim), dtype=np.float32)
+        return np.vstack([arr, pad])
 
 def _log_classifier_correlation(rows):
     preds, rewards = [], []
@@ -64,6 +69,19 @@ def _log_classifier_correlation(rows):
         corr = np.corrcoef(preds, rewards)[0, 1]
         logger.info("🔍 Classifier-success vs reward correlation: %.4f", corr)
 
+def _log_entropy_vs_reward(rows):
+    entropies, rewards = [], []
+    for r in rows:
+        cls = r.get("classifier", {})
+        ent = cls.get("entropy")
+        rew = r.get("reward")
+        if ent is not None and rew is not None:
+            entropies.append(ent)
+            rewards.append(rew)
+    if len(entropies) >= 10:
+        corr = np.corrcoef(entropies, rewards)[0, 1]
+        logger.info("🔍 Classifier-entropy vs reward correlation: %.4f", corr)
+
 def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
     rewards = []
@@ -73,9 +91,11 @@ def _prep_buffer(rows, dim):
 
     for row in filtered:
         ms = row.get("meta_state")
-        if not isinstance(ms, (list, np.ndarray)):
+        try:
+            st = _pad_or_trim(ms, dim, seq_len=SEQ_LEN)
+        except Exception as e:
+            logger.warning(f"Skipping malformed meta_state: {e}")
             continue
-        st = np.asarray(_pad_or_trim(ms, dim), dtype=np.float32)
 
         rew = float(row.get("reward", 0))
         rewards.append(rew)
@@ -112,6 +132,7 @@ def train():
         return
 
     _log_classifier_correlation(rows)
+    _log_entropy_vs_reward(rows)
 
     state_dim = _discover_state_dim(rows)
     if state_dim <= 0:
@@ -165,14 +186,10 @@ def train():
             indices = batch["indices"]
             weights_t = torch.tensor(batch["weights"], dtype=torch.float32)
 
-            # Normalize advantages (numerically stable)
             advantages = (rewards_t - rewards_t.mean()) / (rewards_t.std() + 1e-6)
             advantages = torch.clamp(advantages, -5, 5)
 
-            # Confidence supervision mask
             conf_mask = (rewards_t > low_rew_cutoff).float()
-
-            # Overconfidence penalty mask: penalize overconfident bad trades
             confidence_penalty_mask = (rewards_t < low_rew_cutoff).float()
 
             td_err = agent.train_step(
@@ -218,7 +235,6 @@ def train():
             agent.entropy_coef.item(), current_lr
         )
 
-        # TD error distribution logging
         if DEBUG and all_td_errors:
             td_arr = np.array(all_td_errors)
             logger.info("TD error histogram – mean: %.4f | std: %.4f | max: %.4f | min: %.4f",
