@@ -38,17 +38,14 @@ DEFAULT_RANGES: Dict[str, Tuple[float, float]] = {
     "SIZE": (0, MAX_POSITION_SIZE),
 }
 
-
 def normalize(val: float, rng: Tuple[float, float]) -> float:
     lo, hi = rng
     if hi - lo == 0:
         return 0.5
     return float(max(0, min(1, (val - lo) / (hi - lo))))
 
-
 _DYNAMIC: Dict[str, Tuple[Tuple[float, float], float]] = {}
 _DYN_TTL = 3600
-
 
 def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, float]:
     vals: List[float] = []
@@ -61,7 +58,6 @@ def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, flo
             vals.extend(df.get(feat, []).tolist())
     return (min(vals), max(vals)) if vals else DEFAULT_RANGES[feat]
 
-
 def get_range(feat: str, long_term) -> Tuple[float, float]:
     now = time.time()
     if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
@@ -72,8 +68,7 @@ def get_range(feat: str, long_term) -> Tuple[float, float]:
     _DYNAMIC[feat] = (rng, now)
     return rng
 
-
-def summarise_past(trades, rng_p, rng_d):
+def summarise_past(trades: List[Dict], rng_p, rng_d) -> List[float]:
     if not trades:
         return [0.5, 0.5]
     prof = [t.get("profit", 0) for t in trades]
@@ -81,14 +76,12 @@ def summarise_past(trades, rng_p, rng_d):
     return [normalize(np.mean(prof), rng_p),
             normalize(np.mean(dur), rng_d)]
 
-
 def _pad(vec: List[float]) -> np.ndarray:
     if len(vec) > STATE_DIM:
         vec = vec[:STATE_DIM]
     else:
         vec += [PAD_VAL] * (STATE_DIM - len(vec))
     return np.asarray(vec, dtype=np.float32)
-
 
 def _classify_regime(one_day: dict, vix_val: float) -> str:
     price = one_day.get("price", 0)
@@ -99,7 +92,6 @@ def _classify_regime(one_day: dict, vix_val: float) -> str:
         return "bear"
     return "vol_cluster"
 
-
 def _regime_one_hot(regime: str) -> List[float]:
     if regime == "bull":
         return [1.0, 0.0, 0.0]
@@ -107,6 +99,54 @@ def _regime_one_hot(regime: str) -> List[float]:
         return [0.0, 1.0, 0.0]
     return [0.0, 0.0, 1.0]
 
+def pad_sequence(seq: List[np.ndarray]) -> np.ndarray:
+    """Pad/truncate a sequence to (STATE_SEQUENCE_LENGTH, STATE_DIM)."""
+    seq_len = len(seq)
+    if seq_len >= STATE_SEQUENCE_LENGTH:
+        return np.stack(seq[-STATE_SEQUENCE_LENGTH:])
+    pad_count = STATE_SEQUENCE_LENGTH - seq_len
+    padding = [np.full(STATE_DIM, PAD_VAL, dtype=np.float32)] * pad_count
+    return np.stack(padding + seq)
+
+def _normalize_features(features: List[Dict], long_term: Dict[str, np.ndarray]) -> List[np.ndarray]:
+    """Normalize each timestep dict into a state vector."""
+    out = []
+    for f in features:
+        vec = []
+
+        # Normalize core indicators
+        for key in ["RSI", "MACD", "VOL", "VIX", "SPY_ABS", "IV", "DELTA", "SIZE"]:
+            val = f.get(key.lower(), 0)
+            rng = get_range(key, long_term)
+            vec.append(normalize(val, rng))
+
+        # Normalize EMA distance
+        if "price" in f and "ema_20" in f:
+            ema_dist = f["price"] - f["ema_20"]
+        else:
+            ema_dist = 0
+        vec.append(normalize(ema_dist, get_range("EMA_DIST", long_term)))
+
+        # Add regime one-hot
+        regime = _classify_regime(f, f.get("vix", 20))
+        vec.extend(_regime_one_hot(regime))
+
+        # Add classifier outputs (if present)
+        vec.append(f.get("clf_prob", 0.5))           # success probability
+        vec.extend(f.get("clf_dir", [0.5, 0.5]))      # one-hot direction
+        vec.extend(f.get("clf_probs", [0.33, 0.33, 0.33]))  # full class probs
+        vec.append(f.get("clf_entropy", 1.0))         # entropy
+
+        # Add past trade summary
+        trades = f.get("past_trades", [])
+        prof_rng = get_range("PROFIT", long_term)
+        dur_rng = get_range("DURATION", long_term)
+        vec.extend(summarise_past(trades, prof_rng, dur_rng))
+
+        # Pad to STATE_DIM
+        out.append(_pad(vec))
+
+    return out
 
 def build_meta_state_for_entry(
     data_1m, data_5m, data_15m, data_1h, data_1d,
