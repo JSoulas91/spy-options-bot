@@ -35,6 +35,7 @@ GARBAGE_KEEP_PROB = 0.05
 meta_agent = MetaAgent()
 model_inference = ModelInference()
 
+
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
     for _ in range(1, n_steps):
@@ -58,8 +59,8 @@ def compute_indicators(prices: list[float], volumes: list[int], idx: int):
     close = prices[idx]
     volume = volumes[idx]
 
-    vwap = np.average(window_20, weights=volumes[max(0, idx - 19):idx + 1]) if len(window_20) > 0 else close
-    ema_20 = sum(window_20) / len(window_20) if len(window_20) > 0 else close
+    vwap = np.average(window_20, weights=volumes[max(0, idx - 19):idx + 1]) if window_20 else close
+    ema_20 = sum(window_20) / len(window_20) if window_20 else close
     rsi_14 = 50 + RNG.uniform(-10, 10)
 
     return {
@@ -79,6 +80,14 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     hour = RNG.randint(10, 15)
     confidence = random_confidence()
     atr = RNG.uniform(2, 6)
+
+    base_meta_state_dict = {
+        "confidence": confidence,
+        "vix": vix,
+        "hour": hour,
+        "is_swing": 0,
+        "atr": atr,
+    }
 
     bar_open = prices[start_idx]
     bar_high = round(bar_open * (1 + RNG.uniform(0, 0.001)), 2)
@@ -113,16 +122,11 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     }
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
 
-    base_meta_state_dict = {
-        "confidence": confidence,
-        "vix": vix,
-        "hour": hour,
-        "is_swing": 0,
-        "atr": atr,
+    base_meta_state_dict.update({
         "trade_success_prob": trade_success_prob,
         "predicted_direction": predicted_direction,
         "entropy": entropy,
-    }
+    })
 
     meta_state = build_meta_state_for_entry(
         base_meta_state_dict,
@@ -176,7 +180,8 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
             "trade_success_prob": round(trade_success_prob, 3),
             "predicted_direction": predicted_direction,
             "class_probabilities": class_probabilities,
-            "entropy": round(entropy, 3)
+            "entropy": round(entropy, 3),
+            "features": features_df.iloc[0].to_dict()
         }
     }
     return trade
