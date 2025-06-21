@@ -130,7 +130,7 @@ def train():
 
     rewards_np = np.array(all_rewards)
     high_rew_cutoff = np.percentile(rewards_np, 75)
-    low_rew_cutoff = np.percentile(rewards_np, 25)
+    low_rew_cutoff = np.percentile(rewards_np, 20)
     if high_rew_cutoff - low_rew_cutoff < MIN_REWARD_SPREAD:
         logger.warning("Insufficient reward diversity. Training skipped.")
         return
@@ -145,52 +145,57 @@ def train():
 
     for epoch in range(1, EPOCHS + 1):
         epoch_rewards = []
-        num_batches = max(1, len(buffer) // BATCH_SIZE)
+        all_td_errors = []
 
-        for _ in range(num_batches):
+        for _ in range(max(1, len(buffer) // BATCH_SIZE)):
             batch = buffer.sample_balanced(BATCH_SIZE, beta, high_rew_cutoff, low_rew_cutoff)
-            states = batch['states']
-            actions = batch['actions']
-            rewards = batch['rewards']
-            dones = batch['dones']
-            indices = batch['indices']
-            weights = batch['weights']
-
-            dirs, confs = zip(*[(int(a[0]), float(a[1])) for a in actions])
-            states_np = np.array(states, dtype=np.float32)
+            states_np = np.array(batch["states"], dtype=np.float32)
             states_t = torch.from_numpy(states_np)
             next_t = states_t.clone()
+
+            dirs, confs = zip(*batch["actions"])
             dirs_t = torch.tensor(dirs, dtype=torch.long)
             confs_t = torch.tensor(confs, dtype=torch.float32)
-            rewards_t = torch.tensor(rewards, dtype=torch.float32)
-            weights_t = torch.tensor(weights, dtype=torch.float32)
 
-            # Normalize advantages based on rewards
-            advantages = (rewards_t - rewards_t.mean()) / (rewards_t.std() + 1e-8)
+            rewards_np = np.array(batch["rewards"], dtype=np.float32)
+            rewards_np = np.nan_to_num(rewards_np, nan=0.0, posinf=1.0, neginf=-1.0)
+            rewards_t = torch.tensor(rewards_np, dtype=torch.float32)
 
-            # Confidence supervision mask: mask out bad trades
+            dones = batch["dones"]
+            indices = batch["indices"]
+            weights_t = torch.tensor(batch["weights"], dtype=torch.float32)
+
+            # Normalize advantages (numerically stable)
+            advantages = (rewards_t - rewards_t.mean()) / (rewards_t.std() + 1e-6)
+            advantages = torch.clamp(advantages, -5, 5)
+
+            # Confidence supervision mask
             conf_mask = (rewards_t > low_rew_cutoff).float()
+
+            # Overconfidence penalty mask: penalize overconfident bad trades
+            confidence_penalty_mask = (rewards_t < low_rew_cutoff).float()
 
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
-                rewards=rewards,
+                rewards=rewards_np,
                 dones=dones,
                 next_states=next_t,
                 old_logp=None,
                 weights=weights_t,
                 advantages=advantages,
-                conf_mask=conf_mask
+                conf_mask=conf_mask,
+                confidence_penalty_mask=confidence_penalty_mask
             )
 
-            td_err_list = [float(x) for x in td_err.detach().cpu().flatten()] if hasattr(td_err, "detach") else [float(x) for x in td_err]
+            td_err_list = [float(x) for x in td_err.detach().cpu().flatten()]
             buffer.update_priorities(indices, td_err_list)
-            epoch_rewards.extend(rewards)
+            all_td_errors.extend(td_err_list)
+            epoch_rewards.extend(rewards_np)
 
             if DEBUG:
                 logger.debug("Sampled dirs: %s", dirs)
                 logger.debug("Sampled confs: %s", confs)
                 logger.debug("TD errors: %s", td_err_list)
-                logger.debug("Entropy coef (pre-decay): %.8f", agent.entropy_coef.item())
 
         with torch.no_grad():
             agent.entropy_coef.mul_(decay_rate)
@@ -204,8 +209,7 @@ def train():
         _append_csv(epoch, avg_reward)
 
         current_lr = agent.optimizer.param_groups[0].get("lr", 0.0)
-
-        if hasattr(agent, "scheduler") and agent.scheduler:
+        if agent.scheduler:
             agent.scheduler.step(avg_reward)
 
         logger.info(
@@ -213,6 +217,12 @@ def train():
             epoch, EPOCHS, avg_reward, max_reward, min_reward, std_reward,
             agent.entropy_coef.item(), current_lr
         )
+
+        # TD error distribution logging
+        if DEBUG and all_td_errors:
+            td_arr = np.array(all_td_errors)
+            logger.info("TD error histogram – mean: %.4f | std: %.4f | max: %.4f | min: %.4f",
+                        td_arr.mean(), td_arr.std(), td_arr.max(), td_arr.min())
 
         beta = min(1.0, beta + BUFFER_BETA_INCREMENT)
 
