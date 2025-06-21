@@ -9,188 +9,104 @@ from pathlib import Path
 import numpy as np
 from utils.logger import bot_logger as logger
 
-# ─────────────────────────────────────────────────────────
-ROLL_WINDOW = 20
-MIN_HIGH_REWARD = 1.5
-reward_window: deque[float] = deque(maxlen=ROLL_WINDOW)
+import math
 
-HIST_CSV = Path("meta/reward_history.csv")
-HIST_CSV.parent.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger("RewardShaper")
+logger.setLevel(logging.INFO)  # Change to DEBUG for verbose output
 
-# ─────────────────────────────────────────────────────────
-def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = None) -> float:
-    pnl           = float(trade.get("pnl", 0))
-    confidence    = float(trade.get("confidence", 0))
-    setup_quality = float(trade.get("setup_quality", 0.0))
-    trade_type    = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
-    num_signals   = int(trade.get("total_signals_today", 10))
-    realized_vol  = float(market_data.get("realized_vol", 1.0))
-    vix           = float(market_data.get("vix", 15))
-    entry_time    = trade.get("entry_time", "09:35")
-    exit_time     = trade.get("exit_time", "15:59")
-    post_exit_move = float(trade.get("post_exit_move", 0.0))
 
-    # 🧠 Classifier-based shaping
-    success_prob  = float(trade.get("classifier_success_prob", 0.5))
-    entropy       = float(trade.get("classifier_entropy", 1.0))
-    predicted_dir = trade.get("classifier_predicted_direction")
-    actual_dir    = trade.get("direction")
+class RewardShaper:
+    def __init__(self, debug=False):
+        self.reward_history = []
+        self.max_history = 100
+        self.win_streak = 0
+        self.loss_streak = 0
+        self.debug = debug
 
-    reward = np.sign(pnl) * np.log1p(abs(pnl))
+    def reset(self):
+        self.reward_history.clear()
+        self.win_streak = 0
+        self.loss_streak = 0
 
-    # 💡 Confidence shaping
-    reward += np.clip(confidence, 0, 1) * np.sign(pnl) * min(abs(pnl) / 5, 3.0)
+    def compute_shaped_reward(self, trade_result: dict, classifier_output: dict, regime: str):
+        """
+        trade_result: {
+            "pnl": float,
+            "duration": int,
+            "was_successful": bool
+        }
 
-    # 🔍 Classifier success shaping
-    reward += np.clip(success_prob - 0.5, -0.5, 0.5) * 2.0 * np.sign(pnl)
+        classifier_output: {
+            "confidence": float,
+            "entropy": float,
+            "prob_success": float
+        }
 
-    # 🔍 Entropy penalty (uncertain trades discouraged)
-    reward -= 0.5 * entropy
+        regime: str
+        """
+        pnl = trade_result.get("pnl", 0.0)
+        duration = trade_result.get("duration", 1)
+        was_successful = trade_result.get("was_successful", False)
 
-    # 🎯 Classifier direction agreement bonus
-    if predicted_dir == actual_dir and pnl > 0:
-        reward += 0.4
+        confidence = classifier_output.get("confidence", 0.5)
+        entropy = classifier_output.get("entropy", 0.0)
+        prob_success = classifier_output.get("prob_success", 0.5)
 
-    # ⏰ Late exit penalty for day-trades
-    if trade_type == 0:
-        try:
-            exit_hour = int(exit_time.split(":")[0])
-            if exit_hour >= 15 and pnl < 0:
-                reward -= 0.5
-        except:
-            pass
+        # Base reward: scaled PnL
+        base_reward = np.tanh(pnl / 50.0)  # Smoother scale
+        duration_penalty = -0.01 * math.log1p(duration)
 
-    # 📉 Risk environment penalty via VIX
-    reward -= 0.1 * max(0, (vix - 15) // 5)
+        reward = base_reward + duration_penalty
 
-    # 🎯 Smarter exploration bonus
-    if 0.4 < confidence < 0.7 and realized_vol < 2.0 and random.random() < 0.2:
-        reward += 0.25
+        # Classifier shaping
+        confidence_bonus = (confidence - 0.5) * 0.5
+        entropy_penalty = -entropy * 0.2
+        classifier_shaping = confidence_bonus + entropy_penalty
 
-    # 🔚 Exit reason shaping
-    match exit_reason:
-        case "Contract near expiry": reward -= 0.3
-        case "Meta-agent signal":    reward += 0.3
-        case "Stop loss":            reward -= 0.2
-        case "Take profit":          reward += 0.4
-        case "Time-based exit":      reward -= 0.1
+        # Regime shaping
+        regime_bonus = 0.0
+        if regime == "bull":
+            regime_bonus += 0.1
+        elif regime == "bear":
+            regime_bonus -= 0.1
 
-    if exit_reason == "Meta-agent signal" and pnl > 10:
-        reward += 0.4
+        # Streak-based shaping
+        streak_bonus = 0.0
+        if was_successful:
+            self.win_streak += 1
+            self.loss_streak = 0
+            streak_bonus += min(self.win_streak, 3) * 0.2
+        else:
+            self.loss_streak += 1
+            self.win_streak = 0
+            streak_bonus -= min(self.loss_streak, 3) * 0.2
 
-    # 🧠 Setup quality shaping
-    reward += np.clip(setup_quality, 0, 1) * 0.5
+        # Sharpe-aware boosting
+        self.reward_history.append(reward)
+        if len(self.reward_history) > self.max_history:
+            self.reward_history.pop(0)
 
-    # 📊 Selectivity bonus
-    if confidence > 0.8 and num_signals <= 3:
-        reward += 0.4
+        sharpe_boost = 0.0
+        if len(self.reward_history) >= 10:
+            returns = np.array(self.reward_history)
+            mean_r = np.mean(returns)
+            std_r = np.std(returns) + 1e-6
+            sharpe = mean_r / std_r
 
-    # ⚡ Fast win bonus
-    try:
-        entry_hour = int(entry_time.split(":")[0])
-        exit_hour  = int(exit_time.split(":")[0])
-        if pnl > 10 and (exit_hour - entry_hour) <= 2:
-            reward += 0.5
-    except:
-        pass
+            if sharpe < 0.5:
+                sharpe_boost = 0.2 * (0.5 - sharpe)
 
-    # 🌀 Fluke discouragement
-    if confidence < 0.4 and pnl > 10:
-        reward *= 0.6
+        total_reward = reward + classifier_shaping + regime_bonus + streak_bonus + sharpe_boost
 
-    # 🧠 Classifier agreement/disagreement
-    if setup_quality > 0.7 and pnl > 10:
-        reward += 0.4
-    elif setup_quality < 0.3 and pnl < 0:
-        reward += 0.2
+        # Stronger final scaling
+        total_reward = max(min(total_reward, 5), -5)
 
-    if confidence > 0.85 and setup_quality > 0.8:
-        reward += 0.4
+        # Debug logging
+        if self.debug:
+            logger.info(f"Reward components:")
+            logger.info(f"  base_reward={base_reward:.4f}, duration_penalty={duration_penalty:.4f}")
+            logger.info(f"  confidence_bonus={confidence_bonus:.4f}, entropy_penalty={entropy_penalty:.4f}")
+            logger.info(f"  regime_bonus={regime_bonus:.4f}, streak_bonus={streak_bonus:.4f}")
+            logger.info(f"  sharpe_boost={sharpe_boost:.4f}, total_reward={total_reward:.4f}")
 
-    # 📈 PnL scaling tiers (adjusted for stronger reward slope)
-    if abs(pnl) < 5:
-        reward *= 0.7 if confidence > 0.6 else 0.3
-    elif abs(pnl) < 10:
-        reward *= 0.95
-    elif abs(pnl) < 25:
-        reward *= 1.25
-    else:
-        reward *= 1.7
-
-    # 📉 Realized volatility shaping
-    reward *= max(0.8, 1.5 - realized_vol)
-
-    # 🏆 Rare excellent trade multiplier
-    if confidence > 0.9 and setup_quality > 0.8 and pnl > 20:
-        reward *= 1.6
-
-    # ❌ Missed post-trade opportunity penalty
-    if pnl > 5 and post_exit_move > 10:
-        reward -= 0.4
-
-    # ❌ Classifier disagreement penalty
-    if setup_quality < 0.3 and confidence > 0.8 and pnl < 0:
-        reward -= 0.6
-
-    # 💰 Extra large win bonus
-    if abs(pnl) > 30:
-        reward += 0.5
-
-    # 📉 Adaptive exploration if rolling Sharpe is weak
-    if len(reward_window) == reward_window.maxlen:
-        rolling_sharpe = compute_sharpe_style_reward(list(reward_window))
-        if rolling_sharpe < 0.1 and random.random() < 0.2:
-            reward += 0.3
-
-    # 🔁 Regime alignment bonus
-    if trade.get("regime_class") == predicted_dir and pnl > 5:
-        reward += 0.4
-
-    return float(reward)
-
-# ─────────────────────────────────────────────────────────
-def compute_sharpe_style_reward(returns, rf: float = 0.0, eps: float = 1e-8) -> float:
-    if len(returns) < 2:
-        return 0.0
-    r = np.asarray(returns, dtype=np.float32) - rf
-    return float(r.mean() / (r.std() + eps))
-
-# ─────────────────────────────────────────────────────────
-def compute_shaped_reward(log_entry: dict) -> float:
-    trade        = log_entry.get("trade", {})
-    market_data  = log_entry.get("market", {})
-    exit_reason  = log_entry.get("exit_reason")
-
-    raw = compute_reward(trade, market_data, exit_reason)
-
-    reward_window.append(raw)
-    if len(reward_window) < reward_window.maxlen:
-        return float(np.clip(raw, -3.0, 3.0))
-
-    mean = np.mean(reward_window)
-    std  = np.std(reward_window) + 1e-6
-    sharpe_scaled = (raw - mean) / std
-    return float(np.clip(sharpe_scaled, -3.0, 3.0))
-
-# ─────────────────────────────────────────────────────────
-def _append_csv(timestamp: str, shaped: float, raw: float):
-    is_new = not HIST_CSV.exists()
-    with HIST_CSV.open("a", newline="") as f:
-        w = csv.writer(f)
-        if is_new:
-            w.writerow(["timestamp", "raw_reward", "shaped_reward"])
-        w.writerow([timestamp, raw, shaped])
-
-def log_reward_trend(entry: dict):
-    try:
-        ts      = datetime.datetime.utcnow().isoformat()
-        shaped  = entry.get("shaped_reward", 0.0)
-        raw     = entry.get("sharpe_reward", 0.0)
-        _append_csv(ts, raw, shaped)
-
-        if len(reward_window) == reward_window.maxlen:
-            rolling_sharpe = compute_sharpe_style_reward(list(reward_window))
-            logger.info(f"[RewardTrend] windowSharpe={rolling_sharpe:.2f}  last={shaped:+.3f}")
-
-    except Exception as exc:
-        logger.warning(f"[RewardTrend] logging failed: {exc}")
+        return total_reward
