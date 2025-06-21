@@ -1,7 +1,5 @@
-"""
-Reward‑shaping utilities for the meta‑agent.
-Encourages exploration, clean execution, and high-confidence trades.
-"""
+# Reward‑shaping utilities for the meta‑agent.
+# Encourages exploration, clean execution, and high-confidence trades.
 
 from __future__ import annotations
 import csv, os, datetime, random
@@ -13,7 +11,7 @@ from utils.logger import bot_logger as logger
 
 # ─────────────────────────────────────────────────────────
 ROLL_WINDOW = 20
-MIN_HIGH_REWARD = 1.5  # New: Used to help prioritize high-quality experiences
+MIN_HIGH_REWARD = 1.5
 reward_window: deque[float] = deque(maxlen=ROLL_WINDOW)
 
 HIST_CSV = Path("meta/reward_history.csv")
@@ -21,14 +19,10 @@ HIST_CSV.parent.mkdir(parents=True, exist_ok=True)
 
 # ─────────────────────────────────────────────────────────
 def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = None) -> float:
-    """
-    Build a shaped reward from raw PnL plus contextual signals.
-    Encourages exploration and high-quality trades.
-    """
     pnl           = float(trade.get("pnl", 0))
     confidence    = float(trade.get("confidence", 0))
-    trade_type    = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
     setup_quality = float(trade.get("setup_quality", 0.0))
+    trade_type    = int(trade.get("trade_type", 0))  # 0 = Day, 1 = Swing
     num_signals   = int(trade.get("total_signals_today", 10))
     realized_vol  = float(market_data.get("realized_vol", 1.0))
     vix           = float(market_data.get("vix", 15))
@@ -36,10 +30,26 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     exit_time     = trade.get("exit_time", "15:59")
     post_exit_move = float(trade.get("post_exit_move", 0.0))
 
+    # 🧠 Classifier-based shaping
+    success_prob  = float(trade.get("classifier_success_prob", 0.5))
+    entropy       = float(trade.get("classifier_entropy", 1.0))
+    predicted_dir = trade.get("classifier_predicted_direction")
+    actual_dir    = trade.get("direction")
+
     reward = np.sign(pnl) * np.log1p(abs(pnl))
 
     # 💡 Confidence shaping
     reward += np.clip(confidence, 0, 1) * np.sign(pnl) * min(abs(pnl) / 5, 3.0)
+
+    # 🔍 Classifier success shaping
+    reward += np.clip(success_prob - 0.5, -0.5, 0.5) * 2.0 * np.sign(pnl)
+
+    # 🔍 Entropy penalty (uncertain trades discouraged)
+    reward -= 0.5 * entropy
+
+    # 🎯 Classifier direction agreement bonus
+    if predicted_dir == actual_dir and pnl > 0:
+        reward += 0.4
 
     # ⏰ Late exit penalty for day-trades
     if trade_type == 0:
@@ -53,7 +63,7 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     # 📉 Risk environment penalty via VIX
     reward -= 0.1 * max(0, (vix - 15) // 5)
 
-    # 🎯 Smarter exploration bonus — only if uncertain and not in extreme regimes
+    # 🎯 Smarter exploration bonus
     if 0.4 < confidence < 0.7 and realized_vol < 2.0 and random.random() < 0.2:
         reward += 0.25
 
@@ -97,22 +107,22 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
     if confidence > 0.85 and setup_quality > 0.8:
         reward += 0.4
 
-    # 📈 PnL scaling tiers (adjusted)
+    # 📈 PnL scaling tiers (adjusted for stronger reward slope)
     if abs(pnl) < 5:
-        reward *= 0.7 if confidence > 0.6 else 0.3  # Still positive, just modest
+        reward *= 0.7 if confidence > 0.6 else 0.3
     elif abs(pnl) < 10:
-        reward *= 0.9
+        reward *= 0.95
     elif abs(pnl) < 25:
-        reward *= 1.2
+        reward *= 1.25
     else:
-        reward *= 1.6
+        reward *= 1.7
 
     # 📉 Realized volatility shaping
     reward *= max(0.8, 1.5 - realized_vol)
 
     # 🏆 Rare excellent trade multiplier
     if confidence > 0.9 and setup_quality > 0.8 and pnl > 20:
-        reward *= 1.5
+        reward *= 1.6
 
     # ❌ Missed post-trade opportunity penalty
     if pnl > 5 and post_exit_move > 10:
@@ -120,7 +130,7 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
 
     # ❌ Classifier disagreement penalty
     if setup_quality < 0.3 and confidence > 0.8 and pnl < 0:
-        reward -= 0.5
+        reward -= 0.6
 
     # 💰 Extra large win bonus
     if abs(pnl) > 30:
@@ -131,9 +141,9 @@ def compute_reward(trade: dict, market_data: dict, exit_reason: str | None = Non
         rolling_sharpe = compute_sharpe_style_reward(list(reward_window))
         if rolling_sharpe < 0.1 and random.random() < 0.2:
             reward += 0.3
-            
-    #Incentivize trades that win and match longer-term regime signal
-    if trade.get("regime_class") == trade.get("predicted_direction") and pnl > 5:
+
+    # 🔁 Regime alignment bonus
+    if trade.get("regime_class") == predicted_dir and pnl > 5:
         reward += 0.4
 
     return float(reward)
@@ -147,9 +157,6 @@ def compute_sharpe_style_reward(returns, rf: float = 0.0, eps: float = 1e-8) -> 
 
 # ─────────────────────────────────────────────────────────
 def compute_shaped_reward(log_entry: dict) -> float:
-    """
-    Use `compute_reward` then scale via rolling Sharpe normalization.
-    """
     trade        = log_entry.get("trade", {})
     market_data  = log_entry.get("market", {})
     exit_reason  = log_entry.get("exit_reason")
@@ -175,10 +182,6 @@ def _append_csv(timestamp: str, shaped: float, raw: float):
         w.writerow([timestamp, raw, shaped])
 
 def log_reward_trend(entry: dict):
-    """
-    Log reward info and update CSV + rolling stats.
-    Expects keys: meta_state, meta_action, shaped_reward, sharpe_reward
-    """
     try:
         ts      = datetime.datetime.utcnow().isoformat()
         shaped  = entry.get("shaped_reward", 0.0)
