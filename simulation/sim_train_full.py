@@ -195,13 +195,14 @@ def append_meta_log(trade: dict, vix_val: float):
         "exit_reason": "sim_exit"
     })
 
-    if (
-        abs(shaped_reward) < 0.3 or
-        abs(trade["pnl"]) < 1.5 or
-        trade["confidence"] < 0.3
-    ):
-        if RNG.random() > GARBAGE_KEEP_PROB:
-            return
+    signal_quality = (
+        abs(shaped_reward) >= 0.3 and
+        abs(trade["pnl"]) >= 1.5 and
+        trade["confidence"] >= 0.3
+    )
+
+    if not signal_quality and RNG.random() > GARBAGE_KEEP_PROB:
+        return
 
     payload = {
         "timestamp": trade["timestamp"],
@@ -211,8 +212,8 @@ def append_meta_log(trade: dict, vix_val: float):
         "meta_state": trade["meta_state"],
         "meta_action": trade["meta_action"],
         "reward": shaped_reward,
-        "bar": trade["bar"],
-        "done": True
+        "done": True,
+        "high_quality": signal_quality,
     }
 
     with META_LOG_PATH.open("a") as fh:
