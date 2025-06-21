@@ -1,5 +1,3 @@
-# simulation/sim_train_full.py
-
 import os
 import json
 import math
@@ -82,14 +80,6 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     confidence = random_confidence()
     atr = RNG.uniform(2, 6)
 
-    base_meta_state_dict = {
-        "confidence": confidence,
-        "vix": vix,
-        "hour": hour,
-        "is_swing": 0,
-        "atr": atr,
-    }
-
     bar_open = prices[start_idx]
     bar_high = round(bar_open * (1 + RNG.uniform(0, 0.001)), 2)
     bar_low = round(bar_open * (1 - RNG.uniform(0, 0.001)), 2)
@@ -123,11 +113,16 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     }
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
 
-    base_meta_state_dict.update({
+    base_meta_state_dict = {
+        "confidence": confidence,
+        "vix": vix,
+        "hour": hour,
+        "is_swing": 0,
+        "atr": atr,
         "trade_success_prob": trade_success_prob,
         "predicted_direction": predicted_direction,
         "entropy": entropy,
-    })
+    }
 
     meta_state = build_meta_state_for_entry(
         base_meta_state_dict,
