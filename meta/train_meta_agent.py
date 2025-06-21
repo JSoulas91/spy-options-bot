@@ -28,7 +28,7 @@ ACTION_DIM = 3
 DEBUG = True
 MIN_HIGH_REWARD = 1.5
 MIN_REWARD_SPREAD = 0.5
-MAX_RECENT_SKIP = 300  # Skip the last N rows if they're likely poor
+MAX_RECENT_SKIP = 300
 
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
@@ -50,7 +50,6 @@ def _pad_or_trim(vec, dim):
     return lst[:dim] if len(lst) >= dim else lst + [0.0] * (dim - len(lst))
 
 def _log_classifier_correlation(rows):
-    # Optional: log correlation of classifier outputs vs reward
     preds, rewards = [], []
     for r in rows:
         cls = r.get("classifier")
@@ -158,12 +157,19 @@ def train():
             weights = batch['weights']
 
             dirs, confs = zip(*[(int(a[0]), float(a[1])) for a in actions])
-            states_np = np.array(states, dtype=np.float32)  # much faster
+            states_np = np.array(states, dtype=np.float32)
             states_t = torch.from_numpy(states_np)
-            next_t   = states_t.clone()
-            dirs_t   = torch.tensor(dirs, dtype=torch.long)
-            confs_t  = torch.tensor(confs, dtype=torch.float32)
+            next_t = states_t.clone()
+            dirs_t = torch.tensor(dirs, dtype=torch.long)
+            confs_t = torch.tensor(confs, dtype=torch.float32)
+            rewards_t = torch.tensor(rewards, dtype=torch.float32)
             weights_t = torch.tensor(weights, dtype=torch.float32)
+
+            # Normalize advantages based on rewards
+            advantages = (rewards_t - rewards_t.mean()) / (rewards_t.std() + 1e-8)
+
+            # Confidence supervision mask: mask out bad trades
+            conf_mask = (rewards_t > low_rew_cutoff).float()
 
             td_err = agent.train_step(
                 states_t, dirs_t, confs_t,
@@ -171,7 +177,9 @@ def train():
                 dones=dones,
                 next_states=next_t,
                 old_logp=None,
-                weights=weights_t
+                weights=weights_t,
+                advantages=advantages,
+                conf_mask=conf_mask
             )
 
             td_err_list = [float(x) for x in td_err.detach().cpu().flatten()] if hasattr(td_err, "detach") else [float(x) for x in td_err]
