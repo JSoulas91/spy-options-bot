@@ -87,9 +87,9 @@ class PrioritizedReplayBuffer:
 
     def update_priorities(self, indices, errors):
         for idx, error in zip(indices, errors):
-        scalar_error = abs(float(error))  # safely convert tensor/float to scalar
-        priority = (scalar_error + self.epsilon) ** self.alpha
-        self.priorities[idx] = priority
+            scalar_error = abs(float(error))  # safely convert tensor/float to scalar
+            priority = (scalar_error + self.epsilon) ** self.alpha
+            self.priorities[idx] = priority
 
     def __len__(self):
         return len(self.buffer)
