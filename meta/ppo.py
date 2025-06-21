@@ -171,8 +171,8 @@ class PPOAgent:
         surrogate2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         policy_loss = -torch.min(surrogate1, surrogate2)
 
-        conf_loss = nn.functional.mse_loss(conf_pred, target_conf, reduction="none")
-        value_loss = nn.functional.mse_loss(value_pred, returns, reduction="none")
+        conf_loss = nn.functional.mse_loss(conf_pred.squeeze(-1), target_conf, reduction="none")
+        value_loss = nn.functional.mse_loss(value_pred.squeeze(-1), returns, reduction="none")
         entropy = dist.entropy()
         entropy_loss = -self.entropy_coef * entropy
 
