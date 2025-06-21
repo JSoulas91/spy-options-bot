@@ -4,10 +4,12 @@ import pandas as pd
 from pathlib import Path
 from utils.logger import bot_logger
 from technical_analysis.indicators import calculate_indicators
+from datetime import datetime
+import shutil
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
-OUTPUT_NPZ = Path("ml/dataset.npz")
 OUTPUT_CSV = Path("ml/spy_data.csv")
+OUTPUT_NPZ = Path("ml/dataset.npz")
 MAX_ROWS = 30000
 
 FEATURE_NAMES = [
@@ -34,6 +36,9 @@ FEATURE_NAMES = [
     "class_prob_2"
 ]
 
+def normalize(val, min_val, max_val):
+    return max(0.0, min(1.0, (val - min_val) / (max_val - min_val)))
+
 def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     trade = entry.get("trade", {})
     bar = entry.get("bar", {})
@@ -45,7 +50,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     volume = bar.get("volume", 1.0)
 
     if None in (open_, high, low, close):
-        bot_logger.warning("[Feature Extract] Skipping entry: Missing OHLC")
         return None
 
     try:
@@ -63,27 +67,35 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             val = row.get(name)
             return fallback if pd.isna(val) else float(val)
 
+        # Label based on PnL
         pnl = float(trade.get("pnl", 0.0))
         if pnl < -2:
             label = 0
         elif pnl > 5:
             label = 1
         else:
-            return None  # Ambiguous case
+            return None  # ambiguous
 
-        confidence = float(trade.get("confidence", 0.0))
-        setup_quality = float(trade.get("setup_quality", 0.5))
-        vix = float(market.get("vix", 20.0))
-        realized_vol = float(market.get("realized_vol", 0.02))
+        confidence_raw = float(trade.get("confidence", 0.0))
+        setup_quality_raw = float(trade.get("setup_quality", 0.5))
+        vix_raw = float(market.get("vix", 20.0))
+        realized_vol_raw = float(market.get("realized_vol", 0.02))
+
+        confidence = normalize(confidence_raw, 0.0, 1.0)
+        setup_quality = normalize(setup_quality_raw, 0.0, 1.0)
+        vix = normalize(vix_raw, 12.0, 40.0)
+        realized_vol = normalize(realized_vol_raw, 0.01, 0.1)
+
         trade_type = int(trade.get("trade_type", 0))
         total_signals_today = int(trade.get("total_signals_today", 0))
         vwap_value = safe_val("VWAP", fallback=close)
 
         regime_class = int(classifier.get("regime_class", 1))
-        class_probs = classifier.get("class_probabilities", [0.0, 1.0, 0.0])
-        prob_0 = float(class_probs[0]) if len(class_probs) > 0 else 0.0
-        prob_1 = float(class_probs[1]) if len(class_probs) > 1 else 1.0
-        prob_2 = float(class_probs[2]) if len(class_probs) > 2 else 0.0
+        class_probs = classifier.get("class_probabilities", [])
+        if len(class_probs) != 3:
+            return None  # skip if classifier didn't run
+
+        prob_0, prob_1, prob_2 = map(float, class_probs)
 
         features = np.array([
             confidence,
@@ -112,17 +124,19 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         return features, label, timestamp
 
     except Exception as e:
-        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}")
+        bot_logger.warning(f"[Feature Extract] Skipping entry: {e}")
         return None
 
 def build_dataset():
     if not META_LOG_PATH.exists():
-        bot_logger.error(f"[Build Dataset] File not found: {META_LOG_PATH}")
+        bot_logger.error(f"[Build Dataset] Missing: {META_LOG_PATH}")
         return
 
     features, labels, timestamps = [], [], []
+    pos, neg, skip = 0, 0, 0
+
     with META_LOG_PATH.open("r") as f:
-        for line_num, line in enumerate(f, start=1):
+        for line_num, line in enumerate(f, 1):
             try:
                 entry = json.loads(line)
                 result = extract_features(entry)
@@ -131,9 +145,14 @@ def build_dataset():
                     features.append(feat)
                     labels.append(label)
                     timestamps.append(ts)
+                    if label == 1:
+                        pos += 1
+                    else:
+                        neg += 1
+                else:
+                    skip += 1
             except json.JSONDecodeError:
                 bot_logger.warning(f"[Build Dataset] Malformed JSON at line {line_num}")
-                continue
 
     if not features:
         bot_logger.error("[Build Dataset] No valid features extracted.")
@@ -153,6 +172,13 @@ def build_dataset():
     if len(df_combined) > MAX_ROWS:
         df_combined = df_combined.tail(MAX_ROWS)
 
+    # Backup old CSV
+    if OUTPUT_CSV.exists():
+        backup_path = OUTPUT_CSV.with_name(f"spy_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        shutil.copy(OUTPUT_CSV, backup_path)
+        bot_logger.info(f"[Build Dataset] Backup saved: {backup_path}")
+
+    # Save final dataset
     df_combined.to_csv(OUTPUT_CSV, index=False)
     np.savez_compressed(OUTPUT_NPZ,
         X=df_combined[FEATURE_NAMES].values.astype(np.float32),
@@ -160,4 +186,4 @@ def build_dataset():
         timestamps=df_combined["timestamp"].values
     )
 
-    bot_logger.info(f"[Build Dataset] ✅ Appended {len(df_new)} new, {len(df_combined)} total")
+    bot_logger.info(f"[Build Dataset] ✅ {len(df_new)} new, {len(df_combined)} total | pos={pos}, neg={neg}, skip={skip}")
