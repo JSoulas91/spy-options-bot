@@ -15,10 +15,40 @@ from ml.build_spy_data_from_meta_log import build_dataset
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("retrain")
 
+FEATURE_NAMES = [
+    "confidence",
+    "setup_quality",
+    "vix",
+    "realized_vol",
+    "trade_type",
+    "total_signals_today",
+    "ema_20",
+    "rsi_14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_upper",
+    "bb_middle",
+    "bb_lower",
+    "vwap",
+    "atr_14",
+    "adx_14",
+    "regime_class",
+    "class_prob_0",
+    "class_prob_1",
+    "class_prob_2"
+]
+
 def load_data():
     df = pd.read_csv("ml/spy_data.csv")
     df = df.drop(columns=["timestamp"], errors="ignore")
     df = df[df["label"].notnull()].fillna(method="ffill").fillna(method="bfill")
+
+    missing_cols = [col for col in FEATURE_NAMES if col not in df.columns]
+    if missing_cols:
+        logger.warning(f"[Data Load] Missing columns: {missing_cols}")
+        raise ValueError(f"Missing required features: {missing_cols}")
+
     return df
 
 def retrain_model():
@@ -28,9 +58,14 @@ def retrain_model():
 
         df = load_data()
         y = df["label"]
-        X = df.drop(columns=["label", "pnl"], errors="ignore")
+        X = df[FEATURE_NAMES]
 
-        pos_weight = (len(y) - sum(y)) / sum(y) if sum(y) > 0 else 1.0
+        num_pos = sum(y)
+        num_neg = len(y) - num_pos
+        pos_weight = num_neg / num_pos if num_pos > 0 else 1.0
+
+        if num_pos < 50 or num_neg < 50:
+            send_telegram_message(f"⚠️ Imbalanced dataset: pos={num_pos}, neg={num_neg}")
 
         xgb_model = xgb.XGBClassifier(
             n_estimators=200,
@@ -55,21 +90,28 @@ def retrain_model():
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         calibrator = CalibratedClassifierCV(xgb_model, method="isotonic", cv=skf)
         calibrator.fit(X, y)
-        joblib.dump(calibrator, f"models/xgb_calibrated_{timestamp}.pkl")
+        calibrated_path = f"models/xgb_calibrated_{timestamp}.pkl"
+        joblib.dump(calibrator, calibrated_path)
         logger.info("[Save Model] Calibrated model saved")
 
-        # Evaluate in-sample and OOS
+        # Evaluate accuracy
         X_train, X_val, y_train, y_val = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
         acc_in = calibrator.score(X_train, y_train)
         acc_val = calibrator.score(X_val, y_val)
         logger.info(f"[Accuracy] In-sample: {acc_in:.4f}, Out-of-sample: {acc_val:.4f}")
+
+        # Save to accuracy log
+        with open("models/accuracy_log.txt", "a") as f:
+            f.write(f"{timestamp},in={acc_in:.4f},val={acc_val:.4f},pos={num_pos},neg={num_neg}\n")
 
         # Feature importance
         importances = xgb_model.feature_importances_
         top_feats = sorted(zip(X.columns, importances), key=lambda x: -x[1])
         logger.info("[Top Features]\n" + "\n".join(f"{f:<20}: {w:.4f}" for f, w in top_feats[:10]))
 
-        send_telegram_message(f"✅ ML retrained\nIn-sample acc: {acc_in:.4f}\nOOS acc: {acc_val:.4f}")
+        send_telegram_message(
+            f"✅ ML retrained\nIn-sample acc: {acc_in:.4f}\nOOS acc: {acc_val:.4f}\nModel: {calibrated_path}"
+        )
         update_status("last_retrain", "ok")
 
     except Exception as e:
