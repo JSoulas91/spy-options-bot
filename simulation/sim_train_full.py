@@ -108,7 +108,6 @@ def compute_all_indicators(prices, volumes, idx):
 
     return indicators
 
-
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     minute_cutoff = 60 * 5 * 10
     if len(prices) < minute_cutoff:
@@ -133,9 +132,10 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
 
     indicators = compute_all_indicators(prices, volumes, start_idx)
 
+    setup_quality = RNG.uniform(0.6, 1.0)
     feature_dict = {
         "confidence": confidence,
-        "setup_quality": RNG.uniform(0.6, 1.0),
+        "setup_quality": setup_quality,
         "vix": vix,
         "realized_vol": RNG.uniform(0.1, 0.6),
         "trade_type": int(is_swing),
@@ -173,7 +173,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         confidence_score=confidence,
         trade_type=int(is_swing),
     )
-
     if meta_entry is None:
         return None
 
@@ -184,10 +183,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
 
     final_price = prices[start_idx + duration]
     trade_result = (final_price - price_sig) if option_type == "C" else (price_sig - final_price)
-    reward, shaped = compute_shaped_reward(trade_result, confidence)
-
-    if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
-        return None
 
     meta_exit = build_meta_state_for_exit(
         base_meta_state_dict,
@@ -199,8 +194,23 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         confidence_score=confidence,
         trade_type=int(is_swing),
     )
-
     if meta_exit is None:
+        return None
+
+    reward, shaped = compute_shaped_reward(
+        trade_result=trade_result,
+        confidence=confidence,
+        setup_quality=setup_quality,
+        trade_success_prob=trade_success_prob,
+        is_swing=is_swing,
+        vix=vix,
+        predicted_direction=predicted_direction,
+        final_price=final_price,
+        entry_price=price_sig,
+        exit_quality=abs(trade_result) / atr
+    )
+
+    if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
         return None
 
     log_training_example(feature_dict, trade_success_prob, predicted_direction, trade_result)
