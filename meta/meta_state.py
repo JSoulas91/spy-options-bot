@@ -124,13 +124,15 @@ def build_meta_state_for_entry(
 
     def ensure_df(df):
         if isinstance(df, dict):
-            # Check if any value is list-like -> treat as tabular data
             if any(isinstance(v, (list, tuple, np.ndarray, pd.Series)) for v in df.values()):
                 return pd.DataFrame(df)
             else:
-                # All scalars: create single-row DataFrame
                 return pd.DataFrame([df])
         return df
+
+    def build_sequence(state: List[float]) -> np.ndarray:
+        padded = _pad(state)
+        return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
 
     data_1m = ensure_df(data_1m)
     data_5m = ensure_df(data_5m)
@@ -148,12 +150,7 @@ def build_meta_state_for_entry(
 
         def tf_feats(df):
             if df is None:
-                return [
-                    normalize(50, rsi_rng),
-                    normalize(0, macd_rng),
-                    normalize(0, ema_rng),
-                    normalize(0, vol_rng),
-                ]
+                return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
             if hasattr(df, "iloc") and len(df) > 0:
                 last = df.iloc[-1]
                 return [
@@ -162,27 +159,9 @@ def build_meta_state_for_entry(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                     normalize(last.get("volume", 0), vol_rng),
                 ]
-            if isinstance(df, dict):
-                rsi = df.get("rsi", 50)
-                macd = df.get("macd", 0)
-                price = df.get("price", 0)
-                ema_20 = df.get("ema_20", 0)
-                volume = df.get("volume", 0)
-                return [
-                    normalize(rsi, rsi_rng),
-                    normalize(macd, macd_rng),
-                    normalize(price - ema_20, ema_rng),
-                    normalize(volume, vol_rng),
-                ]
-            return [
-                normalize(50, rsi_rng),
-                normalize(0, macd_rng),
-                normalize(0, ema_rng),
-                normalize(0, vol_rng),
-            ]
+            return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
 
         vix_val = fetch_vix_price() or 20.0
-
         regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
 
         clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
@@ -210,36 +189,33 @@ def build_meta_state_for_entry(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                 ]
             else:
-                state += [PAD_VAL, PAD_VAL, PAD_VAL]
+                state += [PAD_VAL] * 3
 
-        # ───── Additional classifier outputs ─────
         if classifier_output:
-            # 1. Success probability (trade success prob)
             state.append(normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"]))
-            # 2. Predicted direction: one-hot for 3 classes (long, neutral, short)
             pred_dir = classifier_output.get("predicted_direction", -1)
+            dir_one_hot = [0.0, 0.0, 0.0]
             if pred_dir in (0, 1, 2):
-                dir_one_hot = [0, 0, 0]
                 dir_one_hot[pred_dir] = 1.0
             else:
-                dir_one_hot = [PAD_VAL, PAD_VAL, PAD_VAL]
+                dir_one_hot = [PAD_VAL] * 3
             state.extend(dir_one_hot)
-            # 3. Class probabilities (3 floats)
-            class_probs = classifier_output.get("class_probabilities", [PAD_VAL, PAD_VAL, PAD_VAL])
+
+            class_probs = classifier_output.get("class_probabilities", [PAD_VAL] * 3)
             if len(class_probs) != 3:
-                class_probs = [PAD_VAL, PAD_VAL, PAD_VAL]
+                class_probs = [PAD_VAL] * 3
             state.extend(class_probs)
-            # 4. Entropy (normalized 0 to 1)
+
             entropy = classifier_output.get("entropy", PAD_VAL)
             state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
         else:
             state += [PAD_VAL] * 8
 
-        return _pad(state)
+        return build_sequence(state)
 
     except Exception as e:
         logger.error(f"Error building meta state for entry: {e}")
-        return _pad([PAD_VAL] * STATE_DIM)
+        return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
 
 
 def build_meta_state_for_exit(
@@ -264,6 +240,10 @@ def build_meta_state_for_exit(
                 return pd.DataFrame([df])
         return df
 
+    def build_sequence(state: List[float]) -> np.ndarray:
+        padded = _pad(state)
+        return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
+
     data_1m = ensure_df(data_1m)
     data_5m = ensure_df(data_5m)
     data_15m = ensure_df(data_15m)
@@ -280,12 +260,7 @@ def build_meta_state_for_exit(
 
         def tf_feats(df):
             if df is None:
-                return [
-                    normalize(50, rsi_rng),
-                    normalize(0, macd_rng),
-                    normalize(0, ema_rng),
-                    normalize(0, vol_rng),
-                ]
+                return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
             if hasattr(df, "iloc") and len(df) > 0:
                 last = df.iloc[-1]
                 return [
@@ -294,30 +269,14 @@ def build_meta_state_for_exit(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                     normalize(last.get("volume", 0), vol_rng),
                 ]
-            if isinstance(df, dict):
-                rsi = df.get("rsi", 50)
-                macd = df.get("macd", 0)
-                price = df.get("price", 0)
-                ema_20 = df.get("ema_20", 0)
-                volume = df.get("volume", 0)
-                return [
-                    normalize(rsi, rsi_rng),
-                    normalize(macd, macd_rng),
-                    normalize(price - ema_20, ema_rng),
-                    normalize(volume, vol_rng),
-                ]
-            return [
-                normalize(50, rsi_rng),
-                normalize(0, macd_rng),
-                normalize(0, ema_rng),
-                normalize(0, vol_rng),
-            ]
+            return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
 
         vix_val = fetch_vix_price() or 20.0
         regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
 
         clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
         norm_conf = normalize(clf_conf if clf_conf is not None else confidence_score, DEFAULT_RANGES["CONF"])
+
         state: List[float] = [
             norm_conf,
             1.0 if trade_type == 1 else 0.0,
@@ -340,31 +299,30 @@ def build_meta_state_for_exit(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                 ]
             else:
-                state += [PAD_VAL, PAD_VAL, PAD_VAL]
+                state += [PAD_VAL] * 3
 
         if classifier_output:
             state.append(normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"]))
             pred_dir = classifier_output.get("predicted_direction", -1)
+            dir_one_hot = [0.0, 0.0, 0.0]
             if pred_dir in (0, 1, 2):
-                dir_one_hot = [0, 0, 0]
                 dir_one_hot[pred_dir] = 1.0
             else:
-                dir_one_hot = [PAD_VAL, PAD_VAL, PAD_VAL]
+                dir_one_hot = [PAD_VAL] * 3
             state.extend(dir_one_hot)
-            class_probs = classifier_output.get("class_probabilities", [PAD_VAL, PAD_VAL, PAD_VAL])
-        if len(class_probs) != 3:
-            class_probs = [PAD_VAL, PAD_VAL, PAD_VAL]
+
+            class_probs = classifier_output.get("class_probabilities", [PAD_VAL] * 3)
+            if len(class_probs) != 3:
+                class_probs = [PAD_VAL] * 3
             state.extend(class_probs)
 
-            # 4. Entropy (normalized 0 to 1)
             entropy = classifier_output.get("entropy", PAD_VAL)
             state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
         else:
-            # No classifier output, pad with PAD_VAL for 8 features
             state += [PAD_VAL] * 8
 
-        return _pad(state)
+        return build_sequence(state)
 
     except Exception as e:
         logger.error(f"Error building meta state for exit: {e}")
-        return _pad([PAD_VAL] * STATE_DIM)
+        return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
