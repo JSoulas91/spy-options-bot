@@ -89,7 +89,7 @@ ENTROPY_COEF_END     = float(os.getenv("ENTROPY_COEF_END", 0.1))
 META_MODEL_PATH = os.getenv("META_MODEL_PATH", "meta/models/ppo_agent.pth")
 META_INFO_PATH = "meta/meta_agent_info.json"
 META_STATE_LOOKBACK_MINUTES = 60
-STATE_SEQUENCE_LENGTH = 3
+STATE_SEQUENCE_LENGTH = 10
 
 # === MACHINE LEARNING ===
 CLASSIFIER_MODEL_PATH = "models/xgb_raw.json"
