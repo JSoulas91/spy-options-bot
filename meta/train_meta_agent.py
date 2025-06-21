@@ -173,7 +173,7 @@ def train():
                 weights=weights_t
             )
 
-            td_err_list = td_err.detach().cpu().tolist() if hasattr(td_err, "detach") else list(td_err)
+            td_err_list = [float(x) for x in td_err.detach().cpu().flatten()] if hasattr(td_err, "detach") else [float(x) for x in td_err]
             buffer.update_priorities(indices, td_err_list)
             epoch_rewards.extend(rewards)
 
