@@ -18,6 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("retrain")
 
+MODEL_DIR = "models"
+os.makedirs(MODEL_DIR, exist_ok=True)
+
 def load_data():
     df = pd.read_csv("ml/spy_data.csv")
     logger.info(f"[Load Data] Raw: {df.shape[0]} rows, {df.shape[1]} columns")
@@ -29,16 +32,18 @@ def load_data():
     if not missing_cols.empty:
         logger.info(f"[Load Data] Missing values before cleanup:\n{missing_cols}")
 
-    # Drop only rows with missing labels (and pnl if present)
     df = df[df["label"].notnull()]
     if "pnl" in df.columns:
         df = df[df["pnl"].notnull()]
 
-    # Fill missing values in remaining columns
     df = df.fillna(method="ffill").fillna(method="bfill")
 
     logger.info(f"[Load Data] After cleaning: {df.shape[0]} rows, {df.shape[1]} columns")
     return df
+
+def timestamped_path(base: str, ext: str) -> str:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return os.path.join(MODEL_DIR, f"{base}_{ts}.{ext}")
 
 def retrain_model():
     try:
@@ -52,7 +57,6 @@ def retrain_model():
         logger.info(f"[Load Data] Loaded {len(df)} rows with columns: {list(df.columns)}")
 
         y = df["label"]
-        # Drop model outputs to avoid leakage and feature name mismatch
         drop_cols = ["label", "pnl", "trade_success_prob", "predicted_direction", "classifier_entropy"]
         X = df.drop(columns=drop_cols, errors="ignore")
 
@@ -68,22 +72,36 @@ def retrain_model():
         )
         xgb_model.fit(X, y)
 
-        os.makedirs("models", exist_ok=True)
-        xgb_model.get_booster().save_model("models/xgb_raw.json")
-        logger.info("[Save Model] Raw XGBoost booster saved to models/xgb_raw.json")
+        raw_model_path = os.path.join(MODEL_DIR, "xgb_raw.json")
+        xgb_model.get_booster().save_model(raw_model_path)
+        logger.info(f"[Save Model] Raw XGBoost booster saved: {raw_model_path}")
+
+        backup_raw = timestamped_path("xgb_raw", "json")
+        xgb_model.get_booster().save_model(backup_raw)
+        logger.info(f"[Backup Model] Timestamped backup: {backup_raw}")
 
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         calibrator = CalibratedClassifierCV(estimator=xgb_model, method="isotonic", cv=skf)
         calibrator.fit(X, y)
 
-        joblib.dump(calibrator, "models/xgb_calibrated.pkl")
-        logger.info("[Save Model] Calibrated model saved to models/xgb_calibrated.pkl")
+        calibrated_path = os.path.join(MODEL_DIR, "xgb_calibrated.pkl")
+        joblib.dump(calibrator, calibrated_path)
+        logger.info(f"[Save Model] Calibrated model saved: {calibrated_path}")
+
+        backup_cal = timestamped_path("xgb_calibrated", "pkl")
+        joblib.dump(calibrator, backup_cal)
+        logger.info(f"[Backup Model] Timestamped backup: {backup_cal}")
 
         acc = calibrator.score(X, y)
         logger.info(f"[Accuracy] In-sample accuracy: {acc:.4f}")
 
+        # Accuracy log
+        with open("ml/accuracy_log.txt", "a") as f:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"{ts}, accuracy={acc:.4f}, rows={len(df)}\n")
+
         update_status("last_retrain", "ok")
-        send_telegram_message(f"✅ ML retrained successfully.\nAccuracy: {acc:.4f}")
+        send_telegram_message(f"✅ ML retrained successfully\n📊 Accuracy: {acc:.4f}\n📁 Rows: {len(df)}")
 
     except Exception as e:
         logger.critical(f"Fatal error during retraining: {e}")
@@ -91,7 +109,7 @@ def retrain_model():
         try:
             send_telegram_message(f"❌ ML retrain failed:\n{e}")
         except Exception as inner:
-            logger.warning(f"❌ Failed to send Telegram message: {inner}")
+            logger.warning(f"[Telegram Fail] {inner}")
 
 if __name__ == "__main__":
     retrain_model()
