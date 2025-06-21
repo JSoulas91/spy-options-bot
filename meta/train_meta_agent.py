@@ -158,7 +158,8 @@ def train():
             weights = batch['weights']
 
             dirs, confs = zip(*[(int(a[0]), float(a[1])) for a in actions])
-            states_t = torch.tensor(states, dtype=torch.float32)
+            states_np = np.array(states, dtype=np.float32)  # much faster
+            states_t = torch.from_numpy(states_np)
             next_t   = states_t.clone()
             dirs_t   = torch.tensor(dirs, dtype=torch.long)
             confs_t  = torch.tensor(confs, dtype=torch.float32)
