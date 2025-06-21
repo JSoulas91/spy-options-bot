@@ -2,18 +2,34 @@
 
 from __future__ import annotations
 import math
+import os
+import csv
 import numpy as np
 
 from utils.logger import bot_logger as logger
 
 
 class RewardShaper:
-    def __init__(self, debug: bool = False):
+    def __init__(self, debug: bool = False, csv_log_path: str = "reward_shaper.csv"):
         self.reward_history = []
         self.max_history = 100
         self.win_streak = 0
         self.loss_streak = 0
         self.debug = debug
+        self.csv_log_path = csv_log_path
+
+        # Create CSV if it doesn't exist
+        if self.csv_log_path and not os.path.exists(self.csv_log_path):
+            with open(self.csv_log_path, "w", newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "pnl", "base_reward", "duration_penalty", "conf", "entropy",
+                    "confidence_bonus", "entropy_penalty", "regime", "regime_bonus",
+                    "streak_bonus", "sharpe_boost", "drawdown_penalty", "entry_quality_bonus",
+                    "rrr_bonus", "confidence_alignment", "setup_bonus", "exploration_bonus",
+                    "trade_count_bonus", "missed_opportunity_penalty", "direction_bonus", "speed_bonus",
+                    "total_reward"
+                ])
 
     def reset(self):
         self.reward_history.clear()
@@ -27,7 +43,6 @@ class RewardShaper:
 
         confidence = classifier_output.get("confidence", 0.5)
         entropy = classifier_output.get("entropy", 0.0)
-        prob_success = classifier_output.get("prob_success", 0.5)
 
         # Base reward
         base_reward = np.tanh(pnl / 30.0)
@@ -40,11 +55,7 @@ class RewardShaper:
         classifier_shaping = confidence_bonus + entropy_penalty
 
         # Regime shaping
-        regime_bonus = 0.0
-        if regime == "bull":
-            regime_bonus += 0.1
-        elif regime == "bear":
-            regime_bonus -= 0.1
+        regime_bonus = 0.1 if regime == "bull" else -0.1 if regime == "bear" else 0.0
 
         # Streak shaping
         streak_bonus = 0.0
@@ -61,7 +72,6 @@ class RewardShaper:
         self.reward_history.append(reward)
         if len(self.reward_history) > self.max_history:
             self.reward_history.pop(0)
-
         sharpe_boost = 0.0
         if len(self.reward_history) >= 10:
             returns = np.array(self.reward_history)
@@ -71,56 +81,48 @@ class RewardShaper:
             if sharpe < 0.5:
                 sharpe_boost = 0.4 * (0.5 - sharpe)
 
-        # --- Advanced Additions ---
-
-        # Risk penalty via drawdown
+        # Advanced shaping
         risk_penalty = -0.5 * (trade_result.get("max_drawdown", 0.0) / (abs(pnl) + 1e-6))
-
-        # Entry quality bonus
-        entry_quality = trade_result.get("entry_quality", 0.5)
-        entry_timing_bonus = (entry_quality - 0.5) * 1.5
-
-        # Risk-Reward ratio bonus
+        entry_timing_bonus = (trade_result.get("entry_quality", 0.5) - 0.5) * 1.5
         rrr = trade_result.get("risk_reward_ratio", 1.0)
-        rrr_bonus = np.tanh((rrr - 1.0)) * 0.8
-
-        # Confidence alignment penalty
+        rrr_bonus = np.tanh(rrr - 1.0) * 0.8
         confidence_alignment_penalty = 0.0
         if confidence < 0.55 and was_successful:
             confidence_alignment_penalty = -0.3
         elif confidence > 0.7 and not was_successful:
             confidence_alignment_penalty = -0.5
 
-        # Trade frequency shaping
+        setup_bonus = (trade_result.get("setup_quality", 0.5) - 0.5) * 1.0
+        exploration_bonus = trade_result.get("exploration_bonus", 0.0)
         trades_today = trade_result.get("trades_today", 0)
         trade_count_bonus = 0.2 if 2 <= trades_today <= 6 else -0.2 if trades_today == 0 or trades_today > 8 else 0.0
-
-        # Missed opportunity shaping
         missed_opportunity_penalty = -0.5 if trade_result.get("skipped_strong_signal", False) else 0.0
-
-        # Directional accuracy
         direction_bonus = 0.4 if trade_result.get("direction_correct", None) is True else -0.4 if trade_result.get("direction_correct", None) is False else 0.0
-
-        # Time-to-target shaping
         speed_bonus = 0.5 * math.exp(-trade_result.get("time_to_target", 30) / 20)
 
-        # Final reward calculation
         total_reward = (
-            reward + classifier_shaping + regime_bonus + streak_bonus +
-            sharpe_boost + risk_penalty + entry_timing_bonus + rrr_bonus +
-            confidence_alignment_penalty + trade_count_bonus + missed_opportunity_penalty +
-            direction_bonus + speed_bonus
+            reward + classifier_shaping + regime_bonus + streak_bonus + sharpe_boost +
+            risk_penalty + entry_timing_bonus + rrr_bonus + confidence_alignment_penalty +
+            setup_bonus + exploration_bonus + trade_count_bonus +
+            missed_opportunity_penalty + direction_bonus + speed_bonus
         )
 
-        # Clipping
         total_reward = max(min(total_reward, 6), -6)
 
-        # Logging
+        if self.csv_log_path:
+            with open(self.csv_log_path, "a", newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    pnl, base_reward, duration_penalty, confidence, entropy,
+                    confidence_bonus, entropy_penalty, regime, regime_bonus,
+                    streak_bonus, sharpe_boost, risk_penalty, entry_timing_bonus,
+                    rrr_bonus, confidence_alignment_penalty, setup_bonus, exploration_bonus,
+                    trade_count_bonus, missed_opportunity_penalty, direction_bonus, speed_bonus,
+                    total_reward
+                ])
+
         if abs(total_reward) > 4.5:
-            logger.info(f"⚡ High reward: {total_reward:.2f} → "
-                        f"PNL={pnl:.2f}, conf={confidence:.2f}, rrr={rrr:.2f}, drawdown={trade_result.get('max_drawdown', 0):.2f}, "
-                        f"streak_bonus={streak_bonus:.2f}, entry_quality={entry_quality:.2f}, "
-                        f"trades_today={trades_today}, dir_correct={trade_result.get('direction_correct', '?')}")
+            logger.info(f"⚡ High reward: {total_reward:.2f} → PNL={pnl:.2f}, conf={confidence:.2f}, rrr={rrr:.2f}")
 
         if self.debug:
             logger.info(f"🔎 Reward components:")
@@ -130,6 +132,7 @@ class RewardShaper:
             logger.info(f"  sharpe_boost={sharpe_boost:.4f}, risk_penalty={risk_penalty:.4f}")
             logger.info(f"  entry_timing_bonus={entry_timing_bonus:.4f}, rrr_bonus={rrr_bonus:.4f}")
             logger.info(f"  confidence_alignment_penalty={confidence_alignment_penalty:.4f}")
+            logger.info(f"  setup_bonus={setup_bonus:.4f}, exploration_bonus={exploration_bonus:.4f}")
             logger.info(f"  trade_count_bonus={trade_count_bonus:.4f}, missed_opportunity_penalty={missed_opportunity_penalty:.4f}")
             logger.info(f"  direction_bonus={direction_bonus:.4f}, speed_bonus={speed_bonus:.4f}")
             logger.info(f"  total_reward={total_reward:.4f}")
