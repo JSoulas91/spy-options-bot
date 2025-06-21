@@ -23,7 +23,7 @@ from ml.feature_pipeline import build_features_for_trade
 
 # ───────── simulation params ───────────────
 SIM_DAYS = 500
-TRADES_PER_DAY = 10
+TRADES_PER_DAY = 12
 GBM_MU = 0.08
 GBM_SIGMA = 0.22
 START_PRICE = 450.0
@@ -35,49 +35,82 @@ GARBAGE_KEEP_PROB = 0.05
 meta_agent = MetaAgent()
 model_inference = ModelInference()
 
+
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
-    for _ in range(1, n_steps):
+    for i in range(1, n_steps):
         shock = RNG.normalvariate(0, 1)
-        s_t = prices[-1] * math.exp((mu - 0.5 * sigma ** 2) * dt + sigma * math.sqrt(dt) * shock)
+        s_t = prices[-1] * math.exp((mu - 0.5 * sigma**2) * dt + sigma * math.sqrt(dt) * shock)
         prices.append(round(s_t, 2))
     return prices
+
 
 def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
     return f"SPY{day.strftime('%y%m%d')}{c_or_p}{int(strike*100):08d}"
 
-def random_confidence() -> float:
-    return round(np.random.beta(5, 2), 2)
 
-def compute_indicators(prices: list[float], volumes: list[int], idx: int):
-    window_20 = prices[max(0, idx - 19):idx + 1]
-    volume_slice = volumes[max(0, idx - 19):idx + 1]
-    close = prices[idx]
-
-    vwap = np.average(window_20, weights=volume_slice) if window_20 else close
-    ema_20 = sum(window_20) / len(window_20) if window_20 else close
-    rsi_14 = 50 + RNG.uniform(-10, 10)  # placeholder
-
-    return {
-        "vwap": round(vwap, 2),
-        "ema_20": round(ema_20, 2),
-        "rsi_14": round(rsi_14, 2)
-    }
-
-def construct_bars(prices: list[float], volumes: list[int], interval: int):
+def construct_bars(prices, volumes, interval):
     bars = []
-    for i in range(0, len(prices), interval):
+    for i in range(0, len(prices) - interval + 1, interval):
         chunk = prices[i:i+interval]
         vol_chunk = volumes[i:i+interval]
         if len(chunk) < interval:
             continue
-        o, h, l, c = chunk[0], max(chunk), min(chunk), chunk[-1]
-        v = sum(vol_chunk)
-        bars.append({"open": o, "high": h, "low": l, "close": c, "volume": v})
+        bars.append({
+            "open": chunk[0],
+            "high": max(chunk),
+            "low": min(chunk),
+            "close": chunk[-1],
+            "volume": sum(vol_chunk)
+        })
     return bars
 
-def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: list[int], vix: float, macro_regime_shift: bool):
-    minute_cutoff = 60 * 5 * 10  # ensure 10 1h bars
+
+def compute_all_indicators(prices, volumes, idx):
+    window = prices[max(0, idx - 50):idx + 1]
+    closes = pd.Series(window)
+
+    indicators = {}
+
+    indicators["ema_20"] = closes.ewm(span=20).mean().iloc[-1]
+    delta = closes.diff()
+    up, down = delta.clip(lower=0), -delta.clip(upper=0)
+    avg_gain = up.rolling(window=14).mean().iloc[-1]
+    avg_loss = down.rolling(window=14).mean().iloc[-1]
+    rs = avg_gain / (avg_loss + 1e-6)
+    indicators["rsi_14"] = 100 - (100 / (1 + rs))
+
+    exp1 = closes.ewm(span=12, adjust=False).mean()
+    exp2 = closes.ewm(span=26, adjust=False).mean()
+    macd = exp1 - exp2
+    signal = macd.ewm(span=9, adjust=False).mean()
+    indicators["macd"] = macd.iloc[-1]
+    indicators["macd_signal"] = signal.iloc[-1]
+    indicators["macd_hist"] = (macd - signal).iloc[-1]
+
+    std = closes.rolling(window=20).std().iloc[-1]
+    middle = closes.rolling(window=20).mean().iloc[-1]
+    indicators["bb_middle"] = middle
+    indicators["bb_upper"] = middle + 2 * std
+    indicators["bb_lower"] = middle - 2 * std
+
+    vwap = np.average(window, weights=volumes[max(0, idx - 50):idx + 1])
+    indicators["vwap"] = vwap
+
+    tr = pd.Series([max(closes.iloc[i] - closes.iloc[i-1], 0) for i in range(1, len(closes))])
+    indicators["atr_14"] = tr.rolling(window=14).mean().iloc[-1]
+
+    adx = RNG.uniform(10, 35)
+    indicators["adx_14"] = adx
+
+    for k in indicators:
+        indicators[k] = round(float(indicators[k]), 4)
+
+    return indicators
+
+
+def simulate_trade(day_idx, step_idx, prices, volumes, vix):
+    minute_cutoff = 60 * 5 * 10
     if len(prices) < minute_cutoff:
         return None
 
@@ -88,43 +121,26 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
     bars_1d = construct_bars(prices, volumes, len(prices))
 
     option_type = RNG.choice(["C", "P"])
-    start_idx = RNG.randint(minute_cutoff, len(prices) - 241)
-
-    is_swing = RNG.random() < 0.2
-    duration = RNG.randint(10, 60 if not is_swing else 240)
-    end_idx = start_idx + duration
-    if end_idx >= len(prices):
-        return None
-
+    start_idx = RNG.randint(minute_cutoff, len(prices) - 61)
     price_sig = prices[start_idx]
     strike = round(price_sig + RNG.uniform(-6, 6), 1)
     option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
 
-    confidence = random_confidence()
-    hour = (start_idx // 60) % 24
+    confidence = round(np.random.beta(5, 2), 2)
+    hour = RNG.randint(10, 15)
     atr = RNG.uniform(2, 6)
+    is_swing = RNG.random() < 0.25
 
-    indicators = compute_indicators(prices, volumes, start_idx)
-    bar_open = prices[start_idx]
-    bar_high = round(bar_open * (1 + RNG.uniform(0, 0.001)), 2)
-    bar_low = round(bar_open * (1 - RNG.uniform(0, 0.001)), 2)
-    volume = volumes[start_idx]
+    indicators = compute_all_indicators(prices, volumes, start_idx)
 
     feature_dict = {
         "confidence": confidence,
-        "hour": hour,
+        "setup_quality": RNG.uniform(0.6, 1.0),
         "vix": vix,
-        "atr": atr,
-        "open": bar_open,
-        "high": bar_high,
-        "low": bar_low,
-        "close": prices[start_idx],
-        "volume": volume,
-        "vwap": indicators["vwap"],
-        "ema_20": indicators["ema_20"],
-        "rsi_14": indicators["rsi_14"],
-        "regime_bull": 1 if vix < 18 else 0,
-        "regime_bear": 1 if vix >= 18 else 0,
+        "realized_vol": RNG.uniform(0.1, 0.6),
+        "trade_type": int(is_swing),
+        "total_signals_today": RNG.randint(1, 7),
+        **indicators
     }
 
     features_df = build_features_for_trade(feature_dict)
@@ -147,7 +163,7 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
         "entropy": entropy,
     }
 
-    entry_meta_state = build_meta_state_for_entry(
+    meta_entry = build_meta_state_for_entry(
         base_meta_state_dict,
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
@@ -155,38 +171,50 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
         data_1h={"bars": bars_1h},
         data_1d={"bars": bars_1d},
         confidence_score=confidence,
-        trade_type=int(is_swing)
+        trade_type=int(is_swing),
     )
 
-    action = meta_agent.act(entry_meta_state)
-    final_price = prices[end_idx]
-    trade_result = (final_price - bar_open) if option_type == "C" else (bar_open - final_price)
+    if meta_entry is None:
+        return None
 
+    action = meta_agent.act(meta_entry)
+    duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
+    if start_idx + duration >= len(prices):
+        return None
+
+    final_price = prices[start_idx + duration]
+    trade_result = (final_price - price_sig) if option_type == "C" else (price_sig - final_price)
     reward, shaped = compute_shaped_reward(trade_result, confidence)
 
     if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
         return None
 
-    exit_meta_state = build_meta_state_for_exit(
+    meta_exit = build_meta_state_for_exit(
         base_meta_state_dict,
-        data_1m={"bars": bars_1m[:end_idx+1]},
+        data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
         data_15m={"bars": bars_15m},
         data_1h={"bars": bars_1h},
         data_1d={"bars": bars_1d},
         confidence_score=confidence,
-        trade_type=int(is_swing)
+        trade_type=int(is_swing),
     )
 
-    log_entry = {
+    if meta_exit is None:
+        return None
+
+    log_training_example(feature_dict, trade_success_prob, predicted_direction, trade_result)
+
+    return {
         "timestamp": str(datetime.utcnow()),
         "day": day_idx,
         "trade_idx": step_idx,
         "option": option_sym,
         "strike": strike,
         "type": option_type,
-        "open_price": bar_open,
+        "open_price": price_sig,
         "final_price": final_price,
+        "duration": duration,
         "pnl": trade_result,
         "raw_reward": reward,
         "shaped_reward": shaped,
@@ -198,28 +226,26 @@ def simulate_trade(day_idx: int, step_idx: int, prices: list[float], volumes: li
             "entropy": entropy,
         },
         "meta_action": action,
-        "meta_state_entry": entry_meta_state.tolist(),
-        "meta_state_exit": exit_meta_state.tolist(),
+        "entry_state": meta_entry.tolist(),
+        "exit_state": meta_exit.tolist(),
     }
 
-    log_training_example(feature_dict, trade_success_prob, predicted_direction, trade_result)
-    return log_entry
 
 def main():
     if META_LOG_PATH.exists():
         META_LOG_PATH.unlink()
 
     for day in range(SIM_DAYS):
+        vix_shift = RNG.uniform(14, 28)
+        if RNG.random() < 0.08:
+            vix_shift += RNG.uniform(5, 15)
+
         prices = gbm_path(390, START_PRICE, GBM_MU, GBM_SIGMA, 1/390)
         volumes = [RNG.randint(300_000, 1_000_000) for _ in prices]
 
-        vix_spike = RNG.random() < 0.1
-        macro_shift = RNG.random() < 0.2
-        vix = RNG.uniform(22, 32) if vix_spike else RNG.uniform(14, 22)
-
         trades = []
         for trade_idx in range(TRADES_PER_DAY):
-            log_entry = simulate_trade(day, trade_idx, prices, volumes, vix, macro_shift)
+            log_entry = simulate_trade(day, trade_idx, prices, volumes, vix_shift)
             if log_entry:
                 trades.append(log_entry)
 
@@ -228,10 +254,11 @@ def main():
                 f.write(json.dumps(t) + "\n")
 
         if (day + 1) % 50 == 0:
-            logger.info(f"Simulated {day+1} days.")
+            logger.info(f"Simulated {day + 1} days.")
 
-    logger.info("Simulation complete.")
-    send_telegram_message("✅ Simulation finished and saved to meta_log.jsonl")
+    logger.info("✅ Simulation complete.")
+    send_telegram_message("✅ Simulation finished and saved to meta/meta_log.jsonl")
+
 
 if __name__ == "__main__":
     main()
