@@ -38,12 +38,12 @@ class DualHeadLSTM(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        out, _ = self.lstm(x.unsqueeze(1))              # Shape: (B, 1, lstm_hid)
-        h = self.dropout(out[:, -1, :])                  # Shape: (B, lstm_hid)
-        h = self.shared(h)                               # Shape: (B, hidden)
-        dir_logits = self.dir_head(h)                    # Shape: (B, 3)
-        conf = self.conf_head(h)                         # ✅ Keep shape (B, 1)
-        value = self.value_head(h)                       # ✅ Keep shape (B, 1)
+        out, _ = self.lstm(x.unsqueeze(1))              # (B, 1, lstm_hid)
+        h = self.dropout(out[:, -1, :])                  # (B, lstm_hid)
+        h = self.shared(h)                               # (B, hidden)
+        dir_logits = self.dir_head(h)                    # (B, 3)
+        conf = self.conf_head(h)                         # (B, 1)
+        value = self.value_head(h)                       # (B, 1)
         return dir_logits, conf, value
 
 
@@ -57,16 +57,18 @@ class PPOAgent:
                  conf_loss_w: float = 0.20,
                  entropy_coef_start: float = 1e-2,
                  target_entropy: Optional[float] = None,
-                 grad_clip_norm: float = 1.0):
+                 grad_clip_norm: float = 1.0,
+                 use_kl_conf_penalty: bool = True,
+                 kl_conf_coef: float = 0.01,
+                 overconfidence_penalty: float = 0.05):
         loaded = False
         if state_dim is None:
-            # ✅ FIXED: dynamically fetch correct state dim (was hardcoded 73)
             state_dim, _ = get_meta_agent_dims()
 
         self.net = DualHeadLSTM(state_dim)
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
 
-        self.entropy_coef = torch.tensor(entropy_coef_start)
+        self.entropy_coef = nn.Parameter(torch.tensor(entropy_coef_start))
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
@@ -74,25 +76,27 @@ class PPOAgent:
         self.grad_clip_norm = grad_clip_norm
         self.tgt_entropy = target_entropy if target_entropy is not None else -1.0
 
+        self.use_kl_conf_penalty = use_kl_conf_penalty
+        self.kl_conf_coef = kl_conf_coef
+        self.overconfidence_penalty = overconfidence_penalty
+
         if os.path.exists(META_MODEL_PATH):
             try:
                 ckpt = torch.load(META_MODEL_PATH, map_location="cpu")
                 self.net.load_state_dict(ckpt["net"])
                 self.optimizer.load_state_dict(ckpt["opt"])
                 ent_coef = ckpt.get("ent_coef", entropy_coef_start)
-                self.entropy_coef = torch.tensor(ent_coef)
+                self.entropy_coef = nn.Parameter(torch.tensor(ent_coef))
 
-                model_input_dim = self.net.state_dim
-                if model_input_dim != state_dim:
-                    logger.warning("⚠️ PPO model input dim mismatch: saved %d vs current %d → reinitializing fresh model.",
-                                   model_input_dim, state_dim)
+                if self.net.state_dim != state_dim:
+                    logger.warning("⚠️ PPO model input dim mismatch — reinitializing.")
                     self.net = DualHeadLSTM(state_dim)
                     self.optimizer = optim.Adam(self.net.parameters(), lr=lr)
                 else:
                     loaded = True
                     logger.info("📥 PPO model loaded.")
             except Exception as e:
-                logger.warning("⚠️ Failed to load PPO model due to error: %s — reinitializing.", str(e))
+                logger.warning("⚠️ Failed to load PPO model: %s — reinitializing.", str(e))
 
         if not loaded:
             logger.warning("⚠️ No saved PPO model found – starting fresh.")
@@ -137,12 +141,11 @@ class PPOAgent:
         dones: List[int],
         next_states: torch.Tensor,
         old_logp: Optional[torch.Tensor],
-        weights: Optional[torch.Tensor] = None
+        weights: Optional[torch.Tensor] = None,
+        prev_conf: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         device = next(self.net.parameters()).device
-
-        states = states.to(device)
-        next_states = next_states.to(device)
+        states, next_states = states.to(device), next_states.to(device)
         actions_dir = actions_dir.to(device)
         target_conf = target_conf.to(device)
 
@@ -167,12 +170,23 @@ class PPOAgent:
             old_logp = log_probs.detach()
 
         ratios = torch.exp(log_probs - old_logp)
-        surrogate1 = ratios * advantages
-        surrogate2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-        policy_loss = -torch.min(surrogate1, surrogate2)
+        surr1 = ratios * advantages
+        surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+        policy_loss = -torch.min(surr1, surr2)
 
+        # 🎯 Confidence loss (only for high-reward samples)
+        conf_mask = (rewards >= 0.0)
         conf_loss = nn.functional.mse_loss(conf_pred.squeeze(-1), target_conf, reduction="none")
-        value_loss = nn.functional.mse_loss(value_pred.squeeze(-1), returns, reduction="none")
+        conf_loss = conf_loss * conf_mask.to(conf_loss.dtype)
+
+        # ❗ Overconfidence penalty (penalize confident wrong trades)
+        overconf = conf_pred.squeeze(-1) * (returns < 0).float()
+        conf_loss += self.overconfidence_penalty * overconf
+
+        # 🧠 Value loss with Huber loss
+        value_loss = nn.functional.smooth_l1_loss(value_pred.squeeze(-1), returns, reduction="none")
+
+        # 🔥 Entropy loss
         entropy = dist.entropy()
         entropy_loss = -self.entropy_coef * entropy
 
@@ -183,11 +197,18 @@ class PPOAgent:
             entropy_loss
         )
 
+        # ✅ KL divergence penalty for confidence drift
+        if self.use_kl_conf_penalty and prev_conf is not None:
+            prev_conf = prev_conf.to(device)
+            kl_conf = nn.functional.mse_loss(conf_pred.detach(), prev_conf, reduction="none").squeeze(-1)
+            kl_penalty = self.kl_conf_coef * kl_conf
+            total_loss += kl_penalty
+
         total_loss = (total_loss * weights).mean()
 
         self.optimizer.zero_grad()
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
+        nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
 
         with torch.no_grad():
