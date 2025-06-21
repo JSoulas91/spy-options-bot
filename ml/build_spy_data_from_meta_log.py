@@ -6,6 +6,7 @@ from utils.logger import bot_logger
 from technical_analysis.indicators import calculate_indicators
 from datetime import datetime
 import shutil
+import math
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_CSV = Path("ml/spy_data.csv")
@@ -31,13 +32,24 @@ FEATURE_NAMES = [
     "atr_14",
     "adx_14",
     "regime_class",
+    "classifier_prob",
+    "classifier_pred_up",
+    "classifier_pred_down",
+    "classifier_pred_flat",
     "class_prob_0",
     "class_prob_1",
-    "class_prob_2"
+    "class_prob_2",
+    "classifier_entropy"
 ]
 
 def normalize(val, min_val, max_val):
+    if max_val == min_val:
+        return 0.0
     return max(0.0, min(1.0, (val - min_val) / (max_val - min_val)))
+
+def calc_entropy(probs: list[float]) -> float:
+    eps = 1e-8
+    return -sum(p * math.log(p + eps) for p in probs)
 
 def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     trade = entry.get("trade", {})
@@ -91,11 +103,20 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         vwap_value = safe_val("VWAP", fallback=close)
 
         regime_class = int(classifier.get("regime_class", 1))
+        regime_class = max(0, min(regime_class, 3))
+
         class_probs = classifier.get("class_probabilities", [])
-        if len(class_probs) != 3:
-            return None  # skip if classifier didn't run
+        classifier_prob = float(classifier.get("probability", 0.5))
+        classifier_pred = int(classifier.get("predicted_class", 1))
+        classifier_entropy = calc_entropy(class_probs) if len(class_probs) == 3 else 1.0
+
+        if len(class_probs) != 3 or classifier_pred not in (0, 1, 2):
+            return None
 
         prob_0, prob_1, prob_2 = map(float, class_probs)
+        pred_up = 1.0 if classifier_pred == 0 else 0.0
+        pred_down = 1.0 if classifier_pred == 1 else 0.0
+        pred_flat = 1.0 if classifier_pred == 2 else 0.0
 
         features = np.array([
             confidence,
@@ -116,9 +137,14 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             safe_val("ATR_14"),
             safe_val("ADX_14"),
             regime_class,
+            classifier_prob,
+            pred_up,
+            pred_down,
+            pred_flat,
             prob_0,
             prob_1,
-            prob_2
+            prob_2,
+            classifier_entropy
         ], dtype=np.float32)
 
         return features, label, timestamp
