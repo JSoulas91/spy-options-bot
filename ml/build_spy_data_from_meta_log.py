@@ -11,7 +11,6 @@ OUTPUT_CSV = Path("ml/spy_data.csv")
 MAX_ROWS = 30000
 
 FEATURE_NAMES = [
-    "pnl",
     "confidence",
     "setup_quality",
     "vix",
@@ -29,9 +28,6 @@ FEATURE_NAMES = [
     "vwap",
     "atr_14",
     "adx_14",
-    "trade_success_prob",
-    "predicted_direction",
-    "classifier_entropy",
     "regime_class",
     "class_prob_0",
     "class_prob_1",
@@ -49,7 +45,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     volume = bar.get("volume", 1.0)
 
     if None in (open_, high, low, close):
-        bot_logger.warning("[Feature Extract] Skipping entry: Missing OHLC data")
+        bot_logger.warning("[Feature Extract] Skipping entry: Missing OHLC")
         return None
 
     try:
@@ -65,13 +61,16 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
 
         def safe_val(name: str, fallback: float = 0.0):
             val = row.get(name)
-            if pd.isna(val):
-                bot_logger.debug(f"[Indicator] Missing {name}, using fallback={fallback}")
-                return fallback
-            return float(val)
+            return fallback if pd.isna(val) else float(val)
 
-        # Core features
         pnl = float(trade.get("pnl", 0.0))
+        if pnl < -2:
+            label = 0
+        elif pnl > 5:
+            label = 1
+        else:
+            return None  # Ambiguous case
+
         confidence = float(trade.get("confidence", 0.0))
         setup_quality = float(trade.get("setup_quality", 0.5))
         vix = float(market.get("vix", 20.0))
@@ -80,30 +79,13 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         total_signals_today = int(trade.get("total_signals_today", 0))
         vwap_value = safe_val("VWAP", fallback=close)
 
-        # Classifier features
-        trade_success_prob = float(classifier.get("trade_success_prob", 0.0))
-        predicted_direction = int(classifier.get("predicted_direction", -1))
-        classifier_entropy = float(classifier.get("entropy", 0.0))
-        regime_class = int(classifier.get("regime_class", 1))  # 0: bear, 1: neutral, 2: bull
-
+        regime_class = int(classifier.get("regime_class", 1))
         class_probs = classifier.get("class_probabilities", [0.0, 1.0, 0.0])
         prob_0 = float(class_probs[0]) if len(class_probs) > 0 else 0.0
         prob_1 = float(class_probs[1]) if len(class_probs) > 1 else 1.0
         prob_2 = float(class_probs[2]) if len(class_probs) > 2 else 0.0
 
-        # ✂️ Skip noisy samples
-        if abs(pnl) < 3:
-            return None
-        if classifier_entropy > 1.0:
-            return None
-        if confidence < 0.3:
-            return None
-
-        # ✅ Smart label
-        label = 1 if pnl > 10 and confidence > 0.5 and setup_quality > 0.5 else 0
-
         features = np.array([
-            pnl,
             confidence,
             setup_quality,
             vix,
@@ -111,7 +93,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             trade_type,
             total_signals_today,
             safe_val("EMA_20"),
-            safe_val("RSI_14", fallback=50.0),
+            safe_val("RSI_14", 50.0),
             safe_val("MACD"),
             safe_val("MACD_signal"),
             safe_val("MACD_hist"),
@@ -121,9 +103,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             vwap_value,
             safe_val("ATR_14"),
             safe_val("ADX_14"),
-            trade_success_prob,
-            predicted_direction,
-            classifier_entropy,
             regime_class,
             prob_0,
             prob_1,
@@ -133,17 +112,15 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         return features, label, timestamp
 
     except Exception as e:
-        bot_logger.warning(f"[Feature Extract] Skipping entry due to exception: {e}")
+        bot_logger.warning(f"[Feature Extract] Skipping entry due to error: {e}")
         return None
 
 def build_dataset():
     if not META_LOG_PATH.exists():
-        bot_logger.error(f"[Build Dataset] Log file not found: {META_LOG_PATH}")
+        bot_logger.error(f"[Build Dataset] File not found: {META_LOG_PATH}")
         return
 
     features, labels, timestamps = [], [], []
-    skipped = 0
-
     with META_LOG_PATH.open("r") as f:
         for line_num, line in enumerate(f, start=1):
             try:
@@ -154,14 +131,12 @@ def build_dataset():
                     features.append(feat)
                     labels.append(label)
                     timestamps.append(ts)
-                else:
-                    skipped += 1
             except json.JSONDecodeError:
-                skipped += 1
-                bot_logger.warning(f"[Build Dataset] Skipping malformed JSON at line {line_num}")
+                bot_logger.warning(f"[Build Dataset] Malformed JSON at line {line_num}")
+                continue
 
-    if len(features) == 0:
-        bot_logger.error("[Build Dataset] No valid entries found.")
+    if not features:
+        bot_logger.error("[Build Dataset] No valid features extracted.")
         return
 
     df_new = pd.DataFrame(features, columns=FEATURE_NAMES)
@@ -185,13 +160,4 @@ def build_dataset():
         timestamps=df_combined["timestamp"].values
     )
 
-    bot_logger.info(f"[Build Dataset] ✅ Appended {len(df_new)} new entries. Total rows: {len(df_combined)}")
-    bot_logger.info(f"[Build Dataset] Skipped {skipped} entries due to missing data or errors.")
-
-    # 🔍 Debug print summary
-    print(f"\n[Debug] Final dataset shape: {df_combined.shape}")
-    print(f"[Debug] Feature columns: {list(df_combined.columns)}")
-    print("[Debug] Sample rows:\n", df_combined.head(5))
-
-if __name__ == "__main__":
-    build_dataset()
+    bot_logger.info(f"[Build Dataset] ✅ Appended {len(df_new)} new, {len(df_combined)} total")
