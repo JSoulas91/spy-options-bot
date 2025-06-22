@@ -334,7 +334,7 @@ def main():
         if RNG.random() < 0.08:
             vix_shift += RNG.uniform(5, 15)
 
-        prices = gbm_path(390, START_PRICE, GBM_MU, GBM_SIGMA, 1/390)
+        prices = gbm_path(1000, START_PRICE, GBM_MU, GBM_SIGMA, 1/390)
         volumes = [RNG.randint(300_000, 1_000_000) for _ in prices]
 
         trades = []
