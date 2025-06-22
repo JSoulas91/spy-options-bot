@@ -335,16 +335,21 @@ def main():
         if RNG.random() < 0.08:
             vix_shift += RNG.uniform(5, 15)
 
-        prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1/390)
+        prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
         volumes = [RNG.randint(300_000, 1_000_000) for _ in prices]
 
         trades = []
         logger.debug(f"Day {day+1}: Starting simulation with VIX shift {vix_shift:.2f}")
+        successful_trades = 0
+
         for trade_idx in range(TRADES_PER_DAY):
             log_entry = simulate_trade(day, trade_idx, prices, volumes, vix_shift)
             if log_entry:
                 trades.append(log_entry)
-                logger.debug(f"Trade {trade_idx+1} generated: PnL={log_entry['pnl']}, duration={log_entry['duration']}")
+                successful_trades += 1
+                logger.debug(f"✅ Trade {trade_idx+1} generated: PnL={log_entry['pnl']}, duration={log_entry['duration']}")
+            else:
+                logger.debug(f"❌ Trade {trade_idx+1} skipped or failed (simulate_trade returned None)")
 
         if trades:
             with open(META_LOG_PATH, "a") as f:
@@ -353,6 +358,8 @@ def main():
             logger.debug(f"Day {day+1}: Logged {len(trades)} trades to {META_LOG_PATH}")
         else:
             logger.debug(f"Day {day+1}: No trades generated")
+
+        logger.info(f"Day {day+1}: {successful_trades}/{TRADES_PER_DAY} trades returned from simulate_trade()")
 
         if (day + 1) % 50 == 0:
             logger.info(f"Simulated {day + 1} days.")
