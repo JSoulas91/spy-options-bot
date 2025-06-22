@@ -126,21 +126,19 @@ def compute_all_indicators(prices, volumes, idx):
 
 def black_scholes_price(s, k, t, r, sigma, call=True):
     if t <= 0:
-        val = max(0.0, s - k) if call else max(0.0, k - s)
-        print(f"Black-Scholes early expiry: price={val}, s={s}, k={k}, t={t}")
-        return val
+        return max(0.0, s - k) if call else max(0.0, k - s)
     d1 = (math.log(s / k) + (r + 0.5 * sigma**2) * t) / (sigma * math.sqrt(t))
     d2 = d1 - sigma * math.sqrt(t)
     nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
     nd2 = 0.5 * (1 + math.erf(d2 / math.sqrt(2)))
-    price = s * nd1 - k * math.exp(-r * t) * nd2 if call else k * math.exp(-r * t) * (1 - nd2) - s * (1 - nd1)
-    print(f"Black-Scholes price computed: s={s}, k={k}, t={t}, price={price:.4f}")
-    return price
+    if call:
+        return s * nd1 - k * math.exp(-r * t) * nd2
+    else:
+        return k * math.exp(-r * t) * (1 - nd2) - s * (1 - nd1)
 
 
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     if len(prices) < 60 * 5 * 10:
-        print(f"Not enough prices to simulate trade at day {day_idx}, step {step_idx}")
         return None
 
     bars_1m = construct_bars(prices, volumes, 1)
@@ -164,7 +162,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         sigma=0.25,
         call=(option_type == "C")
     )
-    print(f"Simulate trade: day={day_idx}, step={step_idx}, option_type={option_type}, strike={strike}, option_price={option_price:.4f}")
 
     slippage = RNG.uniform(-0.5, 0.5) / 100
     fill_pct = RNG.uniform(0.7, 1.0)
@@ -189,7 +186,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "total_signals_today": RNG.randint(1, 7),
         **indicators
     }
-    print(f"Feature dict at start_idx={start_idx}: {feature_dict}")
 
     features_df = build_features_for_trade(feature_dict)
     trade_success_prob = float(model_inference.predict_proba(features_df)[0])
@@ -199,8 +195,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "failure": 1 - trade_success_prob
     }
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
-
-    print(f"Classifier outputs: prob={trade_success_prob:.4f}, predicted_direction={predicted_direction}, entropy={entropy:.4f}")
 
     base_meta_state_dict = {
         "confidence": confidence,
@@ -224,13 +218,11 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         trade_type=int(is_swing),
     )
     if meta_entry is None:
-        print(f"Meta entry state is None at day={day_idx}, step={step_idx}")
         return None
 
     action = meta_agent.act(meta_entry)
     duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
     if start_idx + duration >= len(prices):
-        print(f"Trade duration exceeds price length at day={day_idx}, step={step_idx}")
         return None
 
     final_price = prices[start_idx + duration]
@@ -242,13 +234,11 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         sigma=0.25,
         call=(option_type == "C")
     )
-    exit_price = round(new_option_price * (1 + slippage), 2)
 
+    exit_price = round(new_option_price * (1 + slippage), 2)
     gross_pnl = (exit_price - entry_price) * CONTRACT_MULTIPLIER * fill_pct
     total_commission = 2 * COMMISSION_PER_CONTRACT
     trade_result = gross_pnl - total_commission
-
-    print(f"Trade simulated: entry_price={entry_price}, exit_price={exit_price}, pnl={trade_result:.2f}")
 
     meta_exit = build_meta_state_for_exit(
         base_meta_state_dict,
@@ -261,7 +251,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         trade_type=int(is_swing),
     )
     if meta_exit is None:
-        print(f"Meta exit state is None at day={day_idx}, step={step_idx}")
         return None
 
     reward, shaped = reward_shaper.compute_shaped_reward(
@@ -276,10 +265,8 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         entry_price=price_sig,
         exit_quality=abs(trade_result) / atr
     )
-    print(f"Rewards computed: raw={reward:.4f}, shaped={shaped:.4f}")
 
     if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
-        print(f"Discarding trade due to low shaped reward {shaped:.4f}")
         return None
 
     log_training_example(feature_dict, trade_success_prob, predicted_direction, trade_result)
@@ -313,8 +300,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
 
 
 def main():
-    if META_LOG_PATH.exists():
-        META_LOG_PATH.unlink()
+    # Removed file deletion to preserve existing logs
 
     for day in range(SIM_DAYS):
         vix_shift = RNG.uniform(14, 28)
@@ -325,14 +311,20 @@ def main():
         volumes = [RNG.randint(300_000, 1_000_000) for _ in prices]
 
         trades = []
+        logger.debug(f"Day {day+1}: Starting simulation with VIX shift {vix_shift:.2f}")
         for trade_idx in range(TRADES_PER_DAY):
             log_entry = simulate_trade(day, trade_idx, prices, volumes, vix_shift)
             if log_entry:
                 trades.append(log_entry)
+                logger.debug(f"Trade {trade_idx+1} generated: PnL={log_entry['pnl']}, duration={log_entry['duration']}")
 
-        with open(META_LOG_PATH, "a") as f:
-            for t in trades:
-                f.write(json.dumps(t) + "\n")
+        if trades:
+            with open(META_LOG_PATH, "a") as f:
+                for t in trades:
+                    f.write(json.dumps(t) + "\n")
+            logger.debug(f"Day {day+1}: Logged {len(trades)} trades to {META_LOG_PATH}")
+        else:
+            logger.debug(f"Day {day+1}: No trades generated")
 
         if (day + 1) % 50 == 0:
             logger.info(f"Simulated {day + 1} days.")
