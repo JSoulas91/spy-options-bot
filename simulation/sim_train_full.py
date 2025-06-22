@@ -15,12 +15,13 @@ load_dotenv()
 from meta.meta_state import build_meta_state_for_entry, build_meta_state_for_exit
 from meta.meta_agent import MetaAgent
 from meta.reward_shaper import RewardShaper
-reward_shaper = RewardShaper()
 from utils.telegram_utils import send_telegram_message
 from utils.logger import bot_logger as logger
 from ml.logger import log_training_example
 from ml.model_inference import ModelInference
 from ml.feature_pipeline import build_features_for_trade
+
+reward_shaper = RewardShaper()
 
 # ───────── simulation params ───────────────
 SIM_DAYS = 500
@@ -241,7 +242,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     if meta_exit is None:
         return None
 
-    reward, shaped = compute_shaped_reward(
+    reward, shaped = reward_shaper.compute_shaped_reward(
         trade_result=trade_result,
         confidence=confidence,
         setup_quality=setup_quality,
