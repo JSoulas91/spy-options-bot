@@ -138,15 +138,15 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
 
 
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
-    if len(prices) < 60 * 5 * 10:
-        print("Not enough prices data to simulate trade.")
-        return None
-
+    #construct bars
     bars_1m = construct_bars(prices, volumes, 1)
     bars_5m = construct_bars(prices, volumes, 5)
     bars_15m = construct_bars(prices, volumes, 15)
     bars_1h = construct_bars(prices, volumes, 60)
     bars_1d = construct_bars(prices, volumes, len(prices))
+    
+    if any(len(b) < 30 for b in [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
+        return None
     print(f"Bars lengths — 1m: {len(bars_1m)}, 5m: {len(bars_5m)}, 15m: {len(bars_15m)}, 1h: {len(bars_1h)}, 1d: {len(bars_1d)}")
 
     option_type = RNG.choice(["C", "P"])
