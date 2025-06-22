@@ -32,4 +32,4 @@ def setup_logger(name: str, log_file: str, level=logging.INFO):
     return logger
 
 # Initialize rotating logger
-bot_logger = setup_logger('bot_logger', 'logs/bot.log')
+bot_logger = setup_logger('bot_logger', 'logs/bot.log', level=logging.DEBUG)
