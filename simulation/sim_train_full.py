@@ -64,8 +64,7 @@ def construct_bars(prices, volumes, interval):
     for i in range(0, len(prices) - interval + 1, interval):
         chunk = prices[i:i+interval]
         vol_chunk = volumes[i:i+interval]
-        if len(chunk) < interval:
-            continue
+
         bars.append({
             "open": chunk[0],
             "high": max(chunk),
@@ -74,8 +73,7 @@ def construct_bars(prices, volumes, interval):
             "volume": sum(vol_chunk)
         })
     
-    if bars:
-        return bars
+    return bars  # always return list, empty if no bars
 
 
 def compute_all_indicators(prices, volumes, idx):
