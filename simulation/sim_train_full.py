@@ -138,15 +138,21 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
 
 
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
-    #construct bars
+    # Ensure we have enough raw data to build all bars
+    if len(prices) < 1800:
+        return None
+
+    # Construct multi-timeframe bars
     bars_1m = construct_bars(prices, volumes, 1)
     bars_5m = construct_bars(prices, volumes, 5)
     bars_15m = construct_bars(prices, volumes, 15)
     bars_1h = construct_bars(prices, volumes, 60)
-    bars_1d = construct_bars(prices, volumes, len(prices))
-    
+    bars_1d = construct_bars(prices, volumes, len(prices))  # Daily bar (1 bar)
+
+    # Ensure each bar set has enough history for meta-state windows
     if any(len(b) < 30 for b in [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
         return None
+
     print(f"Bars lengths — 1m: {len(bars_1m)}, 5m: {len(bars_5m)}, 15m: {len(bars_15m)}, 1h: {len(bars_1h)}, 1d: {len(bars_1d)}")
 
     option_type = RNG.choice(["C", "P"])
