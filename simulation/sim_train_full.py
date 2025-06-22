@@ -39,6 +39,7 @@ CONTRACT_MULTIPLIER = 100  # Options multiplier
 meta_agent = MetaAgent()
 model_inference = ModelInference()
 
+print(f"SIM_DAYS={SIM_DAYS}, TRADES_PER_DAY={TRADES_PER_DAY}, START_PRICE={START_PRICE}")
 
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
@@ -46,11 +47,16 @@ def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
         shock = RNG.normalvariate(0, 1)
         s_t = prices[-1] * math.exp((mu - 0.5 * sigma**2) * dt + sigma * math.sqrt(dt) * shock)
         prices.append(round(s_t, 2))
+    print(f"GBM path generated with {n_steps} steps from {s0} starting price.")
+    print(f"First 5 prices: {prices[:5]}")
+    print(f"Last 5 prices: {prices[-5:]}")
     return prices
 
 
 def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
-    return f"SPY{day.strftime('%y%m%d')}{c_or_p}{int(strike*100):08d}"
+    symbol = f"SPY{day.strftime('%y%m%d')}{c_or_p}{int(strike*100):08d}"
+    print(f"Option symbol created: {symbol}")
+    return symbol
 
 
 def construct_bars(prices, volumes, interval):
@@ -67,6 +73,10 @@ def construct_bars(prices, volumes, interval):
             "close": chunk[-1],
             "volume": sum(vol_chunk)
         })
+    print(f"Constructed {len(bars)} bars from {len(prices)} prices with interval {interval}")
+    if bars:
+        print(f"First bar: {bars[0]}")
+        print(f"Last bar: {bars[-1]}")
     return bars
 
 
@@ -110,6 +120,7 @@ def compute_all_indicators(prices, volumes, idx):
     for k in indicators:
         indicators[k] = round(float(indicators[k]), 4)
 
+    print(f"Indicators at idx={idx}: {indicators}")
     return indicators
 
 
