@@ -73,11 +73,9 @@ def construct_bars(prices, volumes, interval):
             "close": chunk[-1],
             "volume": sum(vol_chunk)
         })
-    print(f"Constructed {len(bars)} bars from {len(prices)} prices with interval {interval}")
+    
     if bars:
-        print(f"First bar: {bars[0]}")
-        print(f"Last bar: {bars[-1]}")
-    return bars
+        return bars
 
 
 def compute_all_indicators(prices, volumes, idx):
