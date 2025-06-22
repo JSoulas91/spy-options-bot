@@ -14,7 +14,8 @@ load_dotenv()
 
 from meta.meta_state import build_meta_state_for_entry, build_meta_state_for_exit
 from meta.meta_agent import MetaAgent
-from meta.reward_shaper import compute_shaped_reward
+from meta.reward_shaper import RewardShaper
+reward_shaper = RewardShaper()
 from utils.telegram_utils import send_telegram_message
 from utils.logger import bot_logger as logger
 from ml.logger import log_training_example
