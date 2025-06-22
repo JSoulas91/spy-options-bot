@@ -138,28 +138,198 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
 
 
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
-    # --- Step 1: Construct multi-timeframe bars ---
+    # Ensure we have enough raw data to build all bars
+    if len(prices) < 1800:
+        return None
+
+    # Construct multi-timeframe bars
     bars_1m = construct_bars(prices, volumes, 1)
     bars_5m = construct_bars(prices, volumes, 5)
     bars_15m = construct_bars(prices, volumes, 15)
     bars_1h = construct_bars(prices, volumes, 60)
-    bars_1d = construct_bars(prices, volumes, len(prices))  # 1-day bar from all prices
+    bars_1d = construct_bars(prices, volumes, len(prices))  # Daily bar (1 bar)
 
-    # --- Step 2: Ensure minimum bar history ---
+    # Ensure each bar set has enough history for meta-state windows
     if any(len(b) < 30 for b in [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
         return None
 
-    # --- Step 3: Force a dummy trade ---
-    return {
-        "timestamp": f"day_{day_idx}_step_{step_idx}",
-        "pnl": RNG.uniform(-1, 1),
-        "duration": RNG.randint(1, 100),
-        "meta_state_entry": [0.5] * 100,
-        "meta_state_exit": [0.5] * 100,
-        "classifier_features": [0.1] * 20,
-        "trade_type": "call"
-    }
+    print(f"Bars lengths — 1m: {len(bars_1m)}, 5m: {len(bars_5m)}, 15m: {len(bars_15m)}, 1h: {len(bars_1h)}, 1d: {len(bars_1d)}")
 
+    option_type = RNG.choice(["C", "P"])
+    start_idx = RNG.randint(300, len(prices) - 61)
+    price_sig = prices[start_idx]
+    strike = round(price_sig + RNG.uniform(-6, 6), 1)
+    print(f"Option type: {option_type}, start_idx: {start_idx}, price_sig: {price_sig}, strike: {strike}")
+
+    expiry_days = RNG.randint(7, 30)
+    t_expiry = expiry_days / 365
+    option_price = black_scholes_price(
+        s=price_sig,
+        k=strike,
+        t=t_expiry,
+        r=0.01,
+        sigma=0.25,
+        call=(option_type == "C")
+    )
+    print(f"Expiry days: {expiry_days}, t_expiry: {t_expiry}, option_price: {option_price}")
+
+    slippage = RNG.uniform(-0.5, 0.5) / 100
+    fill_pct = RNG.uniform(0.7, 1.0)
+    print(f"Slippage: {slippage:.5f}, Fill percentage: {fill_pct:.2f}")
+
+    entry_price = round(option_price * (1 + slippage), 2)
+    option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
+    print(f"Entry price (with slippage): {entry_price}, Option symbol: {option_sym}")
+
+    confidence = round(np.random.beta(5, 2), 2)
+    hour = RNG.randint(10, 15)
+    atr = RNG.uniform(2, 6)
+    is_swing = RNG.random() < 0.25
+    print(f"Confidence: {confidence}, Hour: {hour}, ATR: {atr:.2f}, Is swing trade: {is_swing}")
+
+    indicators = compute_all_indicators(prices, volumes, start_idx)
+    print(f"Indicators at start_idx {start_idx}: {indicators}")
+
+    setup_quality = RNG.uniform(0.6, 1.0)
+    print(f"Setup quality: {setup_quality:.2f}")
+
+    feature_dict = {
+        "confidence": confidence,
+        "setup_quality": setup_quality,
+        "vix": vix,
+        "realized_vol": RNG.uniform(0.1, 0.6),
+        "trade_type": int(is_swing),
+        "total_signals_today": RNG.randint(1, 7),
+        **indicators
+    }
+    print(f"Feature dict keys: {list(feature_dict.keys())}")
+
+    features_df = build_features_for_trade(feature_dict)
+    print(f"Features DF head:\n{features_df.head()}")
+
+    trade_success_prob = float(model_inference.predict_proba(features_df)[0])
+    predicted_direction = int(model_inference.predict(features_df)[0])
+    class_probabilities = {
+        "success": trade_success_prob,
+        "failure": 1 - trade_success_prob
+    }
+    entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
+    print(f"Trade success prob: {trade_success_prob:.4f}, Predicted direction: {predicted_direction}, Entropy: {entropy:.4f}")
+
+    base_meta_state_dict = {
+        "confidence": confidence,
+        "vix": vix,
+        "hour": hour,
+        "is_swing": int(is_swing),
+        "atr": atr,
+        "trade_success_prob": trade_success_prob,
+        "predicted_direction": predicted_direction,
+        "entropy": entropy,
+    }
+    print(f"Base meta state dict: {base_meta_state_dict}")
+
+    meta_entry = build_meta_state_for_entry(
+        base_meta_state_dict,
+        data_1m={"bars": bars_1m},
+        data_5m={"bars": bars_5m},
+        data_15m={"bars": bars_15m},
+        data_1h={"bars": bars_1h},
+        data_1d={"bars": bars_1d},
+        confidence_score=confidence,
+        trade_type=int(is_swing),
+    )
+    print(f"Meta entry shape: {meta_entry.shape if meta_entry is not None else None}")
+    if meta_entry is None:
+        print("Meta entry is None, skipping trade.")
+        return None
+
+    action = meta_agent.act(meta_entry)
+    print(f"Meta agent action: {action}")
+
+    duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
+    print(f"Trade duration: {duration}")
+    if start_idx + duration >= len(prices):
+        print("Trade duration exceeds price length, skipping trade.")
+        return None
+
+    final_price = prices[start_idx + duration]
+    new_option_price = black_scholes_price(
+        s=final_price,
+        k=strike,
+        t=max(t_expiry - duration / 390 / 6.5 / 252, 0.01),
+        r=0.01,
+        sigma=0.25,
+        call=(option_type == "C")
+    )
+    print(f"Final price: {final_price}, New option price: {new_option_price}")
+
+    exit_price = round(new_option_price * (1 + slippage), 2)
+    gross_pnl = (exit_price - entry_price) * CONTRACT_MULTIPLIER * fill_pct
+    total_commission = 2 * COMMISSION_PER_CONTRACT
+    trade_result = gross_pnl - total_commission
+    print(f"Exit price (with slippage): {exit_price}, Gross PnL: {gross_pnl:.2f}, Trade result after commission: {trade_result:.2f}")
+
+    meta_exit = build_meta_state_for_exit(
+        base_meta_state_dict,
+        data_1m={"bars": bars_1m},
+        data_5m={"bars": bars_5m},
+        data_15m={"bars": bars_15m},
+        data_1h={"bars": bars_1h},
+        data_1d={"bars": bars_1d},
+        confidence_score=confidence,
+        trade_type=int(is_swing),
+    )
+    print(f"Meta exit shape: {meta_exit.shape if meta_exit is not None else None}")
+    if meta_exit is None:
+        print("Meta exit is None, skipping trade.")
+        return None
+
+    reward, shaped = reward_shaper.compute_shaped_reward(
+        trade_result=trade_result,
+        confidence=confidence,
+        setup_quality=setup_quality,
+        trade_success_prob=trade_success_prob,
+        is_swing=is_swing,
+        vix=vix,
+        predicted_direction=predicted_direction,
+        final_price=final_price,
+        entry_price=price_sig,
+        exit_quality=abs(trade_result) / atr
+    )
+    print(f"Computed reward: {reward:.4f}, Shaped reward: {shaped:.4f}")
+
+    if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
+        print("Shaped reward below threshold and discarded by garbage keep prob.")
+        return None
+
+    log_training_example(feature_dict, trade_success_prob, predicted_direction, trade_result)
+
+    return {
+        "timestamp": str(datetime.utcnow()),
+        "day": day_idx,
+        "trade_idx": step_idx,
+        "option": option_sym,
+        "strike": strike,
+        "type": option_type,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "final_price": final_price,
+        "fill_pct": round(fill_pct, 2),
+        "duration": duration,
+        "pnl": round(trade_result, 2),
+        "raw_reward": reward,
+        "shaped_reward": shaped,
+        "features": feature_dict,
+        "classifier": {
+            "prob": trade_success_prob,
+            "direction": predicted_direction,
+            "class_probabilities": class_probabilities,
+            "entropy": entropy,
+        },
+        "meta_action": action,
+        "entry_state": meta_entry.tolist(),
+        "exit_state": meta_exit.tolist(),
+    }
 
 def main():
     # Removed file deletion to preserve existing logs
