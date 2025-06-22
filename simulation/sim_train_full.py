@@ -31,6 +31,8 @@ START_PRICE = 450.0
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 RNG = random.Random(42)
 GARBAGE_KEEP_PROB = 0.05
+COMMISSION_PER_CONTRACT = 0.35
+CONTRACT_MULTIPLIER = 100  # Options multiplier
 
 meta_agent = MetaAgent()
 model_inference = ModelInference()
@@ -38,7 +40,7 @@ model_inference = ModelInference()
 
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
-    for i in range(1, n_steps):
+    for _ in range(1, n_steps):
         shock = RNG.normalvariate(0, 1)
         s_t = prices[-1] * math.exp((mu - 0.5 * sigma**2) * dt + sigma * math.sqrt(dt) * shock)
         prices.append(round(s_t, 2))
@@ -108,9 +110,22 @@ def compute_all_indicators(prices, volumes, idx):
 
     return indicators
 
+
+def black_scholes_price(s, k, t, r, sigma, call=True):
+    if t <= 0:
+        return max(0.0, s - k) if call else max(0.0, k - s)
+    d1 = (math.log(s / k) + (r + 0.5 * sigma**2) * t) / (sigma * math.sqrt(t))
+    d2 = d1 - sigma * math.sqrt(t)
+    nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
+    nd2 = 0.5 * (1 + math.erf(d2 / math.sqrt(2)))
+    if call:
+        return s * nd1 - k * math.exp(-r * t) * nd2
+    else:
+        return k * math.exp(-r * t) * (1 - nd2) - s * (1 - nd1)
+
+
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
-    minute_cutoff = 60 * 5 * 10
-    if len(prices) < minute_cutoff:
+    if len(prices) < 60 * 5 * 10:
         return None
 
     bars_1m = construct_bars(prices, volumes, 1)
@@ -120,9 +135,25 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     bars_1d = construct_bars(prices, volumes, len(prices))
 
     option_type = RNG.choice(["C", "P"])
-    start_idx = RNG.randint(minute_cutoff, len(prices) - 61)
+    start_idx = RNG.randint(300, len(prices) - 61)
     price_sig = prices[start_idx]
     strike = round(price_sig + RNG.uniform(-6, 6), 1)
+
+    expiry_days = RNG.randint(7, 30)
+    t_expiry = expiry_days / 365
+    option_price = black_scholes_price(
+        s=price_sig,
+        k=strike,
+        t=t_expiry,
+        r=0.01,
+        sigma=0.25,
+        call=(option_type == "C")
+    )
+
+    slippage = RNG.uniform(-0.5, 0.5) / 100
+    fill_pct = RNG.uniform(0.7, 1.0)
+
+    entry_price = round(option_price * (1 + slippage), 2)
     option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
 
     confidence = round(np.random.beta(5, 2), 2)
@@ -131,8 +162,8 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     is_swing = RNG.random() < 0.25
 
     indicators = compute_all_indicators(prices, volumes, start_idx)
-
     setup_quality = RNG.uniform(0.6, 1.0)
+
     feature_dict = {
         "confidence": confidence,
         "setup_quality": setup_quality,
@@ -182,7 +213,19 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         return None
 
     final_price = prices[start_idx + duration]
-    trade_result = (final_price - price_sig) if option_type == "C" else (price_sig - final_price)
+    new_option_price = black_scholes_price(
+        s=final_price,
+        k=strike,
+        t=max(t_expiry - duration / 390 / 6.5 / 252, 0.01),
+        r=0.01,
+        sigma=0.25,
+        call=(option_type == "C")
+    )
+
+    exit_price = round(new_option_price * (1 + slippage), 2)
+    gross_pnl = (exit_price - entry_price) * CONTRACT_MULTIPLIER * fill_pct
+    total_commission = 2 * COMMISSION_PER_CONTRACT
+    trade_result = gross_pnl - total_commission
 
     meta_exit = build_meta_state_for_exit(
         base_meta_state_dict,
@@ -222,10 +265,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "option": option_sym,
         "strike": strike,
         "type": option_type,
-        "open_price": price_sig,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
         "final_price": final_price,
+        "fill_pct": round(fill_pct, 2),
         "duration": duration,
-        "pnl": trade_result,
+        "pnl": round(trade_result, 2),
         "raw_reward": reward,
         "shaped_reward": shaped,
         "features": feature_dict,
