@@ -146,7 +146,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     bars_15m = construct_bars(prices, volumes, 15)
     bars_1h = construct_bars(prices, volumes, 60)
     bars_1d = construct_bars(prices, volumes, len(prices))
-
+    print(f"Bars lengths — 1m: {len(bars_1m)}, 5m: {len(bars_5m)}, 15m: {len(bars_15m)}, 1h: {len(bars_1h)}, 1d: {len(bars_1d)}")
     option_type = RNG.choice(["C", "P"])
     start_idx = RNG.randint(300, len(prices) - 61)
     price_sig = prices[start_idx]
@@ -175,6 +175,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     is_swing = RNG.random() < 0.25
 
     indicators = compute_all_indicators(prices, volumes, start_idx)
+    print(f"Indicators at start_idx {start_idx}: {indicators}")
     setup_quality = RNG.uniform(0.6, 1.0)
 
     feature_dict = {
