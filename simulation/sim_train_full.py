@@ -306,13 +306,19 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: shaped reward {shaped:.2f} below threshold")
         return None
     
-    print(f"classifier_features type: {type(classifier_features)}")
-    print(f"classifier_features value: {classifier_features}")
+    # Convert timestamp if needed before passing
+    ts = entry_bar['timestamp']
+    if isinstance(ts, (int, float)):
+        ts = datetime.fromtimestamp(ts)
+
+    print(f"Timestamp type before logging: {type(ts)}")
+    print(f"Timestamp value before logging: {ts}")
+
     log_training_example(
-    timestamp=entry_bar['timestamp'],
-    close=entry_bar['close'],
-    features=classifier_features,
-    label=trade_result
+        timestamp=ts,
+        close=entry_bar['close'],
+        features=classifier_features,
+        label=trade_result
     )
 
     return {
