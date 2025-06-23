@@ -226,7 +226,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: entry meta-state construction failed")
         return None
 
-    action = meta_agent.act(meta_entry)
+    # In simulate_trade(), after creating meta_entry:
+    action_idx, agent_conf = meta_agent.select_action(meta_entry)
+    action_details = meta_agent.interpret_action(action_idx, agent_conf)
+
+    # Optionally log:
+    logger.debug(f"[MetaAgent] Action {action_idx}, Confidence {agent_conf:.2f}, Details: {action_details}")
 
     duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
     if start_idx + duration >= len(prices):
