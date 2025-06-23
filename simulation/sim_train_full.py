@@ -144,15 +144,16 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient raw price history")
         return None
 
-    # Define the base start datetime for the simulation day, offset by day_idx
-    start_time = datetime(2025, 1, 1, 9, 30) + timedelta(days=day_idx)
+    # 12 trades/day → every 5 minutes
+    trade_minutes_offset = step_idx * 5
+    total_offset = timedelta(days=day_idx, minutes=trade_minutes_offset)
+    base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
-    # Pass start_time into each construct_bars call to ensure correct timestamps
-    bars_1m = construct_bars(prices, volumes, 1, start_time=start_time)
-    bars_5m = construct_bars(prices, volumes, 5, start_time=start_time)
-    bars_15m = construct_bars(prices, volumes, 15, start_time=start_time)
-    bars_1h = construct_bars(prices, volumes, 60, start_time=start_time)
-    bars_1d = construct_bars(prices, volumes, 390, start_time=start_time)  # full trading day
+    bars_1m = construct_bars(prices, volumes, 1, start_time=base_time)
+    bars_5m = construct_bars(prices, volumes, 5, start_time=base_time)
+    bars_15m = construct_bars(prices, volumes, 15, start_time=base_time)
+    bars_1h = construct_bars(prices, volumes, 60, start_time=base_time)
+    bars_1d = construct_bars(prices, volumes, 390, start_time=base_time)
 
     if len(bars_1m) < 60 or len(bars_5m) < 30 or len(bars_15m) < 20 or len(bars_1h) < 10 or len(bars_1d) < 5:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient multi-timeframe bars")
