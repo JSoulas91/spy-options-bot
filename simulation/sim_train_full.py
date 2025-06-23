@@ -214,7 +214,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     }
 
     meta_entry = build_meta_state_for_entry(
-        base_meta_state_dict,
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
         data_15m={"bars": bars_15m},
@@ -250,7 +249,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     trade_result = gross_pnl - total_commission
 
     meta_exit = build_meta_state_for_exit(
-        base_meta_state_dict,
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
         data_15m={"bars": bars_15m},
