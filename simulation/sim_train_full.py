@@ -308,7 +308,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         return None
     
     # Convert timestamp if needed before passing
-    ts = entry_bar['timestamp']
+    ts = entry_bar[0]
     if isinstance(ts, (int, float)):
         ts = datetime.fromtimestamp(ts)
 
