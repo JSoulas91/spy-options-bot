@@ -308,7 +308,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     
     print(f"classifier_features type: {type(classifier_features)}")
     print(f"classifier_features value: {classifier_features}")
-    log_training_example(classifier_features, trade_success_prob, predicted_direction, trade_result)
+    log_training_example(
+    timestamp=entry_bar['timestamp'],
+    close=entry_bar['close'],
+    features=classifier_features,
+    label=trade_result
+    )
 
     return {
         "timestamp": str(datetime.utcnow()),
