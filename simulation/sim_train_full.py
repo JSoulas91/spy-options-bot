@@ -286,7 +286,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "entropy": entropy
     },
     regime=regime
-)
+    )
 
     if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: shaped reward {shaped:.2f} below threshold")
