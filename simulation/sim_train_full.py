@@ -59,22 +59,27 @@ def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
     return symbol
 
 
-def construct_bars(prices, volumes, interval):
+def construct_bars(prices, volumes, interval, start_time=None):
+    if start_time is None:
+        # Simulate a market open time if not provided
+        start_time = datetime(2025, 1, 1, 9, 30)
+
     bars = []
     for i in range(0, len(prices) - interval + 1, interval):
-        chunk = prices[i:i+interval]
-        vol_chunk = volumes[i:i+interval]
+        chunk = prices[i:i + interval]
+        vol_chunk = volumes[i:i + interval]
+        bar_time = start_time + timedelta(minutes=i)
 
         bars.append({
-            "timestamp": i,
+            "timestamp": bar_time,
             "open": chunk[0],
             "high": max(chunk),
             "low": min(chunk),
             "close": chunk[-1],
             "volume": sum(vol_chunk)
         })
-    
-    return bars  # always return list, empty if no bars
+
+    return bars
 
 
 def compute_all_indicators(prices, volumes, idx):
@@ -139,11 +144,15 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient raw price history")
         return None
 
-    bars_1m = construct_bars(prices, volumes, 1)
-    bars_5m = construct_bars(prices, volumes, 5)
-    bars_15m = construct_bars(prices, volumes, 15)
-    bars_1h = construct_bars(prices, volumes, 60)
-    bars_1d = construct_bars(prices, volumes, 390)  # 1 bar per 390-minute trading day
+    # Define the base start datetime for the simulation day, offset by day_idx
+    start_time = datetime(2025, 1, 1, 9, 30) + timedelta(days=day_idx)
+
+    # Pass start_time into each construct_bars call to ensure correct timestamps
+    bars_1m = construct_bars(prices, volumes, 1, start_time=start_time)
+    bars_5m = construct_bars(prices, volumes, 5, start_time=start_time)
+    bars_15m = construct_bars(prices, volumes, 15, start_time=start_time)
+    bars_1h = construct_bars(prices, volumes, 60, start_time=start_time)
+    bars_1d = construct_bars(prices, volumes, 390, start_time=start_time)  # full trading day
 
     if len(bars_1m) < 60 or len(bars_5m) < 30 or len(bars_15m) < 20 or len(bars_1h) < 10 or len(bars_1d) < 5:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient multi-timeframe bars")
@@ -165,7 +174,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         sigma=0.25,
         call=(option_type == "C")
     )
-
+    
     slippage = RNG.uniform(-0.5, 0.5) / 100
     fill_pct = RNG.uniform(0.7, 1.0)
     entry_price = round(option_price * (1 + slippage), 2)
@@ -327,7 +336,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     )
 
     return {
-        "timestamp": str(datetime.utcnow()),
+        "timestamp": str(ts),
         "day": day_idx,
         "trade_idx": step_idx,
         "option": option_sym,
