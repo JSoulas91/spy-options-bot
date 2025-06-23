@@ -187,7 +187,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         **indicators
     }
 
-    features_df = build_features_for_trade(feature_dict)
+    features_df = build_features_for_trade(classifier_features)
 
     try:
         trade_success_prob = float(model_inference.predict_proba(features_df)[0])
