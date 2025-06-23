@@ -267,25 +267,25 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         return None
 
     reward = reward_shaper.compute_shaped_reward(
-    trade_result={
-        "pnl": trade_result,
-        "setup_quality": setup_quality,
-        "entry_quality": abs(trade_result) / atr,
-        "direction_correct": direction_correct,  # e.g. predicted vs actual direction
-        "trades_today": trades_today,
-        "was_successful": was_successful,
-        "risk_reward_ratio": risk_reward_ratio,
-        "time_to_target": time_to_target,
-        "max_drawdown": max_drawdown,
-        "exploration_bonus": exploration_bonus,
-        "skipped_strong_signal": skipped_strong_signal,
+        trade_result={
+            "pnl": trade_result,
+            "setup_quality": setup_quality,
+            "entry_quality": abs(trade_result) / atr,
+            "direction_correct": direction_correct,  # e.g. predicted vs actual direction
+            "trades_today": trades_today,
+            "was_successful": was_successful,
+            "risk_reward_ratio": risk_reward_ratio,
+            "time_to_target": time_to_target,
+            "max_drawdown": max_drawdown,
+            "exploration_bonus": exploration_bonus,
+            "skipped_strong_signal": skipped_strong_signal,
         # Add any other needed keys from the reward function
-    },
-    classifier_output={
-        "confidence": confidence,
-        "entropy": entropy
-    },
-    regime=regime
+        },
+        classifier_output={
+            "confidence": confidence,
+            "entropy": entropy
+        },
+        regime=regime
     )
 
     if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
