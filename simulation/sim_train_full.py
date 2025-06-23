@@ -272,6 +272,13 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     )
     
     trades_today = step_idx  # Number of trades so far in the current day
+    was_successful = trade_result > 0
+    risk_reward_ratio = abs(trade_result) / atr if atr > 0 else 1.0
+    time_to_target = duration
+    max_drawdown = RNG.uniform(0, abs(trade_result) * 0.3)
+    exploration_bonus = RNG.uniform(0, 0.2)
+    skipped_strong_signal = RNG.random() < 0.05
+    regime = "neutral"
     
     reward = reward_shaper.compute_shaped_reward(
         trade_result={
