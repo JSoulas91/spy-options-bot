@@ -150,7 +150,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
 
     option_type = RNG.choice(["C", "P"])
     start_idx = RNG.randint(300, len(prices) - 61)
-    entry_bar = bars_1m.iloc[start_idx]
+    entry_bar = bars_1m[start_idx]
     price_sig = prices[start_idx]
     strike = round(price_sig + RNG.uniform(-6, 6), 1)
 
