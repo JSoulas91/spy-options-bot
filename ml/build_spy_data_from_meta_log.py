@@ -39,7 +39,9 @@ FEATURE_NAMES = [
     "class_prob_0",
     "class_prob_1",
     "class_prob_2",
-    "classifier_entropy"
+    "classifier_entropy",
+    "agent_confidence",           # <-- NEW
+    "classifier_confidence"       # <-- NEW
 ]
 
 def normalize(val, min_val, max_val):
@@ -118,6 +120,10 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         pred_down = 1.0 if classifier_pred == 1 else 0.0
         pred_flat = 1.0 if classifier_pred == 2 else 0.0
 
+        # NEW: agent vs classifier confidence
+        agent_confidence = normalize(float(trade.get("confidence", 0.5)), 0.0, 1.0)
+        classifier_confidence = normalize(float(classifier.get("prob", 0.5)), 0.0, 1.0)
+
         features = np.array([
             confidence,
             setup_quality,
@@ -144,7 +150,9 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             prob_0,
             prob_1,
             prob_2,
-            classifier_entropy
+            classifier_entropy,
+            agent_confidence,
+            classifier_confidence
         ], dtype=np.float32)
 
         return features, label, timestamp
