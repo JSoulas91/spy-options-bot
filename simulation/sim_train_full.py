@@ -266,6 +266,11 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: exit meta-state construction failed")
         return None
 
+    direction_correct = (
+        (predicted_direction == "long" and final_price > entry_price) or
+        (predicted_direction == "short" and final_price < entry_price)
+    )
+    
     reward = reward_shaper.compute_shaped_reward(
         trade_result={
             "pnl": trade_result,
