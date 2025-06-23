@@ -142,11 +142,10 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     bars_5m = construct_bars(prices, volumes, 5)
     bars_15m = construct_bars(prices, volumes, 15)
     bars_1h = construct_bars(prices, volumes, 60)
-    bars_1d = construct_bars(prices, volumes, len(prices))  # Daily bar (1 bar)
-
-    if any(len(b) < 30 for b in [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient multi-timeframe bars")
-        return None
+    bars_1d = construct_bars(prices, volumes, 390)  # 1 bar per 390-minute trading day
+    if len(bars_1m) < 60 or len(bars_5m) < 30 or len(bars_15m) < 20 or len(bars_1h) < 10 or len(bars_1d) < 5:
+    logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient multi-timeframe bars")
+    return None
 
     option_type = RNG.choice(["C", "P"])
     start_idx = RNG.randint(300, len(prices) - 61)
