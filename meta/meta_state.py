@@ -15,6 +15,7 @@ from data.multi_timeframe_fetcher import (
 )
 from data.options_fetcher import get_quote as get_option_quote
 from config import MAX_POSITION_SIZE
+from config import MAX_POSITION_SIZE, STATE_SEQUENCE_LENGTH
 
 # ───────────────────────────────────────────────
 eastern = pytz.timezone("US/Eastern")
