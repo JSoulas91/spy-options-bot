@@ -66,6 +66,7 @@ def construct_bars(prices, volumes, interval):
         vol_chunk = volumes[i:i+interval]
 
         bars.append({
+            "timestamp": i,
             "open": chunk[0],
             "high": max(chunk),
             "low": min(chunk),
@@ -308,9 +309,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         return None
     
     # Convert timestamp if needed before passing
-    ts = entry_bar[0]
+    entry_bar = bars_1m[start_idx]
+    ts = entry_bar["timestamp"]
     if isinstance(ts, (int, float)):
         ts = datetime.fromtimestamp(ts)
+
+    close_val = entry_bar["close"]
 
     print(f"Timestamp type before logging: {type(ts)}")
     print(f"Timestamp value before logging: {ts}")
