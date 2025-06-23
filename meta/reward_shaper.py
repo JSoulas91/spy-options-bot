@@ -1,5 +1,3 @@
-# reward_shaper.py
-
 from __future__ import annotations
 import math
 import os
@@ -28,6 +26,7 @@ class RewardShaper:
                     "streak_bonus", "sharpe_boost", "drawdown_penalty", "entry_quality_bonus",
                     "rrr_bonus", "confidence_alignment", "setup_bonus", "exploration_bonus",
                     "trade_count_bonus", "missed_opportunity_penalty", "direction_bonus", "speed_bonus",
+                    "agent_confidence", "agent_conf_penalty", "agent_classifier_agreement",
                     "total_reward"
                 ])
 
@@ -36,7 +35,13 @@ class RewardShaper:
         self.win_streak = 0
         self.loss_streak = 0
 
-    def compute_shaped_reward(self, trade_result: dict, classifier_output: dict, regime: str):
+    def compute_shaped_reward(
+        self,
+        trade_result: dict,
+        classifier_output: dict,
+        regime: str,
+        agent_confidence: float = 0.5
+    ):
         pnl = trade_result.get("pnl", 0.0)
         duration = trade_result.get("duration", 1)
         was_successful = trade_result.get("was_successful", False)
@@ -100,15 +105,29 @@ class RewardShaper:
         direction_bonus = 0.4 if trade_result.get("direction_correct", None) is True else -0.4 if trade_result.get("direction_correct", None) is False else 0.0
         speed_bonus = 0.5 * math.exp(-trade_result.get("time_to_target", 30) / 20)
 
+        # NEW: Agent confidence shaping
+        agent_conf_penalty = 0.0
+        if agent_confidence > 0.8 and not was_successful:
+            agent_conf_penalty = -0.6
+        elif agent_confidence > 0.8 and was_successful:
+            agent_conf_penalty = 0.3
+
+        agent_classifier_agreement = 0.0
+        if agent_confidence > 0.75 and confidence > 0.75:
+            agent_classifier_agreement = 0.4 if was_successful else -0.4
+
+        # Total reward
         total_reward = (
             reward + classifier_shaping + regime_bonus + streak_bonus + sharpe_boost +
             risk_penalty + entry_timing_bonus + rrr_bonus + confidence_alignment_penalty +
             setup_bonus + exploration_bonus + trade_count_bonus +
-            missed_opportunity_penalty + direction_bonus + speed_bonus
+            missed_opportunity_penalty + direction_bonus + speed_bonus +
+            agent_conf_penalty + agent_classifier_agreement
         )
 
         total_reward = max(min(total_reward, 6), -6)
 
+        # Log to CSV
         if self.csv_log_path:
             with open(self.csv_log_path, "a", newline='') as f:
                 writer = csv.writer(f)
@@ -118,11 +137,13 @@ class RewardShaper:
                     streak_bonus, sharpe_boost, risk_penalty, entry_timing_bonus,
                     rrr_bonus, confidence_alignment_penalty, setup_bonus, exploration_bonus,
                     trade_count_bonus, missed_opportunity_penalty, direction_bonus, speed_bonus,
+                    agent_confidence, agent_conf_penalty, agent_classifier_agreement,
                     total_reward
                 ])
 
+        # Logging
         if abs(total_reward) > 4.5:
-            logger.info(f"⚡ High reward: {total_reward:.2f} → PNL={pnl:.2f}, conf={confidence:.2f}, rrr={rrr:.2f}")
+            logger.info(f"⚡ High reward: {total_reward:.2f} → PNL={pnl:.2f}, conf={confidence:.2f}, agent_conf={agent_confidence:.2f}, rrr={rrr:.2f}")
 
         if self.debug:
             logger.info(f"🔎 Reward components:")
@@ -135,6 +156,7 @@ class RewardShaper:
             logger.info(f"  setup_bonus={setup_bonus:.4f}, exploration_bonus={exploration_bonus:.4f}")
             logger.info(f"  trade_count_bonus={trade_count_bonus:.4f}, missed_opportunity_penalty={missed_opportunity_penalty:.4f}")
             logger.info(f"  direction_bonus={direction_bonus:.4f}, speed_bonus={speed_bonus:.4f}")
+            logger.info(f"  agent_conf_penalty={agent_conf_penalty:.4f}, agent_classifier_agreement={agent_classifier_agreement:.4f}")
             logger.info(f"  total_reward={total_reward:.4f}")
 
         return total_reward
