@@ -271,6 +271,8 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         (predicted_direction == "short" and final_price < entry_price)
     )
     
+    trades_today = step_idx  # Number of trades so far in the current day
+    
     reward = reward_shaper.compute_shaped_reward(
         trade_result={
             "pnl": trade_result,
