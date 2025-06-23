@@ -177,7 +177,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     indicators = compute_all_indicators(prices, volumes, start_idx)
     setup_quality = RNG.uniform(0.6, 1.0)
 
-    feature_dict = {
+    classifier_features = {
         "confidence": confidence,
         "setup_quality": setup_quality,
         "vix": vix,
@@ -306,7 +306,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: shaped reward {shaped:.2f} below threshold")
         return None
 
-    log_training_example(feature_dict, trade_success_prob, predicted_direction, trade_result)
+    log_training_example(classifier_features, trade_success_prob, predicted_direction, trade_result)
 
     return {
         "timestamp": str(datetime.utcnow()),
@@ -323,7 +323,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "pnl": round(trade_result, 2),
         "raw_reward": reward,
         "shaped_reward": shaped,
-        "features": feature_dict,
+        "features": classifier_features,
         "classifier": {
             "prob": trade_success_prob,
             "direction": predicted_direction,
