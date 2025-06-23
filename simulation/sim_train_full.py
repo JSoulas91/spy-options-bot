@@ -181,7 +181,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     entry_price = round(option_price * (1 + slippage), 2)
     option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
 
-    confidence = round(np.random.beta(5, 2), 2)
+    classifier_confidence = round(np.random.beta(5, 2), 2)
     hour = RNG.randint(10, 15)
     atr = RNG.uniform(2, 6)
     is_swing = RNG.random() < 0.25
@@ -314,8 +314,11 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         # Add any other needed keys from the reward function
         },
         classifier_output={
-            "confidence": confidence,
+            "confidence": classifier_confidence,
             "entropy": entropy
+        },
+        agent_output={
+        "confidence": agent_confidence
         },
         regime=regime
     )
@@ -364,6 +367,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
             "entropy": entropy,
         },
         "meta_action": action,
+        "agent_confidence": agent_confidence,
         "entry_state": meta_entry.tolist(),
         "exit_state": meta_exit.tolist(),
     }
