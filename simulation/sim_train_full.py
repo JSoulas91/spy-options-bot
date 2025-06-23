@@ -266,18 +266,27 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: exit meta-state construction failed")
         return None
 
-    reward, shaped = reward_shaper.compute_shaped_reward(
-        trade_result=trade_result,
-        confidence=confidence,
-        setup_quality=setup_quality,
-        trade_success_prob=trade_success_prob,
-        is_swing=is_swing,
-        vix=vix,
-        predicted_direction=predicted_direction,
-        final_price=final_price,
-        entry_price=price_sig,
-        exit_quality=abs(trade_result) / atr
-    )
+    reward = reward_shaper.compute_shaped_reward(
+    trade_result={
+        "pnl": trade_result,
+        "setup_quality": setup_quality,
+        "entry_quality": abs(trade_result) / atr,
+        "direction_correct": direction_correct,  # e.g. predicted vs actual direction
+        "trades_today": trades_today,
+        "was_successful": was_successful,
+        "risk_reward_ratio": risk_reward_ratio,
+        "time_to_target": time_to_target,
+        "max_drawdown": max_drawdown,
+        "exploration_bonus": exploration_bonus,
+        "skipped_strong_signal": skipped_strong_signal,
+        # Add any other needed keys from the reward function
+    },
+    classifier_output={
+        "confidence": confidence,
+        "entropy": entropy
+    },
+    regime=regime
+)
 
     if shaped < -2 and RNG.random() > GARBAGE_KEEP_PROB:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: shaped reward {shaped:.2f} below threshold")
