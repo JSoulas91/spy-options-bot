@@ -282,7 +282,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     skipped_strong_signal = RNG.random() < 0.05
     regime = "neutral"
     
-    reward = reward_shaper.compute_shaped_reward(
+    shaped_reward = reward_shaper.compute_shaped_reward(
         trade_result={
             "pnl": trade_result,
             "setup_quality": setup_quality,
