@@ -237,6 +237,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     if meta_entry is None:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: entry meta-state construction failed")
         return None
+        
+    action, agent_confidence, meta_info = meta_agent.act(meta_entry)
+    logger.debug(f"[MetaAgent] Action {action}, Confidence {confidence:.2f}, Details: {meta_info}")
+
+    if action == 0:
+        return None  # Meta-agent says no trade
 
     # In simulate_trade(), after creating meta_entry:
     action_idx, agent_conf = meta_agent.select_action(meta_entry)
