@@ -305,7 +305,9 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     if reward < -2 and RNG.random() > GARBAGE_KEEP_PROB:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: shaped reward {shaped:.2f} below threshold")
         return None
-
+    
+    print(f"classifier_features type: {type(classifier_features)}")
+    print(f"classifier_features value: {classifier_features}")
     log_training_example(classifier_features, trade_success_prob, predicted_direction, trade_result)
 
     return {
