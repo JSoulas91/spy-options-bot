@@ -340,7 +340,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "duration": duration,
         "pnl": round(trade_result, 2),
         "raw_reward": reward,
-        "shaped_reward": shaped,
+        "shaped_reward": shaped_reward,
         "features": classifier_features,
         "classifier": {
             "prob": trade_success_prob,
