@@ -306,7 +306,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     
     shaped_reward = reward_shaper.compute_shaped_reward(
         trade_result={
-            "pnl": trade_result,
+            "pct_pnl": trade_result,
             "setup_quality": setup_quality,
             "entry_quality": abs(trade_result) / atr,
             "direction_correct": direction_correct,  # e.g. predicted vs actual direction
