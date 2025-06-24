@@ -239,6 +239,28 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "predicted_direction": predicted_direction,
         "entropy": entropy,
     }
+    # Check bars type to debug iloc error
+    print("DEBUG: Checking types of bars before building meta state for entry:")
+    print(f"  bars_1m: {type(bars_1m)}")
+    print(f"  bars_5m: {type(bars_5m)}")
+    print(f"  bars_15m: {type(bars_15m)}")
+    print(f"  bars_1h: {type(bars_1h)}")
+    print(f"  bars_1d: {type(bars_1d)}")
+    
+    if not isinstance(bars_1m, pd.DataFrame):
+        print(f"  WARNING: bars_1m is NOT a DataFrame! Sample: {bars_1m[:3]}")
+    
+    if not isinstance(bars_5m, pd.DataFrame):
+        print(f"  WARNING: bars_5m is NOT a DataFrame! Sample: {bars_5m[:3]}")
+    
+    if not isinstance(bars_15m, pd.DataFrame):
+        print(f"  WARNING: bars_15m is NOT a DataFrame! Sample: {bars_15m[:3]}")
+    
+    if not isinstance(bars_1h, pd.DataFrame):
+        print(f"  WARNING: bars_1h is NOT a DataFrame! Sample: {bars_1h[:3]}")
+    
+    if not isinstance(bars_1d, pd.DataFrame):
+        print(f"  WARNING: bars_1d is NOT a DataFrame! Sample: {bars_1d[:3]}")
 
     meta_entry = build_meta_state_for_entry(
         data_1m=bars_1m,
