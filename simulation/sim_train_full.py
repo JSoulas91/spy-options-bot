@@ -331,7 +331,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         (predicted_direction == 0 and final_price < price_sig)
     )
     
-        trades_today = step_idx  # Number of trades so far in the current day
+    trades_today = step_idx  # Number of trades so far in the current day
     was_successful = trade_result > 0
     risk_reward_ratio = abs(trade_result) / atr if atr > 0 else 1.0
     time_to_target = duration
