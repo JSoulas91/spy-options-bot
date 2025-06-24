@@ -319,7 +319,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
             "entropy": entropy
         },
         regime=regime
-        agent_confidence=agent_confidence
+        agent_confidence=agent_confidence,
     )
 
     if shaped_reward < -2 and RNG.random() > GARBAGE_KEEP_PROB:
