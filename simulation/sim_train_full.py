@@ -223,32 +223,51 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     indicators = compute_all_indicators(prices, volumes, start_idx)
     setup_quality = RNG.uniform(0.6, 1.0)
 
+    # --- Build classifier feature vector ---
     classifier_features = {
-        "confidence": classifier_confidence,
-        "setup_quality": setup_quality,
-        "vix": vix,
-        "realized_vol": RNG.uniform(0.1, 0.6),
-        "trade_type": int(is_swing),
-        "total_signals_today": RNG.randint(1, 7),
-        **indicators
+        'confidence': confidence,
+        'setup_quality': setup_quality,
+        'vix': vix,
+        'realized_vol': realized_vol,
+        'trade_type': trade_type,
+        'total_signals_today': total_signals_today,
+        'ema_20': current_bar.get('ema_20', 0),
+        'rsi_14': current_bar.get('rsi_14', 50),
+        'macd': current_bar.get('macd', 0),
+        'macd_signal': current_bar.get('macd_signal', 0),
+        'macd_hist': current_bar.get('macd_hist', 0),
+        'bb_upper': current_bar.get('bb_upper', current_bar['close']),
+        'bb_middle': current_bar.get('bb_middle', current_bar['close']),
+        'bb_lower': current_bar.get('bb_lower', current_bar['close']),
+        'vwap': current_bar.get('vwap', current_bar['close']),
+        'atr_14': current_bar.get('atr_14', 1),
+        'adx_14': current_bar.get('adx_14', 20),
     }
 
+    # --- Ensure classifier_features is in the correct 2D DataFrame format ---
     features_df = build_features_for_trade(classifier_features)
-    
-    # Ensure it's always a 1-row DataFrame
-    if isinstance(features_df, dict):
-        features_df = pd.DataFrame([features_df])
-    elif isinstance(features_df, pd.Series):
-        features_df = features_df.to_frame().T
-    elif isinstance(features_df, np.ndarray) and features_df.ndim == 1:
-        features_df = features_df.reshape(1, -1)
-    
-    # Classifier inference with error handling
+
+    if not isinstance(features_df, pd.DataFrame):
+        try:
+            features_df = pd.DataFrame([classifier_features])
+        except Exception as e:
+            logger.debug(f"Failed to convert features to DataFrame: {e}")
+            return None
+
+    if features_df.shape[0] != 1:
+        logger.debug(f"Classifier features shape invalid: {features_df.shape}")
+        return None
+
+    # Optional: Debug print actual features and shape
+    logger.debug(f"Classifier features shape: {features_df.shape}")
+    logger.debug(f"Classifier features: {features_df.to_dict(orient='records')}")
+
+    # --- Run classifier prediction ---
     try:
-        trade_success_prob = float(model_inference.predict_proba(features_df)[0, 1])  # prob of positive class
-        predicted_direction = int(model_inference.predict(features_df)[0])
+        class_probs = classifier.predict_proba(features_df)[0]
+        predicted_class = np.argmax(class_probs)
     except Exception as e:
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: classifier prediction failed ({e})")
+        logger.debug(f"Classifier prediction failed: {e}")
         return None
 
     class_probabilities = {
