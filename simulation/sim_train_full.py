@@ -396,7 +396,7 @@ def main():
             if log_entry:
                 trades.append(log_entry)
                 successful_trades += 1
-                logger.debug(f"✅ Trade {trade_idx+1} generated: PnL={log_entry['pnl']}, duration={log_entry['duration']}")
+                logger.debug(f"✅ Trade {trade_idx+1} generated: PnL={log_entry['pct_pnl']}, duration={log_entry['duration']}")
             else:
                 logger.debug(f"❌ Trade {trade_idx+1} skipped or failed (simulate_trade returned None)")
 
