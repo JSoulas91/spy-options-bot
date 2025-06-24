@@ -148,7 +148,7 @@ class RewardShaper:
 
         # Logging
         if abs(total_reward) > 4.5:
-            logger.info(f"⚡ High reward: {total_reward:.2f} → PCT_PNL={pnl:.2f}, conf={confidence:.2f}, agent_conf={agent_confidence:.2f}, rrr={rrr:.2f}")
+            logger.info(f"⚡ High reward: {total_reward:.2f} → PCT_PNL={pct_pnl:.2f}, conf={confidence:.2f}, agent_conf={agent_confidence:.2f}, rrr={rrr:.2f}")
 
         if self.debug:
             logger.info(f"🔎 Reward components:")
