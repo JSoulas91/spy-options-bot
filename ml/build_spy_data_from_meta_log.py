@@ -82,10 +82,10 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             return fallback if pd.isna(val) else float(val)
 
         # Label based on PnL
-        pnl = float(trade.get("pnl", 0.0))
-        if pnl < -2:
+        pct_pnl = float(trade.get("pct_pnl", 0.0))
+        if pct_pnl < -2:
             label = 0
-        elif pnl > 5:
+        elif pct_pnl > 5:
             label = 1
         else:
             return None  # ambiguous
