@@ -40,7 +40,6 @@ class RewardShaper:
         trade_result: dict,
         classifier_output: dict,
         regime: str,
-        agent_confidence: float = 0.5
     ):
         pnl = trade_result.get("pnl", 0.0)
         duration = trade_result.get("duration", 1)
@@ -49,6 +48,8 @@ class RewardShaper:
         confidence = classifier_output.get("confidence", 0.5)
         entropy = classifier_output.get("entropy", 0.0)
 
+        agent_confidence = agent_output.get("confidence", 0.5)
+        
         # Base reward
         base_reward = np.tanh(pnl / 30.0)
         duration_penalty = -0.015 * math.log1p(duration)
