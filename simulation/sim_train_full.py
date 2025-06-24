@@ -275,11 +275,11 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         print(f"  WARNING: bars_1d is NOT a DataFrame! Sample: {bars_1d[:3]}")
 
     meta_entry = build_meta_state_for_entry(
-        data_1m=bars_1m,
-        data_5m=bars_5m,
-        data_15m=bars_15m,
-        data_1h=bars_1h,
-        data_1d=bars_1d,
+        data_1m={"bars":bars_1m}, 
+        data_5m={"bars":bars_5m}, 
+        data_15m={"bars":bars_15m}, 
+        data_1h={"bars":bars_1h},
+        data_1d={"bars":bars_1d},
         confidence_score=classifier_confidence,
         trade_type=int(is_swing),
         classifier_output={
@@ -334,11 +334,11 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     trade_result = pct_pnl
     
     meta_exit = build_meta_state_for_exit(
-        data_1m=bars_1m,
-        data_5m=bars_5m,
-        data_15m=bars_15m,
-        data_1h=bars_1h,
-        data_1d=bars_1d,
+        data_1m={"bars": bars_1m},
+        data_5m={"bars": bars_5m},
+        data_15m={"bars": bars_15m},
+        data_1h={"bars": bars_1h},
+        data_1d={"bars": bars_1d},
         confidence_score=agent_confidence,
         trade_type=int(is_swing),
     )
