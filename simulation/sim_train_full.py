@@ -318,7 +318,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
             "confidence": classifier_confidence,
             "entropy": entropy
         },
-        regime=regime
+        regime=regime,
         agent_confidence=agent_confidence,
     )
 
