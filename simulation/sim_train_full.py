@@ -214,15 +214,14 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     # Generate option symbol (date + strike + type)
     option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
 
-    # Generate classifier-related features
-    classifier_confidence = round(np.random.beta(5, 2), 2)
-    hour = RNG.randint(10, 15)
-    atr = RNG.uniform(2, 6)
-    is_swing = RNG.random() < 0.25
-
-    indicators = compute_all_indicators(prices, volumes, start_idx)
-    setup_quality = RNG.uniform(0.6, 1.0)
-
+   # --- Generate classifier-related simulated features ---
+    classifier_confidence = round(np.random.beta(5, 2), 2)  # ~0.7–1.0, skewed high
+    setup_quality = round(RNG.uniform(0.6, 1.0), 2)          # quality of setup
+    vix = round(RNG.uniform(15, 35), 2)                      # implied volatility
+    realized_vol = round(np.std(price_history[-20:]), 2) if len(price_history) >= 20 else 1.5
+    trade_type = random.choice([0, 1])                       # 0 = call, 1 = put
+    total_signals_today = RNG.randint(0, 10)                 # number of signals fired so far today
+    
     # --- Build classifier feature vector ---
     classifier_features = {
         'confidence': classifier_confidence,
@@ -231,17 +230,17 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         'realized_vol': realized_vol,
         'trade_type': trade_type,
         'total_signals_today': total_signals_today,
-        'ema_20': current_bar.get('ema_20', 0),
-        'rsi_14': current_bar.get('rsi_14', 50),
-        'macd': current_bar.get('macd', 0),
-        'macd_signal': current_bar.get('macd_signal', 0),
-        'macd_hist': current_bar.get('macd_hist', 0),
-        'bb_upper': current_bar.get('bb_upper', current_bar['close']),
-        'bb_middle': current_bar.get('bb_middle', current_bar['close']),
-        'bb_lower': current_bar.get('bb_lower', current_bar['close']),
-        'vwap': current_bar.get('vwap', current_bar['close']),
-        'atr_14': current_bar.get('atr_14', 1),
-        'adx_14': current_bar.get('adx_14', 20),
+        'ema_20': indicators['ema_20'],
+        'rsi_14': indicators['rsi_14'],
+        'macd': indicators['macd'],
+        'macd_signal': indicators['macd_signal'],
+        'macd_hist': indicators['macd_hist'],
+        'bb_upper': indicators['bb_upper'],
+        'bb_middle': indicators['bb_middle'],
+        'bb_lower': indicators['bb_lower'],
+        'vwap': indicators['vwap'],
+        'atr_14': indicators['atr_14'],
+        'adx_14': indicators['adx_14'],
     }
 
     # --- Ensure classifier_features is in the correct 2D DataFrame format ---
