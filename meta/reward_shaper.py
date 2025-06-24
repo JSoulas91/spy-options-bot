@@ -21,7 +21,7 @@ class RewardShaper:
             with open(self.csv_log_path, "w", newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "pnl", "base_reward", "duration_penalty", "conf", "entropy",
+                    "pct_pnl", "base_reward", "duration_penalty", "conf", "entropy",
                     "confidence_bonus", "entropy_penalty", "regime", "regime_bonus",
                     "streak_bonus", "sharpe_boost", "drawdown_penalty", "entry_quality_bonus",
                     "rrr_bonus", "confidence_alignment", "setup_bonus", "exploration_bonus",
@@ -42,7 +42,7 @@ class RewardShaper:
         regime: str,
         agent_confidence: float = 0.5
     ):
-        pnl = trade_result.get("pnl", 0.0)
+        pct_pnl = trade_result.get("pct_pnl", 0.0)
         duration = trade_result.get("duration", 1)
         was_successful = trade_result.get("was_successful", False)
 
@@ -50,7 +50,7 @@ class RewardShaper:
         entropy = classifier_output.get("entropy", 0.0)
         
         # Base reward
-        base_reward = np.tanh(pnl / 30.0)
+        base_reward = np.tanh(pct_pnl / 30.0)
         duration_penalty = -0.015 * math.log1p(duration)
         reward = base_reward + duration_penalty
 
@@ -91,7 +91,7 @@ class RewardShaper:
 
         # Advanced shaping
         drawdown = trade_result.get("max_drawdown", 0.0)
-        risk_penalty = -0.5 * (drawdown / (abs(pnl) + 5.0))  # clamped denom
+        risk_penalty = -0.5 * (drawdown / (abs(pct_pnl) + 5.0))  # clamped denom
         entry_timing_bonus = (trade_result.get("entry_quality", 0.5) - 0.5) * 1.5
         rrr = trade_result.get("risk_reward_ratio", 1.0)
         rrr_bonus = np.tanh(rrr - 1.0) * 0.8
@@ -137,7 +137,7 @@ class RewardShaper:
             with open(self.csv_log_path, "a", newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    pnl, base_reward, duration_penalty, confidence, entropy,
+                    pct_pnl, base_reward, duration_penalty, confidence, entropy,
                     confidence_bonus, entropy_penalty, regime, regime_bonus,
                     streak_bonus, sharpe_boost, risk_penalty, entry_timing_bonus,
                     rrr_bonus, confidence_alignment_penalty, setup_bonus, exploration_bonus,
@@ -148,7 +148,7 @@ class RewardShaper:
 
         # Logging
         if abs(total_reward) > 4.5:
-            logger.info(f"⚡ High reward: {total_reward:.2f} → PNL={pnl:.2f}, conf={confidence:.2f}, agent_conf={agent_confidence:.2f}, rrr={rrr:.2f}")
+            logger.info(f"⚡ High reward: {total_reward:.2f} → PCT_PNL={pnl:.2f}, conf={confidence:.2f}, agent_conf={agent_confidence:.2f}, rrr={rrr:.2f}")
 
         if self.debug:
             logger.info(f"🔎 Reward components:")
