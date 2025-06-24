@@ -160,7 +160,22 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         return None
 
     option_type = RNG.choice(["C", "P"])
-    start_idx = RNG.randint(300, len(prices) - 61)
+    
+    min_bars_needed = {
+        "1m": 60,
+        "5m": 30,
+        "15m": 20,
+        "1h": 10,
+        "1d": 5
+    }
+    required_lookback = max(
+        min_bars_needed["1m"],
+        min_bars_needed["5m"] * 5,
+        min_bars_needed["15m"] * 15,
+        min_bars_needed["1h"] * 60,
+        min_bars_needed["1d"] * 390
+    )
+    start_idx = RNG.randint(required_lookback, len(prices) - 61)
     entry_bar = bars_1m[start_idx]
     price_sig = prices[start_idx]
     strike = round(price_sig + RNG.uniform(-6, 6), 1)
