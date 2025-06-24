@@ -215,7 +215,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
 
     base_meta_state_dict = {
-        "confidence": confidence,
+        "confidence": classifier_confidence,
         "vix": vix,
         "hour": hour,
         "is_swing": int(is_swing),
