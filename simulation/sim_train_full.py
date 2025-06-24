@@ -234,7 +234,15 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     }
 
     features_df = build_features_for_trade(classifier_features)
-
+    
+    # Ensure it's always a 1-row DataFrame
+    if isinstance(features_df, dict):
+        features_df = pd.DataFrame([features_df])
+    elif isinstance(features_df, pd.Series):
+        features_df = features_df.to_frame().T
+    elif isinstance(features_df, np.ndarray) and features_df.ndim == 1:
+        features_df = features_df.reshape(1, -1)
+    
     # Classifier inference with error handling
     try:
         trade_success_prob = float(model_inference.predict_proba(features_df)[0, 1])  # prob of positive class
