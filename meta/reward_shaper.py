@@ -42,7 +42,6 @@ class RewardShaper:
         regime: str,
         agent_confidence: float = 0.5
     ):
-        
         pnl = trade_result.get("pnl", 0.0)
         duration = trade_result.get("duration", 1)
         was_successful = trade_result.get("was_successful", False)
