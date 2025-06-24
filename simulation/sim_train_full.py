@@ -225,7 +225,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
 
     # --- Build classifier feature vector ---
     classifier_features = {
-        'confidence': confidence,
+        'confidence': classifier_confidence,
         'setup_quality': setup_quality,
         'vix': vix,
         'realized_vol': realized_vol,
