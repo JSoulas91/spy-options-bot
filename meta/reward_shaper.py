@@ -55,7 +55,10 @@ class RewardShaper:
         reward = base_reward + duration_penalty
 
         # Classifier shaping
-        confidence_bonus = (confidence - 0.5) * 1.0
+        if was_successful and confidence > 0.55:
+            confidence_bonus = (confidence - 0.5) * 1.0
+        else:
+            confidence_bonus = 0.0
         entropy_penalty = -entropy * 0.4
         classifier_shaping = confidence_bonus + entropy_penalty
 
@@ -71,7 +74,7 @@ class RewardShaper:
         else:
             self.loss_streak += 1
             self.win_streak = 0
-            streak_bonus -= min(self.loss_streak, 3) * 0.3
+            streak_bonus -= min(self.loss_streak, 3) * 0.2  # softened penalty
 
         # Sharpe shaping
         self.reward_history.append(reward)
@@ -87,10 +90,12 @@ class RewardShaper:
                 sharpe_boost = 0.4 * (0.5 - sharpe)
 
         # Advanced shaping
-        risk_penalty = -0.5 * (trade_result.get("max_drawdown", 0.0) / (abs(pnl) + 1e-6))
+        drawdown = trade_result.get("max_drawdown", 0.0)
+        risk_penalty = -0.5 * (drawdown / (abs(pnl) + 5.0))  # clamped denom
         entry_timing_bonus = (trade_result.get("entry_quality", 0.5) - 0.5) * 1.5
         rrr = trade_result.get("risk_reward_ratio", 1.0)
         rrr_bonus = np.tanh(rrr - 1.0) * 0.8
+
         confidence_alignment_penalty = 0.0
         if confidence < 0.55 and was_successful:
             confidence_alignment_penalty = -0.3
@@ -105,7 +110,7 @@ class RewardShaper:
         direction_bonus = 0.4 if trade_result.get("direction_correct", None) is True else -0.4 if trade_result.get("direction_correct", None) is False else 0.0
         speed_bonus = 0.5 * math.exp(-trade_result.get("time_to_target", 30) / 20)
 
-        # NEW: Agent confidence shaping
+        # Agent confidence shaping
         agent_conf_penalty = 0.0
         if agent_confidence > 0.8 and not was_successful:
             agent_conf_penalty = -0.6
