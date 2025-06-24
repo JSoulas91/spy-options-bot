@@ -218,7 +218,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     classifier_confidence = round(np.random.beta(5, 2), 2)  # ~0.7–1.0, skewed high
     setup_quality = round(RNG.uniform(0.6, 1.0), 2)          # quality of setup
     vix = round(RNG.uniform(15, 35), 2)                      # implied volatility
-    realized_vol = round(np.std(price_history[-20:]), 2) if len(price_history) >= 20 else 1.5
+    realized_vol = round(np.std(prices[start_idx - 20:start_idx]), 2) if start_idx >= 20 else 1.5
     trade_type = random.choice([0, 1])                       # 0 = call, 1 = put
     total_signals_today = RNG.randint(0, 10)                 # number of signals fired so far today
     
