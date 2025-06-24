@@ -159,6 +159,13 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient multi-timeframe bars")
         return None
 
+    # Convert lists to DataFrames for meta-state functions that require .iloc
+    bars_1m = pd.DataFrame(bars_1m)
+    bars_5m = pd.DataFrame(bars_5m)
+    bars_15m = pd.DataFrame(bars_15m)
+    bars_1h = pd.DataFrame(bars_1h)
+    bars_1d = pd.DataFrame(bars_1d)
+    
     option_type = RNG.choice(["C", "P"])
     
     min_bars_needed = {
