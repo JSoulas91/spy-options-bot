@@ -156,12 +156,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     bars_1h = construct_bars(prices, volumes, 60, start_time=base_time)
     bars_1d = construct_bars(prices, volumes, 390, start_time=base_time)
 
-    # Ensure all bars are DataFrames
+    # Ensure all bars are lists of dictionaries (non-empty)
     for tf, bars in zip(["1m", "5m", "15m", "1h", "1d"], [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
-        if not isinstance(bars, pd.DataFrame):
-            logger.error(f"Bars for {tf} timeframe is not a DataFrame")
+        if not isinstance(bars, list):
+            logger.error(f"Bars for {tf} timeframe is not a list")
             return None
-        if bars.empty:
+        if len(bars) == 0:
             logger.debug(f"Skipping trade {step_idx} on day {day_idx}: empty bars_{tf}")
             return None
 
