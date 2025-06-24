@@ -154,7 +154,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     bars_15m = construct_bars(prices, volumes, 15, start_time=base_time)
     bars_1h = construct_bars(prices, volumes, 60, start_time=base_time)
     bars_1d = construct_bars(prices, volumes, 390, start_time=base_time)
-
+    for tf, bars in zip(["1m", "5m", "15m", "1h", "1d"], [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
+        if not isinstance(bars, pd.DataFrame):
+            print(f"[ERROR] bars_{tf} is not a DataFrame")
+        elif bars.empty:
+            print(f"[WARNING] bars_{tf} is empty")
+    
     if len(bars_1m) < 60 or len(bars_5m) < 30 or len(bars_15m) < 20 or len(bars_1h) < 10 or len(bars_1d) < 5:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient multi-timeframe bars")
         return None
