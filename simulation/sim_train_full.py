@@ -278,7 +278,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         data_15m={"bars": bars_15m},
         data_1h={"bars": bars_1h},
         data_1d={"bars": bars_1d},
-        confidence_score=confidence,
+        confidence_score=agent_confidence,
         trade_type=int(is_swing),
     )
     if meta_exit is None:
