@@ -233,6 +233,12 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         data_1d=bars_1d,
         confidence_score=classifier_confidence,
         trade_type=int(is_swing),
+        classifier_output={
+            "trade_success_prob": trade_success_prob,
+            "predicted_direction": predicted_direction,
+            "class_probabilities": class_probabilities,
+            "entropy": entropy
+        }
     )
     if meta_entry is None:
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: entry meta-state construction failed")
