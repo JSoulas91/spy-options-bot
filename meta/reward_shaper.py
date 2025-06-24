@@ -56,7 +56,7 @@ class RewardShaper:
 
         # Classifier shaping
         if was_successful and confidence > 0.55:
-            confidence_bonus = (confidence - 0.5) * 1.0
+            confidence_bonus = (confidence - 0.5) * 2.0
         else:
             confidence_bonus = 0.0
         entropy_penalty = -entropy * 0.4
@@ -105,7 +105,7 @@ class RewardShaper:
         setup_bonus = (trade_result.get("setup_quality", 0.5) - 0.5) * 1.0
         exploration_bonus = trade_result.get("exploration_bonus", 0.0)
         trades_today = trade_result.get("trades_today", 0)
-        trade_count_bonus = 0.2 if 2 <= trades_today <= 6 else -0.2 if trades_today == 0 or trades_today > 8 else 0.0
+        trade_count_bonus = 0.4 if 2 <= trades_today <= 6 else -0.2 if trades_today == 0 or trades_today > 8 else 0.0
         missed_opportunity_penalty = -0.5 if trade_result.get("skipped_strong_signal", False) else 0.0
         direction_bonus = 0.4 if trade_result.get("direction_correct", None) is True else -0.4 if trade_result.get("direction_correct", None) is False else 0.0
         speed_bonus = 0.5 * math.exp(-trade_result.get("time_to_target", 30) / 20)
