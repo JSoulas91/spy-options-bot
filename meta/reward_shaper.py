@@ -87,7 +87,7 @@ class RewardShaper:
             std_r = np.std(returns) + 1e-6
             sharpe = mean_r / std_r
             if sharpe < 0.5:
-                sharpe_boost = 0.4 * (0.5 - sharpe)
+                sharpe_boost = 0.8 * (0.5 - sharpe)
 
         # Advanced shaping
         drawdown = trade_result.get("max_drawdown", 0.0)
