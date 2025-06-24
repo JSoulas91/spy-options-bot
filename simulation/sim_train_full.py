@@ -361,7 +361,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         "final_price": final_price,
         "fill_pct": round(fill_pct, 2),
         "duration": duration,
-        "pnl": round(trade_result, 2),
+        "pct_pnl": round(trade_result, 2),
         "shaped_reward": shaped_reward,
         "features": classifier_features,
         "classifier": {
