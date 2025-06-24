@@ -190,7 +190,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     setup_quality = RNG.uniform(0.6, 1.0)
 
     classifier_features = {
-        "confidence": confidence,
+        "confidence": classifier_confidence,
         "setup_quality": setup_quality,
         "vix": vix,
         "realized_vol": RNG.uniform(0.1, 0.6),
