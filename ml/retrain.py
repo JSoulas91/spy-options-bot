@@ -33,8 +33,8 @@ FEATURE_NAMES = [
     "vwap",
     "atr_14",
     "adx_14",
-    "regime_class",
-    "class_prob_0",
+    "regime_class",      # from sim meta-state
+    "class_prob_0",      # from prior classifier inference
     "class_prob_1",
     "class_prob_2"
 ]
@@ -94,17 +94,16 @@ def retrain_model():
         joblib.dump(calibrator, calibrated_path)
         logger.info("[Save Model] Calibrated model saved")
 
-        # Evaluate accuracy
+        # Accuracy
         X_train, X_val, y_train, y_val = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
         acc_in = calibrator.score(X_train, y_train)
         acc_val = calibrator.score(X_val, y_val)
         logger.info(f"[Accuracy] In-sample: {acc_in:.4f}, Out-of-sample: {acc_val:.4f}")
 
-        # Save to accuracy log
         with open("models/accuracy_log.txt", "a") as f:
             f.write(f"{timestamp},in={acc_in:.4f},val={acc_val:.4f},pos={num_pos},neg={num_neg}\n")
 
-        # Feature importance
+        # Top features
         importances = xgb_model.feature_importances_
         top_feats = sorted(zip(X.columns, importances), key=lambda x: -x[1])
         logger.info("[Top Features]\n" + "\n".join(f"{f:<20}: {w:.4f}" for f, w in top_feats[:10]))
