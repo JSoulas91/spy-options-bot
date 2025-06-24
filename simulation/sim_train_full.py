@@ -240,7 +240,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         
     action, agent_confidence = meta_agent.select_action(meta_entry)
     meta_info = {}  # or some placeholder if needed downstream
-    logger.debug(f"[MetaAgent] Action {action}, Confidence {confidence:.2f}, Details: {meta_info}")
+    logger.debug(f"[MetaAgent] Action {action}, Confidence {agent_confidence:.2f}, Details: {meta_info}")
 
     if action == 0:
         return None  # Meta-agent says no trade
