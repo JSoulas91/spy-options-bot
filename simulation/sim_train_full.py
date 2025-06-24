@@ -270,8 +270,13 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     exit_price = round(new_option_price * (1 + slippage), 2)
     gross_pnl = (exit_price - entry_price) * CONTRACT_MULTIPLIER * fill_pct
     total_commission = 2 * COMMISSION_PER_CONTRACT
-    trade_result = gross_pnl - total_commission
+    raw_pnl = gross_pnl - total_commission
 
+    # ✅ Convert raw PnL to percentage return
+    initial_cost = entry_price * CONTRACT_MULTIPLIER * fill_pct + 1e-6  # avoid div by zero
+    pct_pnl = (raw_pnl / initial_cost) * 100  # percentage return
+    trade_result = pct_pnl
+    
     meta_exit = build_meta_state_for_exit(
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
