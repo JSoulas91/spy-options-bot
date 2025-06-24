@@ -252,7 +252,8 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         return None  # Meta-agent says no trade
 
     # In simulate_trade(), after creating meta_entry:
-    action_idx, agent_conf = meta_agent.select_action(meta_entry)
+    action_idx = action  # From earlier select_action() call
+    agent_conf = agent_confidence  # From earlier select_action() call
     action_details = meta_agent.interpret_action(action_idx, agent_conf)
 
     # Optionally log:
