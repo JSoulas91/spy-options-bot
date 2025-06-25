@@ -149,11 +149,11 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
     # Build multi-timeframe bars
-    bars_1m = construct_bars(prices, volumes, 1, start_time=base_time)
-    bars_5m = construct_bars(prices, volumes, 5, start_time=base_time)
-    bars_15m = construct_bars(prices, volumes, 15, start_time=base_time)
-    bars_1h = construct_bars(prices, volumes, 60, start_time=base_time)
-    bars_1d = construct_bars(prices, volumes, 390, start_time=base_time)
+    bars_1m = construct_bars(prices[bar_end - 60:bar_end], volumes[bar_end - 60:bar_end], 1, start_time=base_time - timedelta(minutes=59))
+    bars_5m = construct_bars(prices[bar_end - 150:bar_end], volumes[bar_end - 150:bar_end], 5, start_time=base_time - timedelta(minutes=145))
+    bars_15m = construct_bars(prices[bar_end - 300:bar_end], volumes[bar_end - 300:bar_end], 15, start_time=base_time - timedelta(minutes=285))
+    bars_1h = construct_bars(prices[bar_end - 600:bar_end], volumes[bar_end - 600:bar_end], 60, start_time=base_time - timedelta(minutes=540))
+    bars_1d = construct_bars(prices[bar_end - 1950:bar_end], volumes[bar_end - 1950:bar_end], 390, start_time=base_time - timedelta(days=4, minutes=30))
 
     # Validate bars
     required_bars = {"1m": 60, "5m": 30, "15m": 20, "1h": 10, "1d": 5}
