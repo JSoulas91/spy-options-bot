@@ -138,7 +138,9 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
     else:
         return k * math.exp(-r * t) * (1 - nd2) - s * (1 - nd1)
 
-
+def clean_bars(bars):
+    return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
+    
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     trade_minute = step_idx * 5 + 1  # Current minute (exclusive)
 
@@ -168,6 +170,13 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     bars_1h = construct_bars(prices[bar_end - 600:bar_end], volumes[bar_end - 600:bar_end], 60, start_time=base_time - timedelta(minutes=540))
     bars_1d = construct_bars(prices[bar_end - 1950:bar_end], volumes[bar_end - 1950:bar_end], 390, start_time=base_time - timedelta(days=4, minutes=30))
 
+  # 🧹 Clean bars before validation
+    bars_1m = clean_bars(bars_1m)
+    bars_5m = clean_bars(bars_5m)
+    bars_15m = clean_bars(bars_15m)
+    bars_1h = clean_bars(bars_1h)
+    bars_1d = clean_bars(bars_1d)
+    
     # Validate bars
     required_bars = {"1m": 60, "5m": 30, "15m": 20, "1h": 10, "1d": 5}
     for tf, bars in zip(required_bars, [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
