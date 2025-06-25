@@ -190,7 +190,7 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     is_swing = RNG.random() < 0.2  # random swing trade decision
 
     # --- Compute indicators from bars_1m
-    indicators = compute_all_indicators(bars_1m, volumes, idx)
+    indicators = compute_all_indicators(bars_1m, volumes, len(bars_1m) - 1)
 
     # --- Classifier features ---
     classifier_confidence = round(np.random.beta(5, 2), 2)
