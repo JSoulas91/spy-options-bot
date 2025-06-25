@@ -289,10 +289,18 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         'adx_14': indicators['adx_14'],
     }
 
+    # Build feature vector
     features_df = build_features_for_trade(classifier_features)
+    logger.debug(f"🛠️ Built features DataFrame: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
+
+    # Ensure it's a proper DataFrame
     if not isinstance(features_df, pd.DataFrame):
+        logger.debug("⚠️ build_features_for_trade returned non-DataFrame, coercing to DataFrame")
         features_df = pd.DataFrame([classifier_features])
+
+    # Validate expected shape
     if features_df.shape[0] != 1:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: features_df has invalid shape {features_df.shape}, expected (1, N)")
         return None
 
     try:
@@ -325,19 +333,29 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         }
     )
     if meta_entry is None:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: meta_entry is None (meta-state construction failed)")
         return None
-
+    
     action, agent_confidence = meta_agent.select_action(meta_entry)
+    logger.debug(f"🎯 Trade {trade_idx} on day {day}: Meta-agent selected action {action} with confidence {agent_confidence:.2f}")
+
     if action == 0:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Meta-agent chose to skip (action=0)")
         return None
 
     duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
+    logger.debug(f"📈 Trade {trade_idx} on day {day}: Duration={duration}, start_idx={start_idx}, total_prices={len(prices)}")
+
     if start_idx + duration >= len(prices):
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Not enough future bars for trade duration ({start_idx + duration} >= {len(prices)})")
         return None
+
     final_price = prices[start_idx + duration]
 
     minutes_per_year = 252 * 6.5 * 60
     time_left = max(t_expiry - (duration * 1) / minutes_per_year, 0.01)
+    logger.debug(f"⏳ Time left to expiry: {time_left:.4f} years")
+
     new_option_price = black_scholes_price(
         s=final_price,
         k=strike,
@@ -347,6 +365,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         call=(option_type == "C")
     )
     exit_price = round(new_option_price * (1 + slippage), 2)
+    logger.debug(f"💸 Exit option price (slippage-adjusted): {exit_price:.2f} | Final SPY: {final_price:.2f}")
 
     gross_pnl = (exit_price - entry_price) * CONTRACT_MULTIPLIER * fill_pct
     total_commission = 2 * COMMISSION_PER_CONTRACT
@@ -354,8 +373,11 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     initial_cost = entry_price * CONTRACT_MULTIPLIER * fill_pct + 1e-9
     pct_pnl = (raw_pnl / initial_cost) * 100
     trade_result = pct_pnl
+    logger.debug(f"📊 PnL: Gross={gross_pnl:.2f}, Raw={raw_pnl:.2f}, Pct={pct_pnl:.2f}%")
+    
     atr = indicators.get('atr_14', 1.0)
-
+    logger.debug(f"📐 ATR(14): {atr:.2f}")
+    
     meta_exit = build_meta_state_for_exit(
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
@@ -365,14 +387,17 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         confidence_score=agent_confidence,
         trade_type=int(is_swing),
     )
-    if meta_exit is None:
-        return None
 
+    if meta_exit is None:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: meta_exit is None")
+        return None
+    
     direction_correct = (
         (predicted_direction == 1 and final_price > price_sig) or
         (predicted_direction == 0 and final_price < price_sig)
     )
-
+    logger.debug(f"🎯 Direction predicted: {predicted_direction}, Correct: {direction_correct}")
+    
     shaped_reward = reward_shaper.compute_shaped_reward(
         trade_result={
             "pct_pnl": trade_result,
@@ -394,22 +419,26 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         regime="neutral",
         agent_confidence=agent_confidence,
     )
-
+    logger.debug(f"🏅 Shaped reward: {shaped_reward:.2f}")
+    
     if shaped_reward < -2 and RNG.random() > GARBAGE_KEEP_PROB:
+        logger.debug(f"🗑️ Skipping trade {trade_idx} on day {day}: shaped reward too low ({shaped_reward:.2f})")
         return None
-
+    
     entry_bar = bars_1m[start_idx]
     ts = entry_bar["timestamp"]
     if isinstance(ts, (int, float)):
         ts = datetime.fromtimestamp(ts)
-
+    
     log_training_example(
         timestamp=ts,
         close=entry_bar["close"],
         features=classifier_features,
         label=trade_result
     )
-
+    
+    logger.debug(f"✅ Logged trade {trade_idx} on day {day} | PnL: {trade_result:.2f}% | Option: {option_sym} | Duration: {duration}m")
+    
     return {
         "timestamp": str(ts),
         "day": day_idx,
