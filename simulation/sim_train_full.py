@@ -29,6 +29,7 @@ TRADES_PER_DAY = 12
 GBM_MU = 0.08
 GBM_SIGMA = 0.22
 START_PRICE = 450.0
+WARM_UP = 7
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 RNG = random.Random(42)
@@ -391,22 +392,38 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     }
 
 def main():
+    WARM_UP = 7  # Number of days to warm up history
+
+    all_prices = []
+    all_volumes = []
+    last_price = START_PRICE  # Start price for day 1
+
     # Removed file deletion to preserve existing logs
 
     for day in range(SIM_DAYS):
+        # Simulate one full day of 1-minute bars (390 minutes)
+        day_prices = gbm_path(390, last_price, GBM_MU, GBM_SIGMA, 1 / 390)
+        day_volumes = [RNG.randint(300_000, 1_000_000) for _ in day_prices]
+
+        last_price = day_prices[-1]  # Update last price for continuity
+        all_prices.extend(day_prices)
+        all_volumes.extend(day_volumes)
+
+        if day < WARM_UP:
+            logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
+            continue
+
+        # Inject VIX behavior for the day
         vix_shift = RNG.uniform(14, 28)
         if RNG.random() < 0.08:
             vix_shift += RNG.uniform(5, 15)
-
-        prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
-        volumes = [RNG.randint(300_000, 1_000_000) for _ in prices]
 
         trades = []
         logger.debug(f"Day {day+1}: Starting simulation with VIX shift {vix_shift:.2f}")
         successful_trades = 0
 
         for trade_idx in range(TRADES_PER_DAY):
-            log_entry = simulate_trade(day, trade_idx, prices, volumes, vix_shift)
+            log_entry = simulate_trade(day, trade_idx, all_prices, all_volumes, vix_shift)
             if log_entry:
                 trades.append(log_entry)
                 successful_trades += 1
