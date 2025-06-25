@@ -144,55 +144,31 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient raw price history")
         return None
 
-    # Calculate base time for this trade step (each trade every 5 minutes)
     trade_minutes_offset = step_idx * 5
     total_offset = timedelta(days=day_idx, minutes=trade_minutes_offset)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
-    # Construct multi-timeframe bars as DataFrames with timestamps and OHLCV columns
+    # Build multi-timeframe bars
     bars_1m = construct_bars(prices, volumes, 1, start_time=base_time)
     bars_5m = construct_bars(prices, volumes, 5, start_time=base_time)
     bars_15m = construct_bars(prices, volumes, 15, start_time=base_time)
     bars_1h = construct_bars(prices, volumes, 60, start_time=base_time)
     bars_1d = construct_bars(prices, volumes, 390, start_time=base_time)
 
-    # Ensure all bars are lists of dictionaries (non-empty)
-    for tf, bars in zip(["1m", "5m", "15m", "1h", "1d"], [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
-        if not isinstance(bars, list):
-            logger.error(f"Bars for {tf} timeframe is not a list")
-            return None
-        if len(bars) == 0:
-            logger.debug(f"Skipping trade {step_idx} on day {day_idx}: empty bars_{tf}")
-            return None
-
-    # Require minimum bars for lookback to build meta states
-    min_bars_needed = {
-        "1m": 60,
-        "5m": 30,
-        "15m": 20,
-        "1h": 10,
-        "1d": 5
-    }
-    for tf, bars in zip(min_bars_needed.keys(), [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
-        if len(bars) < min_bars_needed[tf]:
+    # Validate bars
+    required_bars = {"1m": 60, "5m": 30, "15m": 20, "1h": 10, "1d": 5}
+    for tf, bars in zip(required_bars, [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
+        if not isinstance(bars, list) or len(bars) < required_bars[tf]:
             logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient bars for {tf}")
             return None
 
-    # We want to pick start_idx safely so that indexing bars_1m[start_idx] works with lookbacks and durations
-    # Use 1m bars length as reference, avoid edge issues
-    max_start_idx = len(bars_1m) - 60  # allow duration up to 60 bars after start_idx safely
-    if max_start_idx <= min_bars_needed["1m"]:
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: not enough bars to select start_idx")
+    max_start_idx = len(bars_1m) - 60
+    if max_start_idx <= required_bars["1m"]:
         return None
 
-    # Pick start index uniformly between lookback and max_start_idx
-    start_idx = RNG.randint(min_bars_needed["1m"], max_start_idx)
-
-    # Get price signal and strike around start_idx
+    start_idx = RNG.randint(required_bars["1m"], max_start_idx)
     price_sig = prices[start_idx]
     strike = round(price_sig + RNG.uniform(-6, 6), 1)
-
-    # Random option type & expiry
     option_type = RNG.choice(["C", "P"])
     expiry_days = RNG.randint(7, 30)
     t_expiry = expiry_days / 365
@@ -206,23 +182,24 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         call=(option_type == "C")
     )
 
-    # Execution parameters
     slippage = RNG.uniform(-0.5, 0.5) / 100
     fill_pct = RNG.uniform(0.7, 1.0)
     entry_price = round(option_price * (1 + slippage), 2)
 
-    # Generate option symbol (date + strike + type)
     option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
+    is_swing = RNG.random() < 0.2  # random swing trade decision
 
-   # --- Generate classifier-related simulated features ---
-    classifier_confidence = round(np.random.beta(5, 2), 2)  # ~0.7–1.0, skewed high
-    setup_quality = round(RNG.uniform(0.6, 1.0), 2)          # quality of setup
-    vix = round(RNG.uniform(15, 35), 2)                      # implied volatility
+    # --- Compute indicators from bars_1m
+    indicators = compute_indicators(bars_1m)
+
+    # --- Classifier features ---
+    classifier_confidence = round(np.random.beta(5, 2), 2)
+    setup_quality = round(RNG.uniform(0.6, 1.0), 2)
+    vix = round(RNG.uniform(15, 35), 2)
     realized_vol = round(np.std(prices[start_idx - 20:start_idx]), 2) if start_idx >= 20 else 1.5
-    trade_type = random.choice([0, 1])                       # 0 = call, 1 = put
-    total_signals_today = RNG.randint(0, 10)                 # number of signals fired so far today
-    
-    # --- Build classifier feature vector ---
+    trade_type = 0 if option_type == "C" else 1
+    total_signals_today = RNG.randint(0, 10)
+
     classifier_features = {
         'confidence': classifier_confidence,
         'setup_quality': setup_quality,
@@ -243,28 +220,16 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         'adx_14': indicators['adx_14'],
     }
 
-    # --- Ensure classifier_features is in the correct 2D DataFrame format ---
     features_df = build_features_for_trade(classifier_features)
-
     if not isinstance(features_df, pd.DataFrame):
-        try:
-            features_df = pd.DataFrame([classifier_features])
-        except Exception as e:
-            logger.debug(f"Failed to convert features to DataFrame: {e}")
-            return None
-
+        features_df = pd.DataFrame([classifier_features])
     if features_df.shape[0] != 1:
-        logger.debug(f"Classifier features shape invalid: {features_df.shape}")
         return None
 
-    # Optional: Debug print actual features and shape
-    logger.debug(f"Classifier features shape: {features_df.shape}")
-    logger.debug(f"Classifier features: {features_df.to_dict(orient='records')}")
-
-    # --- Run classifier prediction ---
     try:
         class_probs = classifier.predict_proba(features_df)[0]
-        predicted_class = np.argmax(class_probs)
+        predicted_direction = int(np.argmax(class_probs))
+        trade_success_prob = float(class_probs[predicted_direction])
     except Exception as e:
         logger.debug(f"Classifier prediction failed: {e}")
         return None
@@ -275,7 +240,6 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     }
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
 
-    # Build meta state for entry
     meta_entry = build_meta_state_for_entry(
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
@@ -292,30 +256,19 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         }
     )
     if meta_entry is None:
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: entry meta-state construction failed")
         return None
 
     action, agent_confidence = meta_agent.select_action(meta_entry)
     if action == 0:
-        return None  # Meta-agent chooses no trade
-
-    # Interpret action details (optional logging)
-    action_details = meta_agent.interpret_action(action, agent_confidence)
-    logger.debug(f"[MetaAgent] Action {action}, Confidence {agent_confidence:.2f}, Details: {action_details}")
-
-    # Trade duration depends on swing or intraday
-    duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
-    if start_idx + duration >= len(prices):
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: trade duration {duration} exceeds price data length")
         return None
 
+    duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
+    if start_idx + duration >= len(prices):
+        return None
     final_price = prices[start_idx + duration]
 
-    # Recalculate option price at exit with updated time to expiry
-    # Approximate time decay: duration bars / bars per year (assumed 252 trading days * 6.5 hours * 60 minutes)
     minutes_per_year = 252 * 6.5 * 60
     time_left = max(t_expiry - (duration * 1) / minutes_per_year, 0.01)
-
     new_option_price = black_scholes_price(
         s=final_price,
         k=strike,
@@ -326,16 +279,14 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
     )
     exit_price = round(new_option_price * (1 + slippage), 2)
 
-    # PnL calculation with fill and commissions
     gross_pnl = (exit_price - entry_price) * CONTRACT_MULTIPLIER * fill_pct
     total_commission = 2 * COMMISSION_PER_CONTRACT
     raw_pnl = gross_pnl - total_commission
-
-    initial_cost = entry_price * CONTRACT_MULTIPLIER * fill_pct + 1e-9  # avoid div zero
+    initial_cost = entry_price * CONTRACT_MULTIPLIER * fill_pct + 1e-9
     pct_pnl = (raw_pnl / initial_cost) * 100
     trade_result = pct_pnl
+    atr = indicators.get('atr_14', 1.0)
 
-    # Build meta state for exit
     meta_exit = build_meta_state_for_exit(
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
@@ -346,67 +297,46 @@ def simulate_trade(day_idx, step_idx, prices, volumes, vix):
         trade_type=int(is_swing),
     )
     if meta_exit is None:
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: exit meta-state construction failed")
         return None
 
-    # Interpret predicted_direction as integer; let's define mapping:
-    # e.g., 1 = long, 0 = short (confirm your model's convention!)
-    # Here, assume predicted_direction==1 means expecting price rise (long)
     direction_correct = (
         (predicted_direction == 1 and final_price > price_sig) or
         (predicted_direction == 0 and final_price < price_sig)
     )
-    
-    trades_today = step_idx  # Number of trades so far in the current day
-    was_successful = trade_result > 0
-    risk_reward_ratio = abs(trade_result) / atr if atr > 0 else 1.0
-    time_to_target = duration
-    max_drawdown = RNG.uniform(0, abs(trade_result) * 0.3)
-    exploration_bonus = RNG.uniform(0, 0.2)
-    skipped_strong_signal = RNG.random() < 0.05
-    regime = "neutral"
-    
+
     shaped_reward = reward_shaper.compute_shaped_reward(
         trade_result={
             "pct_pnl": trade_result,
             "setup_quality": setup_quality,
             "entry_quality": abs(trade_result) / atr,
-            "direction_correct": direction_correct,  # e.g. predicted vs actual direction
-            "trades_today": trades_today,
-            "was_successful": was_successful,
-            "risk_reward_ratio": risk_reward_ratio,
-            "time_to_target": time_to_target,
-            "max_drawdown": max_drawdown,
-            "exploration_bonus": exploration_bonus,
-            "skipped_strong_signal": skipped_strong_signal,
-            # Add any other needed keys from the reward function
+            "direction_correct": direction_correct,
+            "trades_today": step_idx,
+            "was_successful": trade_result > 0,
+            "risk_reward_ratio": abs(trade_result) / atr,
+            "time_to_target": duration,
+            "max_drawdown": RNG.uniform(0, abs(trade_result) * 0.3),
+            "exploration_bonus": RNG.uniform(0, 0.2),
+            "skipped_strong_signal": RNG.random() < 0.05,
         },
         classifier_output={
             "confidence": classifier_confidence,
             "entropy": entropy
         },
-        regime=regime,
+        regime="neutral",
         agent_confidence=agent_confidence,
     )
 
     if shaped_reward < -2 and RNG.random() > GARBAGE_KEEP_PROB:
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: shaped reward {shaped_reward:.2f} below threshold")
         return None
-    
-    # Convert timestamp if needed before passing
+
     entry_bar = bars_1m[start_idx]
     ts = entry_bar["timestamp"]
     if isinstance(ts, (int, float)):
         ts = datetime.fromtimestamp(ts)
 
-    close_val = entry_bar["close"]
-
-    print(f"Timestamp type before logging: {type(ts)}")
-    print(f"Timestamp value before logging: {ts}")
-
     log_training_example(
         timestamp=ts,
-        close=close_val,
+        close=entry_bar["close"],
         features=classifier_features,
         label=trade_result
     )
