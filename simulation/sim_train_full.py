@@ -146,11 +146,6 @@ def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
 def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
-    closes = [bar["close"] for bar in bars_1m]
-    opens = [bar["open"] for bar in bars_1m]
-    highs = [bar["high"] for bar in bars_1m]
-    lows = [bar["low"] for bar in bars_1m]
-    volumes = volumes_1m
     
     if len(bars_1m) < 2000:
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars.")
@@ -223,6 +218,13 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         if not isinstance(bars, list) or len(bars) < required_bars[tf]:
             logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: insufficient bars for {tf}")
             return None
+            
+    # Extract OHLCV arrays from 1m bars for further use
+    closes_1m = [bar["close"] for bar in bars_1m]
+    opens_1m = [bar["open"] for bar in bars_1m]
+    highs_1m = [bar["high"] for bar in bars_1m]
+    lows_1m = [bar["low"] for bar in bars_1m]
+    volumes_1m = [bar["volume"] for bar in bars_1m]
 
     max_start_idx = len(bars_1m) - 60
     if max_start_idx <= required_bars["1m"]:
