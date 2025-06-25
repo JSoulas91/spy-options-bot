@@ -146,7 +146,15 @@ def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
 def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
-    trade_minute = start_idx * 5 + 1  # Current minute (exclusive)
+    # Make sure we have enough data to simulate a trade safely
+    if len(bars_1m) < 2000:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars.")
+        return None
+
+    # Choose a safe start index: skip first 60 minutes, leave 60 for exit
+    start_idx = RNG.randint(60, len(bars_1m) - 60)
+
+    trade_minute = start_idx  # 1m bars, so index == minute
 
     # Define raw data required for multi-timeframe indicators
     required_lookback = {
@@ -163,8 +171,8 @@ def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
         return None
 
     # Time offset logic
-    trade_minutes_offset = step_idx * 5
-    total_offset = timedelta(days=day_idx, minutes=trade_minutes_offset)
+    trade_minutes_offset = trade_minute
+    total_offset = timedelta(days=days, minutes=trade_minutes_offset)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
     # Build multi-timeframe bars
