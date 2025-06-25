@@ -231,8 +231,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"📏 max_start_idx = len(bars_1m) - 60 = {len(bars_1m)} - 60 = {max_start_idx}")
     logger.debug(f"🔍 required_bars['1m'] = {required_bars['1m']}")
 
-    if max_start_idx <= required_bars["1m"]:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: max_start_idx ({max_start_idx}) <= required_bars['1m'] ({required_bars['1m']})")
+    if max_start_idx < required_bars["1m"]:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: max_start_idx ({max_start_idx}) < required_bars['1m'] ({required_bars['1m']})")
         return None
 
     start_idx = RNG.randint(required_bars["1m"], max_start_idx)
