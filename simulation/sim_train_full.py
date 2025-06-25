@@ -140,10 +140,23 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
 
 
 def simulate_trade(day_idx, step_idx, prices, volumes, vix):
-    if len(prices) < 1800:
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient raw price history")
+    trade_minute = step_idx * 5 + 1  # Current minute (exclusive)
+
+    # Define raw data required for multi-timeframe indicators
+    required_lookback = {
+        "1m": 60,
+        "5m": 150,   # 5 * 30 bars of 5-min = 150 mins
+        "15m": 300,  # 15 * 20 bars
+        "1h": 600,   # 60 * 10 bars
+        "1d": 1950,  # 390 * 5 bars (5 days)
+    }
+
+    max_lookback = max(required_lookback.values())
+    if trade_minute < max_lookback:
+        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient lookback for multi-timeframe bars")
         return None
 
+    # Time offset logic
     trade_minutes_offset = step_idx * 5
     total_offset = timedelta(days=day_idx, minutes=trade_minutes_offset)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
