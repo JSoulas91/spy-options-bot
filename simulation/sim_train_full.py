@@ -146,81 +146,83 @@ def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
 def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
-    # Make sure we have enough data to simulate a trade safely
     if len(bars_1m) < 2000:
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars.")
         return None
 
-    # Choose a safe start index: skip first 60 minutes, leave 60 for exit
+    # Pick a safe trade entry point
     start_idx = RNG.randint(60, len(bars_1m) - 60)
+    trade_minute = start_idx
 
-    trade_minute = start_idx  # 1m bars, so index == minute
+    # ⛏️ Extract raw arrays
+    opens = [bar['open'] for bar in bars_1m]
+    highs = [bar['high'] for bar in bars_1m]
+    lows = [bar['low'] for bar in bars_1m]
+    closes = [bar['close'] for bar in bars_1m]
+    volumes = volumes_1m  # already aligned
 
-    # Define raw data required for multi-timeframe indicators
+    # Define required lookback for each timeframe
     required_lookback = {
         "1m": 60,
-        "5m": 150,   # 5 * 30 bars of 5-min = 150 mins
-        "15m": 300,  # 15 * 20 bars
-        "1h": 600,   # 60 * 10 bars
-        "1d": 1950,  # 390 * 5 bars (5 days)
+        "5m": 150,
+        "15m": 300,
+        "1h": 600,
+        "1d": 1950,
     }
 
     max_lookback = max(required_lookback.values())
     if trade_minute < max_lookback:
-        logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient lookback for multi-timeframe bars")
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: insufficient lookback for multi-timeframe bars.")
         return None
 
-    # Time offset logic
-    trade_minutes_offset = trade_minute
-    total_offset = timedelta(days=day, minutes=trade_minutes_offset)
+    # Time calculations
+    total_offset = timedelta(days=day, minutes=trade_minute)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
+    # 📊 Build multi-timeframe bars
     bars_1m = construct_bars(
-        prices[trade_minute - 60:trade_minute],
+        closes[trade_minute - 60:trade_minute],
         volumes[trade_minute - 60:trade_minute],
         1,
         start_time=base_time - timedelta(minutes=59)
     )
-
     bars_5m = construct_bars(
-        prices[trade_minute - 150:trade_minute],
+        closes[trade_minute - 150:trade_minute],
         volumes[trade_minute - 150:trade_minute],
         5,
         start_time=base_time - timedelta(minutes=145)
     )
-
     bars_15m = construct_bars(
-        prices[trade_minute - 300:trade_minute],
+        closes[trade_minute - 300:trade_minute],
         volumes[trade_minute - 300:trade_minute],
         15,
         start_time=base_time - timedelta(minutes=285)
     )
-
     bars_1h = construct_bars(
-        prices[trade_minute - 600:trade_minute],
+        closes[trade_minute - 600:trade_minute],
         volumes[trade_minute - 600:trade_minute],
         60,
         start_time=base_time - timedelta(minutes=540)
     )
-
     bars_1d = construct_bars(
-        prices[trade_minute - 1950:trade_minute],
+        closes[trade_minute - 1950:trade_minute],
         volumes[trade_minute - 1950:trade_minute],
         390,
         start_time=base_time - timedelta(days=4, minutes=30)
     )
-  # 🧹 Clean bars before validation
+
+    # 🧹 Clean bars before validation
     bars_1m = clean_bars(bars_1m)
     bars_5m = clean_bars(bars_5m)
     bars_15m = clean_bars(bars_15m)
     bars_1h = clean_bars(bars_1h)
     bars_1d = clean_bars(bars_1d)
-    
-    # Validate bars
+
+    # ✅ Validate all required bar lengths
     required_bars = {"1m": 60, "5m": 30, "15m": 20, "1h": 10, "1d": 5}
     for tf, bars in zip(required_bars, [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
         if not isinstance(bars, list) or len(bars) < required_bars[tf]:
-            logger.debug(f"Skipping trade {step_idx} on day {day_idx}: insufficient bars for {tf}")
+            logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: insufficient bars for {tf}")
             return None
 
     max_start_idx = len(bars_1m) - 60
