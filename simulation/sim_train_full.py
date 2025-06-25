@@ -152,7 +152,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         return None
 
     # Pick a safe trade entry point
-    start_idx = RNG.randint(60, len(bars_1m) - 60)
+    start_idx = RNG.randint(60, len(closes) - 60)
     trade_minute = start_idx
 
     # Define required lookback for each timeframe
