@@ -175,13 +175,40 @@ def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
     total_offset = timedelta(days=day, minutes=trade_minutes_offset)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
-    # Build multi-timeframe bars
-    bars_1m = construct_bars(prices[bar_end - 60:bar_end], volumes[bar_end - 60:bar_end], 1, start_time=base_time - timedelta(minutes=59))
-    bars_5m = construct_bars(prices[bar_end - 150:bar_end], volumes[bar_end - 150:bar_end], 5, start_time=base_time - timedelta(minutes=145))
-    bars_15m = construct_bars(prices[bar_end - 300:bar_end], volumes[bar_end - 300:bar_end], 15, start_time=base_time - timedelta(minutes=285))
-    bars_1h = construct_bars(prices[bar_end - 600:bar_end], volumes[bar_end - 600:bar_end], 60, start_time=base_time - timedelta(minutes=540))
-    bars_1d = construct_bars(prices[bar_end - 1950:bar_end], volumes[bar_end - 1950:bar_end], 390, start_time=base_time - timedelta(days=4, minutes=30))
+    bars_1m = construct_bars(
+        prices[trade_minute - 60:trade_minute],
+        volumes[trade_minute - 60:trade_minute],
+        1,
+        start_time=base_time - timedelta(minutes=59)
+    )
 
+    bars_5m = construct_bars(
+        prices[trade_minute - 150:trade_minute],
+        volumes[trade_minute - 150:trade_minute],
+        5,
+        start_time=base_time - timedelta(minutes=145)
+    )
+
+    bars_15m = construct_bars(
+        prices[trade_minute - 300:trade_minute],
+        volumes[trade_minute - 300:trade_minute],
+        15,
+        start_time=base_time - timedelta(minutes=285)
+    )
+
+    bars_1h = construct_bars(
+        prices[trade_minute - 600:trade_minute],
+        volumes[trade_minute - 600:trade_minute],
+        60,
+        start_time=base_time - timedelta(minutes=540)
+    )
+
+    bars_1d = construct_bars(
+        prices[trade_minute - 1950:trade_minute],
+        volumes[trade_minute - 1950:trade_minute],
+        390,
+        start_time=base_time - timedelta(days=4, minutes=30)
+    )
   # 🧹 Clean bars before validation
     bars_1m = clean_bars(bars_1m)
     bars_5m = clean_bars(bars_5m)
