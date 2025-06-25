@@ -394,7 +394,18 @@ def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
     }
 
 def main():
+    global ACCUMULATED_1M_BARS, ACCUMULATED_VOLUMES
+
     for day in range(SIM_DAYS):
+        # Skip first 7 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
+        if day < WARM_UP:
+            logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
+            daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
+            daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
+            ACCUMULATED_1M_BARS.extend(daily_prices)
+            ACCUMULATED_VOLUMES.extend(daily_volumes)
+            continue
+
         vix_shift = RNG.uniform(14, 28)
         if RNG.random() < 0.08:
             vix_shift += RNG.uniform(5, 15)
@@ -402,32 +413,15 @@ def main():
         daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
         daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
 
-        # Append today's data to global accumulated history
         ACCUMULATED_1M_BARS.extend(daily_prices)
         ACCUMULATED_VOLUMES.extend(daily_volumes)
-
-        # Skip until we have enough lookback
-        if day < WARM_UP_DAYS:
-            logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
-            continue
-
-        # Slice the latest N bars if needed to keep memory bounded
-        if len(ACCUMULATED_1M_BARS) > 390 * 30:  # ~30 days of bars
-            ACCUMULATED_1M_BARS = ACCUMULATED_1M_BARS[-390 * 30:]
-            ACCUMULATED_VOLUMES = ACCUMULATED_VOLUMES[-390 * 30:]
 
         trades = []
         logger.debug(f"Day {day+1}: Starting simulation with VIX shift {vix_shift:.2f}")
         successful_trades = 0
 
         for trade_idx in range(TRADES_PER_DAY):
-            log_entry = simulate_trade(
-                day,
-                trade_idx,
-                ACCUMULATED_1M_BARS,
-                ACCUMULATED_VOLUMES,
-                vix_shift
-            )
+            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_1M_BARS, ACCUMULATED_VOLUMES, vix_shift)
             if log_entry:
                 trades.append(log_entry)
                 successful_trades += 1
