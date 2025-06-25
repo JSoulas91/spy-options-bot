@@ -145,7 +145,7 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
 def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
-def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
+def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     closes = [bar["close"] for bar in bars_1m]
     opens = [bar["open"] for bar in bars_1m]
     highs = [bar["high"] for bar in bars_1m]
@@ -458,7 +458,7 @@ def main():
         successful_trades = 0
 
         for trade_idx in range(TRADES_PER_DAY):
-            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_1M_BARS, ACCUMULATED_VOLUMES, vix_shift)
+            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift)
             if log_entry:
                 trades.append(log_entry)
                 successful_trades += 1
