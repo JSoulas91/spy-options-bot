@@ -65,24 +65,39 @@ def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
 
 def construct_bars(prices, volumes, interval, start_time=None):
     if start_time is None:
-        # Simulate a market open time if not provided
         start_time = datetime(2025, 1, 1, 9, 30)
+
+    if len(prices) != len(volumes):
+        logger.debug(f"⚠️ construct_bars: length mismatch - prices={len(prices)}, volumes={len(volumes)}")
+        return []
+
+    if len(prices) < interval:
+        logger.debug(f"⚠️ construct_bars: not enough data to form one bar - len(prices)={len(prices)}, interval={interval}")
+        return []
 
     bars = []
     for i in range(0, len(prices) - interval + 1, interval):
         chunk = prices[i:i + interval]
         vol_chunk = volumes[i:i + interval]
+
+        if len(chunk) < interval or len(vol_chunk) < interval:
+            logger.debug(f"⚠️ construct_bars: incomplete chunk at i={i} - chunk_len={len(chunk)}, vol_len={len(vol_chunk)}")
+            continue
+
         bar_time = start_time + timedelta(minutes=i)
 
-        bars.append({
+        bar = {
             "timestamp": bar_time,
             "open": chunk[0],
             "high": max(chunk),
             "low": min(chunk),
             "close": chunk[-1],
             "volume": sum(vol_chunk)
-        })
+        }
 
+        bars.append(bar)
+
+    logger.debug(f"✅ construct_bars: constructed {len(bars)} bars at interval={interval}min starting from {start_time.strftime('%Y-%m-%d %H:%M')}")
     return bars
 
 
@@ -146,16 +161,16 @@ def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
 def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
-    
+    logger.debug(f"🚀 Starting simulate_trade | Day: {day}, Trade Index: {trade_idx}")
+
     if len(closes) < 2000:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars.")
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars (len(closes)={len(closes)})")
         return None
 
-    # Pick a safe trade entry point
     start_idx = RNG.randint(60, len(closes) - 60)
     trade_minute = start_idx
+    logger.debug(f"📍 Chosen trade_minute={trade_minute} (from index range 60 to {len(closes) - 60})")
 
-    # Define required lookback for each timeframe
     required_lookback = {
         "1m": 60,
         "5m": 150,
@@ -163,68 +178,53 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "1h": 600,
         "1d": 1950,
     }
-
     max_lookback = max(required_lookback.values())
+
     if trade_minute < max_lookback:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: insufficient lookback for multi-timeframe bars.")
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: trade_minute={trade_minute} < required max_lookback={max_lookback}")
         return None
 
-    # Time calculations
     total_offset = timedelta(days=day, minutes=trade_minute)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
-    # 📊 Build multi-timeframe bars
-    bars_1m = construct_bars(
-        closes[trade_minute - 60:trade_minute],
-        volumes[trade_minute - 60:trade_minute],
-        1,
-        start_time=base_time - timedelta(minutes=59)
-    )
-    bars_5m = construct_bars(
-        closes[trade_minute - 150:trade_minute],
-        volumes[trade_minute - 150:trade_minute],
-        5,
-        start_time=base_time - timedelta(minutes=145)
-    )
-    bars_15m = construct_bars(
-        closes[trade_minute - 300:trade_minute],
-        volumes[trade_minute - 300:trade_minute],
-        15,
-        start_time=base_time - timedelta(minutes=285)
-    )
-    bars_1h = construct_bars(
-        closes[trade_minute - 600:trade_minute],
-        volumes[trade_minute - 600:trade_minute],
-        60,
-        start_time=base_time - timedelta(minutes=540)
-    )
-    bars_1d = construct_bars(
-        closes[trade_minute - 1950:trade_minute],
-        volumes[trade_minute - 1950:trade_minute],
-        390,
-        start_time=base_time - timedelta(days=4, minutes=30)
-    )
+    try:
+        logger.debug(f"🔧 Constructing bars from closes[{trade_minute - 1950}:{trade_minute}]")
+        bars_1m = construct_bars(closes[trade_minute - 60:trade_minute], volumes[trade_minute - 60:trade_minute], 1, start_time=base_time - timedelta(minutes=59))
+        bars_5m = construct_bars(closes[trade_minute - 150:trade_minute], volumes[trade_minute - 150:trade_minute], 5, start_time=base_time - timedelta(minutes=145))
+        bars_15m = construct_bars(closes[trade_minute - 300:trade_minute], volumes[trade_minute - 300:trade_minute], 15, start_time=base_time - timedelta(minutes=285))
+        bars_1h = construct_bars(closes[trade_minute - 600:trade_minute], volumes[trade_minute - 600:trade_minute], 60, start_time=base_time - timedelta(minutes=540))
+        bars_1d = construct_bars(closes[trade_minute - 1950:trade_minute], volumes[trade_minute - 1950:trade_minute], 390, start_time=base_time - timedelta(days=4, minutes=30))
+    except Exception as e:
+        logger.exception(f"❌ Exception during bar construction: {e}")
+        return None
 
-    # 🧹 Clean bars before validation
+    # Clean bars
     bars_1m = clean_bars(bars_1m)
     bars_5m = clean_bars(bars_5m)
     bars_15m = clean_bars(bars_15m)
     bars_1h = clean_bars(bars_1h)
     bars_1d = clean_bars(bars_1d)
 
-    # ✅ Validate all required bar lengths
+    # Validate lengths
     required_bars = {"1m": 60, "5m": 30, "15m": 20, "1h": 10, "1d": 5}
     for tf, bars in zip(required_bars, [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
         if not isinstance(bars, list) or len(bars) < required_bars[tf]:
-            logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: insufficient bars for {tf}")
+            logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: only {len(bars)} bars for {tf} (required: {required_bars[tf]})")
             return None
+        logger.debug(f"✅ {tf} bars OK: {len(bars)}")
             
-    # Extract OHLCV arrays from 1m bars for further use
     closes_1m = [bar["close"] for bar in bars_1m]
     opens_1m = [bar["open"] for bar in bars_1m]
     highs_1m = [bar["high"] for bar in bars_1m]
     lows_1m = [bar["low"] for bar in bars_1m]
     volumes_1m = [bar["volume"] for bar in bars_1m]
+    
+    logger.debug(f"📊 Extracted OHLCV arrays from 1m bars:")
+    logger.debug(f"   • closes_1m[0:3]: {closes_1m[:3]} ... len={len(closes_1m)}")
+    logger.debug(f"   • opens_1m[0:3]: {opens_1m[:3]} ... len={len(opens_1m)}")
+    logger.debug(f"   • highs_1m[0:3]: {highs_1m[:3]} ... len={len(highs_1m)}")
+    logger.debug(f"   • lows_1m[0:3]: {lows_1m[:3]} ... len={len(lows_1m)}")
+    logger.debug(f"   • volumes_1m[0:3]: {volumes_1m[:3]} ... len={len(volumes_1m)}")
 
     max_start_idx = len(bars_1m) - 60
     if max_start_idx <= required_bars["1m"]:
