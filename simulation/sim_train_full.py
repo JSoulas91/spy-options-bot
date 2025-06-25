@@ -212,7 +212,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
             logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: only {len(bars)} bars for {tf} (required: {required_bars[tf]})")
             return None
         logger.debug(f"✅ {tf} bars OK: {len(bars)}")
-            
+        
+    #ohlcv construction
     closes_1m = [bar["close"] for bar in bars_1m]
     opens_1m = [bar["open"] for bar in bars_1m]
     highs_1m = [bar["high"] for bar in bars_1m]
@@ -227,7 +228,11 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"   • volumes_1m[0:3]: {volumes_1m[:3]} ... len={len(volumes_1m)}")
 
     max_start_idx = len(bars_1m) - 60
+    logger.debug(f"📏 max_start_idx = len(bars_1m) - 60 = {len(bars_1m)} - 60 = {max_start_idx}")
+    logger.debug(f"🔍 required_bars['1m'] = {required_bars['1m']}")
+
     if max_start_idx <= required_bars["1m"]:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: max_start_idx ({max_start_idx}) <= required_bars['1m'] ({required_bars['1m']})")
         return None
 
     start_idx = RNG.randint(required_bars["1m"], max_start_idx)
