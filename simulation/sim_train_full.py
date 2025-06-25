@@ -147,7 +147,7 @@ def clean_bars(bars):
     
 def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     
-    if len(bars_1m) < 2000:
+    if len(closes) < 2000:
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars.")
         return None
 
