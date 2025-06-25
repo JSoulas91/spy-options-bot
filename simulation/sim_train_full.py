@@ -154,13 +154,6 @@ def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
     start_idx = RNG.randint(60, len(bars_1m) - 60)
     trade_minute = start_idx
 
-    # ⛏️ Extract raw arrays
-    opens = [bar['open'] for bar in bars_1m]
-    highs = [bar['high'] for bar in bars_1m]
-    lows = [bar['low'] for bar in bars_1m]
-    closes = [bar['close'] for bar in bars_1m]
-    volumes = volumes_1m  # already aligned
-
     # Define required lookback for each timeframe
     required_lookback = {
         "1m": 60,
