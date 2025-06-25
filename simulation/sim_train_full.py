@@ -431,7 +431,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     }
 
 def main():
-    global ACCUMULATED_1M_BARS, ACCUMULATED_VOLUMES
+    global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
 
     for day in range(SIM_DAYS):
         # Skip first 7 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
@@ -439,7 +439,7 @@ def main():
             logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
             daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
-            ACCUMULATED_1M_BARS.extend(daily_prices)
+            ACCUMULATED_CLOSES.extend(daily_prices)
             ACCUMULATED_VOLUMES.extend(daily_volumes)
             continue
 
@@ -450,7 +450,7 @@ def main():
         daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
         daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
 
-        ACCUMULATED_1M_BARS.extend(daily_prices)
+        ACCUMULATED_CLOSES.extend(daily_prices)
         ACCUMULATED_VOLUMES.extend(daily_volumes)
 
         trades = []
