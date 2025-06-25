@@ -102,48 +102,94 @@ def construct_bars(prices, volumes, interval, start_time=None):
 
 
 def compute_all_indicators(prices, volumes, idx):
-    window = prices[max(0, idx - 50):idx + 1]
+    start_idx = max(0, idx - 50)
+    window = prices[start_idx:idx + 1]
+    vol_window = volumes[start_idx:idx + 1]
     closes = pd.Series(window)
+    
+    print(f"[DEBUG] idx={idx}, using window from {start_idx} to {idx} (length={len(window)})")
+    if len(window) < 20:
+        print(f"[WARNING] Not enough data for 20-period indicators at idx={idx}")
 
     indicators = {}
 
-    indicators["ema_20"] = closes.ewm(span=20).mean().iloc[-1]
+    # EMA 20
+    ema_20 = closes.ewm(span=20).mean().iloc[-1]
+    if pd.isna(ema_20):
+        print(f"[WARNING] EMA 20 is NaN at idx={idx}")
+    indicators["ema_20"] = ema_20
+
+    # RSI 14
     delta = closes.diff()
     up, down = delta.clip(lower=0), -delta.clip(upper=0)
     avg_gain = up.rolling(window=14).mean().iloc[-1]
     avg_loss = down.rolling(window=14).mean().iloc[-1]
-    rs = avg_gain / (avg_loss + 1e-6)
-    indicators["rsi_14"] = 100 - (100 / (1 + rs))
 
+    if avg_loss == 0:
+        print(f"[WARNING] avg_loss is zero at idx={idx}, adjusting to avoid div by zero")
+        avg_loss = 1e-6
+
+    rs = avg_gain / avg_loss
+    rsi_14 = 100 - (100 / (1 + rs))
+    if pd.isna(rsi_14):
+        print(f"[WARNING] RSI 14 is NaN at idx={idx}")
+    indicators["rsi_14"] = rsi_14
+
+    # MACD
     exp1 = closes.ewm(span=12, adjust=False).mean()
     exp2 = closes.ewm(span=26, adjust=False).mean()
     macd = exp1 - exp2
     signal = macd.ewm(span=9, adjust=False).mean()
+
+    if pd.isna(macd.iloc[-1]) or pd.isna(signal.iloc[-1]):
+        print(f"[WARNING] MACD or signal line is NaN at idx={idx}")
+
     indicators["macd"] = macd.iloc[-1]
     indicators["macd_signal"] = signal.iloc[-1]
     indicators["macd_hist"] = (macd - signal).iloc[-1]
 
+    # Bollinger Bands
     std = closes.rolling(window=20).std().iloc[-1]
     middle = closes.rolling(window=20).mean().iloc[-1]
+    if pd.isna(std) or pd.isna(middle):
+        print(f"[WARNING] Bollinger Bands std or middle is NaN at idx={idx}")
+
     indicators["bb_middle"] = middle
     indicators["bb_upper"] = middle + 2 * std
     indicators["bb_lower"] = middle - 2 * std
 
-    vwap = np.average(window, weights=volumes[max(0, idx - 50):idx + 1])
-    indicators["vwap"] = vwap
+    # VWAP
+    if len(window) != len(vol_window):
+        print(f"[ERROR] VWAP weights length mismatch at idx={idx}")
+    else:
+        vwap = np.average(window, weights=vol_window)
+        indicators["vwap"] = vwap
 
-    tr = pd.Series([max(closes.iloc[i] - closes.iloc[i-1], 0) for i in range(1, len(closes))])
-    indicators["atr_14"] = tr.rolling(window=14).mean().iloc[-1]
+    # ATR 14
+    tr_list = []
+    for i in range(1, len(closes)):
+        tr_value = max(closes.iloc[i] - closes.iloc[i - 1], 0)
+        tr_list.append(tr_value)
+    tr = pd.Series(tr_list)
+    atr_14 = tr.rolling(window=14).mean().iloc[-1]
+    if pd.isna(atr_14):
+        print(f"[WARNING] ATR 14 is NaN at idx={idx}")
+    indicators["atr_14"] = atr_14
 
+    # ADX (simulated)
     adx = RNG.uniform(10, 35)
     indicators["adx_14"] = adx
 
+    # Round and print final indicators
     for k in indicators:
-        indicators[k] = round(float(indicators[k]), 4)
+        try:
+            indicators[k] = round(float(indicators[k]), 4)
+        except Exception as e:
+            print(f"[ERROR] Rounding indicator '{k}' failed at idx={idx} with error: {e}")
+            indicators[k] = None
 
-    print(f"Indicators at idx={idx}: {indicators}")
+    print(f"[INFO] Indicators at idx={idx}: {indicators}")
     return indicators
-
 
 def black_scholes_price(s, k, t, r, sigma, call=True):
     if t <= 0:
