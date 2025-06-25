@@ -146,6 +146,12 @@ def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
 def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
+    closes = [bar["close"] for bar in bars_1m]
+    opens = [bar["open"] for bar in bars_1m]
+    highs = [bar["high"] for bar in bars_1m]
+    lows = [bar["low"] for bar in bars_1m]
+    volumes = volumes_1m
+    
     if len(bars_1m) < 2000:
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars.")
         return None
