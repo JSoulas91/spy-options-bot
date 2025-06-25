@@ -292,8 +292,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         )
         return None
     
-    start_idx = RNG.randint(required_bars["1m"], max_start_idx)
-    logger.debug(f"Selected start_idx={start_idx} within [{required_bars['1m']}, {max_start_idx}]")
+    start_idx = RNG.randint(0, max_start_idx)
+    logger.debug(f"Selected start_idx={start_idx} within [0, {max_start_idx}]")
     
     price_sig = prices[start_idx]
     logger.debug(f"Price signal at start_idx={start_idx} is {price_sig}")
