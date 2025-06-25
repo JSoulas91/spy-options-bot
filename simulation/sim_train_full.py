@@ -146,7 +146,7 @@ def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
 def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
-    trade_minute = step_idx * 5 + 1  # Current minute (exclusive)
+    trade_minute = start_idx * 5 + 1  # Current minute (exclusive)
 
     # Define raw data required for multi-timeframe indicators
     required_lookback = {
