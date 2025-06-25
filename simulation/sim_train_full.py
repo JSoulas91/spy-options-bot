@@ -399,7 +399,7 @@ def main():
 
     for day in range(SIM_DAYS):
         # Skip first 7 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
-        if day < WARM_UP:
+        if day < WARM_UP_DAYS:
             logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
             daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
