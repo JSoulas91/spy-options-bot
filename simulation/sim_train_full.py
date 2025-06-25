@@ -274,13 +274,17 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"   • volumes_1m[0:3]: {volumes_1m[:3]} ... len={len(volumes_1m)}")
 
     if len(bars_1m) < required_bars["1m"]:
-        logger.debug(
-            f"⏩ Skipping trade {trade_idx} on day {day}: "
-            f"len(bars_1m) ({len(bars_1m)}) < required_bars['1m'] ({required_bars['1m']}) - insufficient bars to simulate trade entry."
+    logger.debug(
+        f"⏩ Skipping trade {trade_idx} on day {day}: "
+        f"len(bars_1m) ({len(bars_1m)}) < required_bars['1m'] ({required_bars['1m']}) - insufficient bars to simulate trade entry."
     )
     return None
 
     max_start_idx = len(bars_1m) - required_bars["1m"]
+    logger.debug(
+        f"Computed max_start_idx = {max_start_idx} (len(bars_1m)={len(bars_1m)} - required_bars['1m']={required_bars['1m']})"
+    )
+    
     if max_start_idx < required_bars["1m"]:
         logger.debug(
             f"⏩ Skipping trade {trade_idx} on day {day}: "
@@ -289,38 +293,79 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         return None
     
     start_idx = RNG.randint(required_bars["1m"], max_start_idx)
+    logger.debug(f"Selected start_idx={start_idx} within [{required_bars['1m']}, {max_start_idx}]")
+    
     price_sig = prices[start_idx]
+    logger.debug(f"Price signal at start_idx={start_idx} is {price_sig}")
+    
     strike = round(price_sig + RNG.uniform(-6, 6), 1)
+    logger.debug(f"Generated strike price: {strike}")
+    
     option_type = RNG.choice(["C", "P"])
+    logger.debug(f"Selected option type: {option_type}")
+    
     expiry_days = RNG.randint(7, 30)
     t_expiry = expiry_days / 365
-
-    option_price = black_scholes_price(
-        s=price_sig,
-        k=strike,
-        t=t_expiry,
-        r=0.01,
-        sigma=0.25,
-        call=(option_type == "C")
-    )
-
+    logger.debug(f"Option expiry_days={expiry_days}, t_expiry={t_expiry:.4f} years")
+    
+    try:
+        option_price = black_scholes_price(
+            s=price_sig,
+            k=strike,
+            t=t_expiry,
+            r=0.01,
+            sigma=0.25,
+            call=(option_type == "C")
+        )
+        logger.debug(f"Computed Black-Scholes option_price: {option_price:.4f}")
+    except Exception as e:
+        logger.error(f"Error computing Black-Scholes price: {e}")
+        return None
+    
     slippage = RNG.uniform(-0.5, 0.5) / 100
     fill_pct = RNG.uniform(0.7, 1.0)
     entry_price = round(option_price * (1 + slippage), 2)
-
-    option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
+    logger.debug(f"Simulated slippage: {slippage*100:.2f}%, fill_pct: {fill_pct:.3f}, entry_price after slippage: {entry_price}")
+    
+    try:
+        option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
+        logger.debug(f"Generated option symbol: {option_sym}")
+    except Exception as e:
+        logger.error(f"Error generating option symbol: {e}")
+        return None
+    
     is_swing = RNG.random() < 0.2  # random swing trade decision
-
-    # --- Compute indicators from bars_1m
-    indicators = compute_all_indicators(bars_1m, volumes, len(bars_1m) - 1)
-
-    # --- Classifier features ---
+    logger.debug(f"is_swing trade decision: {is_swing}")
+    
+    try:
+        indicators = compute_all_indicators(bars_1m, volumes, len(bars_1m) - 1)
+        logger.debug(f"Computed indicators: {indicators}")
+    except Exception as e:
+        logger.error(f"Error computing indicators: {e}")
+        return None
+    
+    # Classifier features
     classifier_confidence = round(np.random.beta(5, 2), 2)
+    logger.debug(f"Simulated classifier confidence: {classifier_confidence}")
+    
     setup_quality = round(RNG.uniform(0.6, 1.0), 2)
+    logger.debug(f"Simulated setup quality: {setup_quality}")
+    
     vix = round(RNG.uniform(15, 35), 2)
-    realized_vol = round(np.std(prices[start_idx - 20:start_idx]), 2) if start_idx >= 20 else 1.5
+    logger.debug(f"Simulated VIX: {vix}")
+    
+    if start_idx >= 20:
+        realized_vol = round(np.std(prices[start_idx - 20:start_idx]), 2)
+        logger.debug(f"Calculated realized_vol over last 20 prices: {realized_vol}")
+    else:
+        realized_vol = 1.5
+        logger.debug(f"Insufficient data for realized_vol, defaulting to: {realized_vol}")
+    
     trade_type = 0 if option_type == "C" else 1
+    logger.debug(f"Encoded trade_type: {trade_type} (0=Call, 1=Put)")
+    
     total_signals_today = RNG.randint(0, 10)
+    logger.debug(f"Simulated total_signals_today: {total_signals_today}")
 
     classifier_features = {
         'confidence': classifier_confidence,
