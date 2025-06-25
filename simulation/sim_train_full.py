@@ -144,7 +144,7 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
 def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
-def simulate_trade(day_idx, step_idx, prices, volumes, vix):
+def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
     trade_minute = step_idx * 5 + 1  # Current minute (exclusive)
 
     # Define raw data required for multi-timeframe indicators
