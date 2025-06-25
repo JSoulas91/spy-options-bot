@@ -228,9 +228,9 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"   • volumes_1m[0:3]: {volumes_1m[:3]} ... len={len(volumes_1m)}")
 
     if len(bars_1m) < required_bars["1m"]:
-    logger.debug(
-        f"⏩ Skipping trade {trade_idx} on day {day}: "
-        f"len(bars_1m) ({len(bars_1m)}) < required_bars['1m'] ({required_bars['1m']}) - insufficient bars to simulate trade entry."
+        logger.debug(
+            f"⏩ Skipping trade {trade_idx} on day {day}: "
+            f"len(bars_1m) ({len(bars_1m)}) < required_bars['1m'] ({required_bars['1m']}) - insufficient bars to simulate trade entry."
     )
     return None
 
