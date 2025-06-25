@@ -172,7 +172,7 @@ def simulate_trade(day, trade_idx, bars_1m, volumes_1m, vix_shift):
 
     # Time offset logic
     trade_minutes_offset = trade_minute
-    total_offset = timedelta(days=days, minutes=trade_minutes_offset)
+    total_offset = timedelta(days=day, minutes=trade_minutes_offset)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
     # Build multi-timeframe bars
