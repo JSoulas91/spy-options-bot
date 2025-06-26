@@ -348,15 +348,22 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         logger.debug("Not enough data for indicators, skipping trade simulation")
         return None
 
-try:
-    indicators = compute_all_indicators(bars_1m, volumes, len(bars_1m) - 1)
-    if not indicators or any(v is None or (isinstance(v, float) and not (v == v)) for v in indicators.values()):
-        logger.warning(f"Invalid or incomplete indicators at idx={len(bars_1m) - 1}")
-        return None
-    logger.debug(f"Indicators at {len(bars_1m)-1}: {indicators}")
-except Exception as e:
-    logger.exception("Exception during indicator computation")
+    if len(bars_1m) < 50:
+    logger.debug("Not enough data for indicators, skipping trade simulation")
     return None
+
+    try:
+        indicators = compute_all_indicators(bars_1m, volumes, len(bars_1m) - 1)
+        if not indicators or any(
+            v is None or (isinstance(v, float) and not (v == v))  # NaN check
+            for v in indicators.values()
+        ):
+            logger.warning(f"Invalid or incomplete indicators at idx={len(bars_1m) - 1}")
+            return None
+        logger.debug(f"Indicators at {len(bars_1m)-1}: {indicators}")
+    except Exception as e:
+        logger.exception("Exception during indicator computation")
+        return None
     
     # Classifier features
     classifier_confidence = round(np.random.beta(5, 2), 2)
