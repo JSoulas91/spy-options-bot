@@ -104,6 +104,7 @@ def construct_bars(prices, volumes, interval, start_time=None):
 def compute_all_indicators(prices, volumes, idx):
     start_idx = max(0, idx - 50)
     window = prices[start_idx:idx + 1]
+    vol_window = volumes[start_idx:idx + 1]
     # Ensure numeric and clean closes
     closes = pd.to_numeric(pd.Series(window), errors="coerce").dropna()
     vol_window = pd.to_numeric(pd.Series(vol_window), errors="coerce").fillna(0.0)
