@@ -235,11 +235,22 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
 
     try:
         logger.debug(f"🔧 Constructing bars from closes[{trade_minute - 1950}:{trade_minute}]")
-        bars_1m = construct_bars(closes[trade_minute - 60:trade_minute], volumes[trade_minute - 60:trade_minute], 1, start_time=base_time - timedelta(minutes=59))
-        bars_5m = construct_bars(closes[trade_minute - 150:trade_minute], volumes[trade_minute - 150:trade_minute], 5, start_time=base_time - timedelta(minutes=145))
-        bars_15m = construct_bars(closes[trade_minute - 300:trade_minute], volumes[trade_minute - 300:trade_minute], 15, start_time=base_time - timedelta(minutes=285))
-        bars_1h = construct_bars(closes[trade_minute - 600:trade_minute], volumes[trade_minute - 600:trade_minute], 60, start_time=base_time - timedelta(minutes=540))
-        bars_1d = construct_bars(closes[trade_minute - 1950:trade_minute], volumes[trade_minute - 1950:trade_minute], 390, start_time=base_time - timedelta(days=4, minutes=30))
+        num_1m_bars = 90  # Fetch more than required to allow random entry index
+        bars_1m = construct_bars(closes[trade_minute - num_1m_bars:trade_minute],
+                                 volumes[trade_minute - num_1m_bars:trade_minute],
+                                 1, start_time=base_time - timedelta(minutes=num_1m_bars - 1))
+        bars_5m = construct_bars(closes[trade_minute - 150:trade_minute],
+                                 volumes[trade_minute - 150:trade_minute],
+                                 5, start_time=base_time - timedelta(minutes=145))
+        bars_15m = construct_bars(closes[trade_minute - 300:trade_minute],
+                                  volumes[trade_minute - 300:trade_minute],
+                                  15, start_time=base_time - timedelta(minutes=285))
+        bars_1h = construct_bars(closes[trade_minute - 600:trade_minute],
+                                 volumes[trade_minute - 600:trade_minute],
+                                 60, start_time=base_time - timedelta(minutes=540))
+        bars_1d = construct_bars(closes[trade_minute - 1950:trade_minute],
+                                 volumes[trade_minute - 1950:trade_minute],
+                                 390, start_time=base_time - timedelta(days=4, minutes=30))
     except Exception as e:
         logger.exception(f"❌ Exception during bar construction: {e}")
         return None
