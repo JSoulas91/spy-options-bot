@@ -295,14 +295,14 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(
         f"Computed max_start_idx = {max_start_idx} (len(bars_1m)={len(bars_1m)} - required_bars['1m']={required_bars['1m']})"
     )
-    
-    if max_start_idx < required_bars["1m"]:
+
+    if max_start_idx < 0:
         logger.debug(
             f"⏩ Skipping trade {trade_idx} on day {day}: "
-            f"max_start_idx ({max_start_idx}) < required_bars['1m'] ({required_bars['1m']}) - not enough room to select a valid start index."
+            f"max_start_idx ({max_start_idx}) < 0 - not enough room to select a valid start index."
         )
         return None
-    
+
     start_idx = RNG.randint(0, max_start_idx)
     logger.debug(f"Selected start_idx={start_idx} within [0, {max_start_idx}]")
     
