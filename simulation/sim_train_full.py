@@ -104,13 +104,14 @@ def construct_bars(prices, volumes, interval, start_time=None):
 def compute_all_indicators(prices, volumes, idx):
     start_idx = max(0, idx - 50)
     window = prices[start_idx:idx + 1]
-    vol_window = volumes[start_idx:idx + 1]
-    closes = pd.Series(window)
-    
-    print(f"[DEBUG] idx={idx}, using window from {start_idx} to {idx} (length={len(window)})")
-    if len(window) < 20:
-        print(f"[WARNING] Not enough data for 20-period indicators at idx={idx}")
+    # Ensure numeric and clean closes
+    closes = pd.to_numeric(pd.Series(window), errors="coerce").dropna()
+    vol_window = pd.to_numeric(pd.Series(vol_window), errors="coerce").fillna(0.0)
 
+    print(f"[DEBUG] idx={idx}, using window from {start_idx} to {idx} (length={len(closes)})")
+    if len(closes) < 20:
+        print(f"[WARNING] Not enough valid numeric data for 20-period indicators at idx={idx}")
+        return None
     indicators = {}
 
     # EMA 20
