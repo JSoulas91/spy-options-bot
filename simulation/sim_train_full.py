@@ -341,13 +341,6 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     entry_price = round(option_price * (1 + slippage), 2)
     logger.debug(f"Simulated slippage: {slippage*100:.2f}%, fill_pct: {fill_pct:.3f}, entry_price after slippage: {entry_price}")
     
-    try:
-        option_sym = make_option_symbol(datetime.utcnow() + timedelta(days=day_idx), strike, option_type)
-        logger.debug(f"Generated option symbol: {option_sym}")
-    except Exception as e:
-        logger.error(f"Error generating option symbol: {e}")
-        return None
-    
     is_swing = RNG.random() < 0.2  # random swing trade decision
     logger.debug(f"is_swing trade decision: {is_swing}")
     
