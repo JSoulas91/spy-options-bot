@@ -452,7 +452,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         return None
 
     try:
-        class_probs = model_inference.predict_proba(features_df)[0]
+        class_probs = model_inference.predict_proba(features_df)
         predicted_direction = int(np.argmax(class_probs))
         trade_success_prob = float(class_probs[predicted_direction])
     except Exception as e:
