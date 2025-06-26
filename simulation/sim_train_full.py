@@ -348,9 +348,6 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         logger.debug("Not enough data for indicators, skipping trade simulation")
         return None
 
-    if len(bars_1m) < 50:
-    logger.debug("Not enough data for indicators, skipping trade simulation")
-    return None
 
     try:
         indicators = compute_all_indicators(bars_1m, volumes, len(bars_1m) - 1)
