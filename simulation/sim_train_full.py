@@ -106,12 +106,30 @@ def compute_all_indicators(prices, volumes, idx):
     window = prices[start_idx:idx + 1]
     vol_window = volumes[start_idx:idx + 1]
 
+    # --- [TRACE] Raw input debug ---
+    print(f"[TRACE] window raw (len={len(window)}): {window}")
+    print(f"[TRACE] vol_window raw (len={len(vol_window)}): {vol_window}")
+
     # Ensure numeric and clean closes
     closes_series = pd.to_numeric(pd.Series(window), errors="coerce")
     vol_series = pd.to_numeric(pd.Series(vol_window), errors="coerce").fillna(0.0)
 
+    # --- [TRACE] Parsed debug ---
+    print(f"[TRACE] closes_series (len={len(closes_series)}): {closes_series.tolist()}")
+    print(f"[TRACE] vol_series (len={len(vol_series)}): {vol_series.tolist()}")
+
     # Align volume with valid prices only
     valid_mask = closes_series.notna()
+
+    if valid_mask.sum() == 0:
+        print(f"[ERROR] All closes are NaN at idx={idx}, cannot compute indicators")
+        return None
+
+    # --- [DEBUG] NaN filtering summary ---
+    print(f"[DEBUG] Raw window (prices): {window[-5:]}")
+    print(f"[DEBUG] Parsed closes_series: {closes_series[-5:]}")
+    print(f"[DEBUG] Valid closes count: {valid_mask.sum()}")
+
     closes = closes_series[valid_mask]
     vol_series = vol_series[valid_mask]
     window = closes.values  # clean numeric window used for VWAP
