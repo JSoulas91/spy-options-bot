@@ -418,7 +418,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"Simulated total_signals_today: {total_signals_today}")
 
     classifier_features = {
-        'confidence': confidence,
+        'confidence': classifier_confidence,
         'setup_quality': setup_quality,
         'vix': vix,
         'realized_vol': realized_vol,
