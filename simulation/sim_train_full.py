@@ -498,7 +498,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Not enough future bars for trade duration ({start_idx + duration} >= {len(prices)})")
         return None
 
-    final_price = prices[start_idx + duration]
+    final_price = closes_1m[start_idx + duration]
 
     minutes_per_year = 252 * 6.5 * 60
     time_left = max(t_expiry - (duration * 1) / minutes_per_year, 0.01)
