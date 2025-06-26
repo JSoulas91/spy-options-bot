@@ -254,7 +254,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "5m": 150,
         "15m": 300,
         "1h": 600,
-        "1d": 1950,
+        "1d": 60,
     }
     max_lookback = max(required_lookback.values())
 
@@ -295,7 +295,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     bars_1d = clean_bars(bars_1d)
 
     # Validate lengths
-    required_bars = {"1m": 60, "5m": 30, "15m": 20, "1h": 10, "1d": 5}
+    required_bars = required_lookback
     for tf, bars in zip(required_bars, [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
         if not isinstance(bars, list) or len(bars) < required_bars[tf]:
             logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: only {len(bars)} bars for {tf} (required: {required_bars[tf]})")
