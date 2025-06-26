@@ -585,8 +585,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         label=trade_result
     )
     
-    option_sym = make_option_symbol(entry_time.date(), strike, option_type)
-    logger.debug(f"✅ Logged trade {trade_idx} on day {day} | PnL: {trade_result:.2f}% | Option: {option_sym} | Duration: {duration}m")
+    logger.debug(f"✅ Logged trade {trade_idx} on day {day} | PnL: {trade_result:.2f}% | Option: {option_symbol} | Duration: {duration}m")
     
     return {
         "timestamp": str(ts),
