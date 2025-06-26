@@ -552,7 +552,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
             "setup_quality": setup_quality,
             "entry_quality": abs(trade_result) / atr,
             "direction_correct": direction_correct,
-            "trades_today": step_idx,
+            "trades_today": trade_idx,
             "was_successful": trade_result > 0,
             "risk_reward_ratio": abs(trade_result) / atr,
             "time_to_target": duration,
