@@ -105,15 +105,22 @@ def compute_all_indicators(prices, volumes, idx):
     start_idx = max(0, idx - 50)
     window = prices[start_idx:idx + 1]
     vol_window = volumes[start_idx:idx + 1]
+
     # Ensure numeric and clean closes
-    closes = pd.to_numeric(pd.Series(window), errors="coerce").dropna()
-    vol_window = pd.to_numeric(pd.Series(vol_window), errors="coerce").fillna(0.0)
+    closes_series = pd.to_numeric(pd.Series(window), errors="coerce")
+    vol_series = pd.to_numeric(pd.Series(vol_window), errors="coerce").fillna(0.0)
+
+    closes = closes_series.dropna()
+    window = closes.values  # clean numeric window used for VWAP
+
+    # ✅ EARLY CHECK: ensure enough valid data
+    if len(closes) < 20 or len(vol_series) != len(window):
+        print(f"[WARNING] Not enough valid numeric data or VWAP mismatch at idx={idx}")
+        return None
+
+    indicators = {}
 
     print(f"[DEBUG] idx={idx}, using window from {start_idx} to {idx} (length={len(closes)})")
-    if len(closes) < 20:
-        print(f"[WARNING] Not enough valid numeric data for 20-period indicators at idx={idx}")
-        return None
-    indicators = {}
 
     # EMA 20
     ema_20 = closes.ewm(span=20).mean().iloc[-1]
