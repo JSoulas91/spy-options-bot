@@ -405,7 +405,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"Simulated VIX: {vix}")
     
     if start_idx >= 20:
-        realized_vol = round(np.std(prices[start_idx - 20:start_idx]), 2)
+        realized_vol = round(np.std(closes_1m[start_idx - 20:start_idx]), 2)
         logger.debug(f"Calculated realized_vol over last 20 prices: {realized_vol}")
     else:
         realized_vol = 1.5
