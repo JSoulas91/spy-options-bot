@@ -320,7 +320,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"Option expiry_days={expiry_days}, t_expiry={t_expiry:.4f} years")
     
     day_dt = base_time + timedelta(days=day)
-    option_symbol = make_option_symbol(day_dt, strike, option_type
+    option_symbol = make_option_symbol(day_dt, strike, option_type)
     
     try:
         option_price = black_scholes_price(
