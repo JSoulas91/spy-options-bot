@@ -495,7 +495,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"📈 Trade {trade_idx} on day {day}: Duration={duration}, start_idx={start_idx}, total_prices={len(closes_1m)}")
 
     if start_idx + duration >= len(closes_1m):
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Not enough future bars for trade duration ({start_idx + duration} >= {len(prices)})")
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Not enough future bars for trade duration ({start_idx + duration} >= {len(closes_1m)})")
         return None
 
     final_price = closes_1m[start_idx + duration]
