@@ -280,8 +280,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         bars_1h = construct_bars(closes[trade_minute - 600:trade_minute],
                                  volumes[trade_minute - 600:trade_minute],
                                  60, start_time=base_time - timedelta(minutes=540))
-        bars_1d = construct_bars(closes[trade_minute - 1950:trade_minute],
-                                 volumes[trade_minute - 1950:trade_minute],
+        bars_1d = construct_bars(closes[trade_minute - 60:trade_minute],
+                                 volumes[trade_minute - 60:trade_minute],
                                  390, start_time=base_time - timedelta(days=4, minutes=30))
     except Exception as e:
         logger.exception(f"❌ Exception during bar construction: {e}")
