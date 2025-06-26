@@ -358,7 +358,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     is_swing = RNG.random() < 0.2  # random swing trade decision
     logger.debug(f"is_swing trade decision: {is_swing}")
     
-    if len(bars_1m) < 50:
+    if len(bars_1m) < 101:
         logger.debug("Not enough data for indicators, skipping trade simulation")
         return None
 
