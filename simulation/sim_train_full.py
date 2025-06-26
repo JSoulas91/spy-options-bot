@@ -452,7 +452,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         return None
 
     try:
-        class_probs = classifier.predict_proba(features_df)[0]
+        class_probs = model_inference.predict_proba(features_df)[0]
         predicted_direction = int(np.argmax(class_probs))
         trade_success_prob = float(class_probs[predicted_direction])
     except Exception as e:
@@ -464,7 +464,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "failure": 1 - trade_success_prob
     }
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
-
+    
     meta_entry = build_meta_state_for_entry(
         data_1m={"bars": bars_1m},
         data_5m={"bars": bars_5m},
