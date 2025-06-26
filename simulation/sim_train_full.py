@@ -254,19 +254,19 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "5m": 150,
         "15m": 300,
         "1h": 600,
-        "1d": 60 * 390,  # 60 daily bars × 390 minutes per day = 23,400 minutes
+        "1d": 60,
     }
-
+    
+    # Adjust raw input slices by multiplying required bars by their resolution in minutes
     input_slices = {
-        "1m": required_lookback["1m"],      # 60
-        "5m": required_lookback["5m"],      # 150
-        "15m": required_lookback["15m"],    # 300
-        "1h": required_lookback["1h"],      # 600
-        "1d": required_lookback["1d"],      # 23400
+        "1m": required_lookback["1m"],               # 60 × 1 = 60 mins
+        "5m": required_lookback["5m"] * 5,           # 150 × 5 = 750 mins
+        "15m": required_lookback["15m"] * 15,        # 300 × 15 = 4500 mins
+        "1h": required_lookback["1h"] * 60,          # 600 × 60 = 36,000 mins
+        "1d": required_lookback["1d"] * 390,         # 60 × 390 = 23,400 mins
     }
-
-    max_required = max(input_slices.values())  # 23400 minutes
-
+    
+    max_required = max(input_slices.values())  # 36,000
     if trade_minute < max_required:
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: trade_minute={trade_minute} < required max_lookback={max_required}")
         return None
@@ -283,24 +283,28 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
             1,
             start_time=base_time - timedelta(minutes=input_slices["1m"] - 1)
         )
+        
         bars_5m = construct_bars(
             closes[trade_minute - input_slices["5m"]:trade_minute],
             volumes[trade_minute - input_slices["5m"]:trade_minute],
             5,
             start_time=base_time - timedelta(minutes=input_slices["5m"] - 5)
         )
+        
         bars_15m = construct_bars(
             closes[trade_minute - input_slices["15m"]:trade_minute],
             volumes[trade_minute - input_slices["15m"]:trade_minute],
             15,
             start_time=base_time - timedelta(minutes=input_slices["15m"] - 15)
         )
+        
         bars_1h = construct_bars(
             closes[trade_minute - input_slices["1h"]:trade_minute],
             volumes[trade_minute - input_slices["1h"]:trade_minute],
             60,
             start_time=base_time - timedelta(minutes=input_slices["1h"] - 60)
         )
+        
         bars_1d = construct_bars(
             closes[trade_minute - input_slices["1d"]:trade_minute],
             volumes[trade_minute - input_slices["1d"]:trade_minute],
