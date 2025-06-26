@@ -117,6 +117,9 @@ def compute_all_indicators(prices, volumes, idx):
     window = closes.values  # clean numeric window used for VWAP
 
     if len(closes) < 20:
+        print(f"[DEBUG] idx={idx}, closes length: {len(closes)}, vol_series length: {len(vol_series)}")
+        print(f"[DEBUG] closes (last 5):\n{closes.tail()}")
+        print(f"[DEBUG] vol_series (last 5):\n{vol_series.tail()}")
         print(f"[WARNING] Not enough valid numeric data for indicators at idx={idx}")
         return None
 
@@ -169,10 +172,11 @@ def compute_all_indicators(prices, volumes, idx):
     indicators["bb_lower"] = middle - 2 * std
 
     # VWAP
-    if len(window) != len(vol_window):
-        print(f"[ERROR] VWAP weights length mismatch at idx={idx}")
+    if len(window) != len(vol_series):
+        print(f"[ERROR] VWAP length mismatch: prices={len(window)}, volumes={len(vol_series)} at idx={idx}")
+        return None
     else:
-        vwap = np.average(window, weights=vol_window)
+        vwap = np.average(window, weights=vol_series)
         indicators["vwap"] = vwap
 
     # ATR 14
