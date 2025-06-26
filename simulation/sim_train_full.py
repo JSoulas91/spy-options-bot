@@ -364,7 +364,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
 
 
     try:
-        indicators = compute_all_indicators(bars_1m, volumes, len(bars_1m) - 1)
+        indicators = compute_all_indicators(bars_1m, volumes_1m, len(bars_1m) - 1)
         if not indicators or any(
             v is None or (isinstance(v, float) and not (v == v))  # NaN check
             for v in indicators.values()
