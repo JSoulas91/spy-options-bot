@@ -589,9 +589,9 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     
     return {
         "timestamp": str(ts),
-        "day": day_idx,
-        "trade_idx": step_idx,
-        "option": option_sym,
+        "day": day,
+        "trade_idx": trade_idx,
+        "option": option_symbol,
         "strike": strike,
         "type": option_type,
         "entry_price": entry_price,
