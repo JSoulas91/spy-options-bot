@@ -254,35 +254,59 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "5m": 150,
         "15m": 300,
         "1h": 600,
-        "1d": 60,
+        "1d": 60 * 390,  # 60 daily bars × 390 minutes per day = 23,400 minutes
     }
-    max_lookback = max(required_lookback.values())
 
-    if trade_minute < max_lookback:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: trade_minute={trade_minute} < required max_lookback={max_lookback}")
+    input_slices = {
+        "1m": required_lookback["1m"],      # 60
+        "5m": required_lookback["5m"],      # 150
+        "15m": required_lookback["15m"],    # 300
+        "1h": required_lookback["1h"],      # 600
+        "1d": required_lookback["1d"],      # 23400
+    }
+
+    max_required = max(input_slices.values())  # 23400 minutes
+
+    if trade_minute < max_required:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: trade_minute={trade_minute} < required max_lookback={max_required}")
         return None
 
     total_offset = timedelta(days=day, minutes=trade_minute)
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
     try:
-        logger.debug(f"🔧 Constructing bars from closes[{trade_minute - 1950}:{trade_minute}]")
-        num_1m_bars = 150  # Fetch more than required to allow random entry index
-        bars_1m = construct_bars(closes[trade_minute - num_1m_bars:trade_minute],
-                                 volumes[trade_minute - num_1m_bars:trade_minute],
-                                 1, start_time=base_time - timedelta(minutes=num_1m_bars - 1))
-        bars_5m = construct_bars(closes[trade_minute - 150:trade_minute],
-                                 volumes[trade_minute - 150:trade_minute],
-                                 5, start_time=base_time - timedelta(minutes=145))
-        bars_15m = construct_bars(closes[trade_minute - 300:trade_minute],
-                                  volumes[trade_minute - 300:trade_minute],
-                                  15, start_time=base_time - timedelta(minutes=285))
-        bars_1h = construct_bars(closes[trade_minute - 600:trade_minute],
-                                 volumes[trade_minute - 600:trade_minute],
-                                 60, start_time=base_time - timedelta(minutes=540))
-        bars_1d = construct_bars(closes[trade_minute - 60:trade_minute],
-                                 volumes[trade_minute - 60:trade_minute],
-                                 390, start_time=base_time - timedelta(days=4, minutes=30))
+        logger.debug(f"🔧 Constructing bars using closes[{trade_minute - max_required}:{trade_minute}]")
+
+        bars_1m = construct_bars(
+            closes[trade_minute - input_slices["1m"]:trade_minute],
+            volumes[trade_minute - input_slices["1m"]:trade_minute],
+            1,
+            start_time=base_time - timedelta(minutes=input_slices["1m"] - 1)
+        )
+        bars_5m = construct_bars(
+            closes[trade_minute - input_slices["5m"]:trade_minute],
+            volumes[trade_minute - input_slices["5m"]:trade_minute],
+            5,
+            start_time=base_time - timedelta(minutes=input_slices["5m"] - 5)
+        )
+        bars_15m = construct_bars(
+            closes[trade_minute - input_slices["15m"]:trade_minute],
+            volumes[trade_minute - input_slices["15m"]:trade_minute],
+            15,
+            start_time=base_time - timedelta(minutes=input_slices["15m"] - 15)
+        )
+        bars_1h = construct_bars(
+            closes[trade_minute - input_slices["1h"]:trade_minute],
+            volumes[trade_minute - input_slices["1h"]:trade_minute],
+            60,
+            start_time=base_time - timedelta(minutes=input_slices["1h"] - 60)
+        )
+        bars_1d = construct_bars(
+            closes[trade_minute - input_slices["1d"]:trade_minute],
+            volumes[trade_minute - input_slices["1d"]:trade_minute],
+            390,
+            start_time=base_time - timedelta(minutes=input_slices["1d"] - 390)
+        )
     except Exception as e:
         logger.exception(f"❌ Exception during bar construction: {e}")
         return None
