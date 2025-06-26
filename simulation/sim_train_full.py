@@ -249,7 +249,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
 
     try:
         logger.debug(f"🔧 Constructing bars from closes[{trade_minute - 1950}:{trade_minute}]")
-        num_1m_bars = 90  # Fetch more than required to allow random entry index
+        num_1m_bars = 150  # Fetch more than required to allow random entry index
         bars_1m = construct_bars(closes[trade_minute - num_1m_bars:trade_minute],
                                  volumes[trade_minute - num_1m_bars:trade_minute],
                                  1, start_time=base_time - timedelta(minutes=num_1m_bars - 1))
