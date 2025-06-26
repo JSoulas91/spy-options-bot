@@ -494,7 +494,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
     logger.debug(f"📈 Trade {trade_idx} on day {day}: Duration={duration}, start_idx={start_idx}, total_prices={len(closes_1m)}")
 
-    if start_idx + duration >= len(prices):
+    if start_idx + duration >= len(closes_1m):
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Not enough future bars for trade duration ({start_idx + duration} >= {len(prices)})")
         return None
 
