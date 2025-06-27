@@ -24,12 +24,12 @@ from ml.feature_pipeline import build_features_for_trade
 reward_shaper = RewardShaper()
 
 # ───────── simulation params ───────────────
-SIM_DAYS = 500
+SIM_DAYS = 1000
 TRADES_PER_DAY = 12
 GBM_MU = 0.08
 GBM_SIGMA = 0.22
 START_PRICE = 450.0
-WARM_UP_DAYS = 7
+WARM_UP_DAYS = 14
 
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
@@ -654,7 +654,7 @@ def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
 
     for day in range(SIM_DAYS):
-        # Skip first 7 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
+        # Skip first 14 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
         if day < WARM_UP_DAYS:
             logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
