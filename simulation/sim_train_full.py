@@ -257,13 +257,21 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "1d": 60,
     }
     
-    # Adjust raw input slices by multiplying required bars by their resolution in minutes
+    # Extra buffer bars to ensure indicators can initialize
+    indicator_buffer = {
+        "1m": 50,
+        "5m": 50,
+        "15m": 50,
+        "1h": 50,
+        "1d": 50,
+    }
+
     input_slices = {
-        "1m": required_lookback["1m"],               # 60 × 1 = 60 mins
-        "5m": required_lookback["5m"] * 5,           # 150 × 5 = 750 mins
-        "15m": required_lookback["15m"] * 15,        # 300 × 15 = 4500 mins
-        "1h": required_lookback["1h"] * 60,          # 600 × 60 = 36,000 mins
-        "1d": required_lookback["1d"] * 390,         # 60 × 390 = 23,400 mins
+        "1m": required_lookback["1m"] + indicator_buffer["1m"],
+        "5m": (required_lookback["5m"] + indicator_buffer["5m"]) * 5,
+        "15m": (required_lookback["15m"] + indicator_buffer["15m"]) * 15,
+        "1h": (required_lookback["1h"] + indicator_buffer["1h"]) * 60,
+        "1d": (required_lookback["1d"] + indicator_buffer["1d"]) * 390,
     }
     
     max_required = max(input_slices.values())  # 36,000
