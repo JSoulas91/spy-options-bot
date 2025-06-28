@@ -45,6 +45,9 @@ model_inference = ModelInference()
 
 print(f"SIM_DAYS={SIM_DAYS}, TRADES_PER_DAY={TRADES_PER_DAY}, START_PRICE={START_PRICE}")
 
+def is_padded(meta):
+    return all(abs(x - 0.5) < 1e-6 for x in meta)
+
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
     for _ in range(1, n_steps):
@@ -520,8 +523,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
             "entropy": entropy
         }
     )
-    if meta_entry is None:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: meta_entry is None (meta-state construction failed)")
+    if meta_entry is None or is_padded(meta_entry):
+        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: entry_meta is invalid or padded")
         return None
     
     action, agent_confidence = meta_agent.select_action(meta_entry)
@@ -576,8 +579,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         trade_type=int(is_swing),
     )
 
-    if meta_exit is None:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: meta_exit is None")
+    if meta_exit is None or is_padded(meta_exit):
+        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: exit_meta is invalid or padded")
         return None
     
     direction_correct = (
