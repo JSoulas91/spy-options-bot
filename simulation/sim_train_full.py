@@ -274,9 +274,13 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "1d": (required_lookback["1d"] + indicator_buffer["1d"]) * 390,
     }
     
-    max_required = max(input_slices.values())  # 36,000
-    if trade_minute < max_required:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: trade_minute={trade_minute} < required max_lookback={max_required}")
+    # Compute earliest bar required among all timeframes
+    min_required_minutes = max(input_slices.values())
+    if trade_minute < min_required_minutes:
+        logger.debug(
+            f"⏩ Skipping trade {trade_idx} on day {day}: "
+            f"trade_minute={trade_minute} < min_required_minutes={min_required_minutes}"
+        )
         return None
 
     total_offset = timedelta(days=day, minutes=trade_minute)
