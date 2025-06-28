@@ -46,7 +46,8 @@ model_inference = ModelInference()
 print(f"SIM_DAYS={SIM_DAYS}, TRADES_PER_DAY={TRADES_PER_DAY}, START_PRICE={START_PRICE}")
 
 def is_padded(meta):
-    return all(abs(x - 0.5) < 1e-6 for x in meta)
+    meta = np.array(meta)
+    return np.allclose(meta, 0.5, atol=1e-6)
 
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     prices = [s0]
