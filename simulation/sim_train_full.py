@@ -245,7 +245,7 @@ def clean_bars(bars):
 def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"🚀 Starting simulate_trade | Day: {day}, Trade Index: {trade_idx}")
 
-    max_required = 39000
+    max_required = 50000
     
     if len(closes) < 2000:
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars (len(closes)={len(closes)})")
