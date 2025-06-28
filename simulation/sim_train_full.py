@@ -12,7 +12,6 @@ import pandas as pd
 from dotenv import load_dotenv
 load_dotenv()
 
-from meta.meta_state import build_meta_state_for_entry, build_meta_state_for_exit
 from meta.meta_agent import MetaAgent
 from meta.reward_shaper import RewardShaper
 from utils.telegram_utils import send_telegram_message
@@ -30,6 +29,9 @@ GBM_MU = 0.08
 GBM_SIGMA = 0.22
 START_PRICE = 450.0
 WARM_UP_DAYS = 110
+PAD_VAL = 0.5
+STATE_SEQUENCE_LENGTH = 20  # Adjust if your model uses more or fewer timesteps
+STATE_DIM = 83             # Must match what your model expects per timestep
 
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
@@ -60,7 +62,64 @@ def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     print(f"Last 5 prices: {prices[-5:]}")
     return prices
 
+def normalize(value, value_range):
+    min_val, max_val = value_range
+    if max_val == min_val:
+        return PAD_VAL
+    return max(PAD_VAL, min(1.0, (value - min_val) / (max_val - min_val)))
 
+def get_range(feature_name: str, long_term_data: dict) -> tuple:
+    default_ranges = {
+        "RSI": (0, 100),
+        "MACD": (-5, 5),
+        "EMA_DIST": (-10, 10),
+        "VOL": (0, 1e6),
+    }
+    return default_ranges.get(feature_name, (0, 1))
+
+def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
+    if len(vec) < dim:
+        return vec + [PAD_VAL] * (dim - len(vec))
+    return vec[:dim]
+    
+def _regime_one_hot(regime: str) -> List[float]:
+    mapping = {"bull": [1.0, 0.0, 0.0], "bear": [0.0, 1.0, 0.0], "sideways": [0.0, 0.0, 1.0]}
+    return mapping.get(regime, [PAD_VAL, PAD_VAL, PAD_VAL])
+    
+def _classify_regime(day_bar, vix_val: float) -> str:
+    if vix_val > 30 or day_bar["rsi"] < 40:
+        return "bear"
+    elif vix_val < 20 and day_bar["rsi"] > 60:
+        return "bull"
+    else:
+        return "sideways"
+        
+def fetch_vix_price() -> Optional[float]:
+    try:
+        # REPLACE with real VIX fetching if available
+        return 18.0
+    except Exception:
+        return None
+        
+def get_minutes_since_open() -> int:
+    from datetime import datetime
+    now = datetime.utcnow()
+    market_open = now.replace(hour=13, minute=30, second=0, microsecond=0)  # 9:30 AM ET = 13:30 UTC
+    delta = now - market_open
+    return max(0, delta.seconds // 60)
+    
+def summarise_past(past_trades: List[dict], profit_range: tuple, dur_range: tuple) -> List[float]:
+    if not past_trades:
+        return [PAD_VAL] * 6
+
+    profits = [t.get("pnl", 0.0) for t in past_trades[-3:]]
+    durations = [t.get("duration", 0.0) for t in past_trades[-3:]]
+
+    normalized_profits = [normalize(p, profit_range) for p in profits]
+    normalized_durations = [normalize(d, dur_range) for d in durations]
+
+    return normalized_profits + normalized_durations
+    
 def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
     symbol = f"SPY{day.strftime('%y%m%d')}{c_or_p}{int(strike*100):08d}"
     print(f"Option symbol created: {symbol}")
@@ -242,6 +301,236 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
 def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
     
+
+def build_meta_state_for_entry(
+    data_1m, data_5m, data_15m, data_1h, data_1d,
+    position_size: float = 0.0,
+    trade_type: int = 1,
+    confidence_score: float = 0.5,
+    past_trades=None,
+    long_term_data=None,
+    classifier_output: Optional[Dict] = None
+) -> np.ndarray:
+    import pandas as pd
+    import numpy as np
+    past_trades = past_trades or []
+    long_term_data = long_term_data or {}
+
+    def ensure_df(df):
+        if isinstance(df, dict):
+            if any(isinstance(v, (list, tuple, np.ndarray, pd.Series)) for v in df.values()):
+                return pd.DataFrame(df)
+            else:
+                return pd.DataFrame([df])
+        return df
+
+    def build_sequence(state: List[float]) -> np.ndarray:
+        padded = _pad(state)
+        return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
+
+    data_1m = ensure_df(data_1m)
+    data_5m = ensure_df(data_5m)
+    data_15m = ensure_df(data_15m)
+    data_1h = ensure_df(data_1h)
+    data_1d = ensure_df(data_1d)
+
+    try:
+        rsi_rng = get_range("RSI", long_term_data)
+        macd_rng = get_range("MACD", long_term_data)
+        ema_rng = get_range("EMA_DIST", long_term_data)
+        vol_rng = get_range("VOL", long_term_data)
+        dur_rng = DEFAULT_RANGES["DURATION"]
+        prof_rng = DEFAULT_RANGES["PROFIT"]
+
+        def tf_feats(df):
+            if df is None:
+                return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
+            if hasattr(df, "iloc") and len(df) > 0:
+                last = df.iloc[-1]
+                return [
+                    normalize(last.get("rsi", 50), rsi_rng),
+                    normalize(last.get("macd", 0), macd_rng),
+                    normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
+                    normalize(last.get("volume", 0), vol_rng),
+                ]
+            return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
+
+        vix_val = fetch_vix_price() or 20.0
+        regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
+
+        clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
+        norm_conf = normalize(clf_conf if clf_conf is not None else confidence_score, DEFAULT_RANGES["CONF"])
+
+        state: List[float] = [
+            norm_conf,
+            1.0 if trade_type == 1 else 0.0,
+            normalize(get_minutes_since_open(), dur_rng),
+            normalize(vix_val, DEFAULT_RANGES["VIX"]),
+            normalize(position_size, DEFAULT_RANGES["SIZE"]),
+            *_regime_one_hot(regime),
+            *summarise_past(past_trades, prof_rng, dur_rng),
+            *tf_feats(data_1m), *tf_feats(data_5m),
+            *tf_feats(data_15m), *tf_feats(data_1h), *tf_feats(data_1d),
+        ]
+
+        for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
+            df = long_term_data.get(p)
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                state += [
+                    normalize(last.get("rsi", 50), rsi_rng),
+                    normalize(last.get("macd", 0), macd_rng),
+                    normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
+                ]
+            else:
+                state += [PAD_VAL] * 3
+
+        if classifier_output:
+            state.append(normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"]))
+            pred_dir = classifier_output.get("predicted_direction", -1)
+            dir_one_hot = [0.0, 0.0, 0.0]
+            if pred_dir in (0, 1, 2):
+                dir_one_hot[pred_dir] = 1.0
+            else:
+                dir_one_hot = [PAD_VAL] * 3
+            state.extend(dir_one_hot)
+
+            class_probs = classifier_output.get("class_probabilities", [PAD_VAL] * 3)
+            if len(class_probs) != 3:
+                class_probs = [PAD_VAL] * 3
+            state.extend(class_probs)
+
+            entropy = classifier_output.get("entropy", PAD_VAL)
+            state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
+        else:
+            state += [PAD_VAL] * 8
+
+        return build_sequence(state)
+
+    except Exception as e:
+        logger.error(f"Error building meta state for entry: {e}")
+        return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
+        
+        
+def build_meta_state_for_exit(
+    data_1m, data_5m, data_15m, data_1h, data_1d,
+    position_size: float = 1.0,
+    trade_type: int = 1,
+    confidence_score: float = 0.5,
+    entry_price: float = 0.0,
+    final_price: float = 0.0,
+    time_held_minutes: float = 0.0,
+    past_trades=None,
+    long_term_data=None,
+    classifier_output: Optional[Dict] = None
+) -> np.ndarray:
+    import pandas as pd
+    import numpy as np
+
+    past_trades = past_trades or []
+    long_term_data = long_term_data or {}
+
+    def ensure_df(df):
+        if isinstance(df, dict):
+            if any(isinstance(v, (list, tuple, np.ndarray, pd.Series)) for v in df.values()):
+                return pd.DataFrame(df)
+            else:
+                return pd.DataFrame([df])
+        return df
+
+    def build_sequence(state: List[float]) -> np.ndarray:
+        padded = _pad(state)
+        return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
+
+    data_1m = ensure_df(data_1m)
+    data_5m = ensure_df(data_5m)
+    data_15m = ensure_df(data_15m)
+    data_1h = ensure_df(data_1h)
+    data_1d = ensure_df(data_1d)
+
+    try:
+        rsi_rng = get_range("RSI", long_term_data)
+        macd_rng = get_range("MACD", long_term_data)
+        ema_rng = get_range("EMA_DIST", long_term_data)
+        vol_rng = get_range("VOL", long_term_data)
+        dur_rng = DEFAULT_RANGES["DURATION"]
+        prof_rng = DEFAULT_RANGES["PROFIT"]
+
+        def tf_feats(df):
+            if df is None:
+                return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
+            if hasattr(df, "iloc") and len(df) > 0:
+                last = df.iloc[-1]
+                return [
+                    normalize(last.get("rsi", 50), rsi_rng),
+                    normalize(last.get("macd", 0), macd_rng),
+                    normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
+                    normalize(last.get("volume", 0), vol_rng),
+                ]
+            return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
+
+        vix_val = fetch_vix_price() or 20.0
+        regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
+
+        clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
+        norm_conf = normalize(clf_conf if clf_conf is not None else confidence_score, DEFAULT_RANGES["CONF"])
+
+        pnl_pct = (final_price - entry_price) / entry_price if entry_price > 0 else 0.0
+        norm_pnl = normalize(pnl_pct, prof_rng)
+        norm_time = normalize(time_held_minutes, dur_rng)
+
+        state: List[float] = [
+            norm_conf,
+            1.0 if trade_type == 1 else 0.0,
+            norm_time,
+            normalize(vix_val, DEFAULT_RANGES["VIX"]),
+            normalize(position_size, DEFAULT_RANGES["SIZE"]),
+            *_regime_one_hot(regime),
+            *summarise_past(past_trades, prof_rng, dur_rng),
+            norm_pnl,
+            *tf_feats(data_1m), *tf_feats(data_5m),
+            *tf_feats(data_15m), *tf_feats(data_1h), *tf_feats(data_1d),
+        ]
+
+        for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
+            df = long_term_data.get(p)
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                state += [
+                    normalize(last.get("rsi", 50), rsi_rng),
+                    normalize(last.get("macd", 0), macd_rng),
+                    normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
+                ]
+            else:
+                state += [PAD_VAL] * 3
+
+        if classifier_output:
+            state.append(normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"]))
+            pred_dir = classifier_output.get("predicted_direction", -1)
+            dir_one_hot = [0.0, 0.0, 0.0]
+            if pred_dir in (0, 1, 2):
+                dir_one_hot[pred_dir] = 1.0
+            else:
+                dir_one_hot = [PAD_VAL] * 3
+            state.extend(dir_one_hot)
+
+            class_probs = classifier_output.get("class_probabilities", [PAD_VAL] * 3)
+            if len(class_probs) != 3:
+                class_probs = [PAD_VAL] * 3
+            state.extend(class_probs)
+
+            entropy = classifier_output.get("entropy", PAD_VAL)
+            state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
+        else:
+            state += [PAD_VAL] * 8
+
+        return build_sequence(state)
+
+    except Exception as e:
+        logger.error(f"Error building meta state for exit: {e}")
+        return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
+
+
 def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"🚀 Starting simulate_trade | Day: {day}, Trade Index: {trade_idx}")
 
