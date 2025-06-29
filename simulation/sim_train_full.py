@@ -1070,6 +1070,15 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     
     logger.debug(f"✅ Logged trade {trade_idx} on day {day} | PnL: {trade_result:.2f}% | Option: {option_symbol} | Duration: {duration}m")
     
+    # Ensure meta_entry and meta_exit are numpy arrays
+    if not isinstance(meta_entry, np.ndarray):
+        logger.warning(f"⚠️ meta_entry is not a NumPy array — type={type(meta_entry)}")
+        meta_entry = np.array(meta_entry)
+    
+    if not isinstance(meta_exit, np.ndarray):
+        logger.warning(f"⚠️ meta_exit is not a NumPy array — type={type(meta_exit)}")
+        meta_exit = np.array(meta_exit)
+    
     return {
         "timestamp": str(ts),
         "day": day,
@@ -1093,8 +1102,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         },
         "meta_action": action,
         "agent_confidence": agent_confidence,
-        "entry_state": meta_entry.tolist(),
-        "exit_state": meta_exit.tolist(),
+        "entry_state": meta_entry.tolist(),   # safe now
+        "exit_state": meta_exit.tolist(),     # safe now
         # ✅ New additions for warm-up data accumulation
         "indicators": indicators,
         "option_data": option_data,
