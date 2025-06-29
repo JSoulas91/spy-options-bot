@@ -1070,6 +1070,31 @@ def main():
             else:
                 logger.debug(f"❌ Trade {trade_idx+1} skipped or failed (simulate_trade returned None)")
 
+            # === Long-term data warm-up tracking ===
+        if day < WARM_UP_DAYS:
+            def append_if_valid(key, val):
+                if key in LONG_TERM_DATA and isinstance(val, (int, float)) and not math.isnan(val):
+                    LONG_TERM_DATA[key].append(val)
+    
+            append_if_valid("RSI", indicators.get("rsi_14"))
+            append_if_valid("MACD", indicators.get("macd"))
+            append_if_valid("MACD_HIST", indicators.get("macd_hist"))
+            append_if_valid("EMA_DIST", indicators.get("price") - indicators.get("ema_20") if "price" in indicators and "ema_20" in indicators else 0)
+            append_if_valid("ATR", indicators.get("atr_14"))
+            append_if_valid("ADX", indicators.get("adx_14"))
+            append_if_valid("VWAP", indicators.get("vwap"))
+            append_if_valid("BB_WIDTH", (indicators.get("bb_upper") - indicators.get("bb_lower")) if indicators.get("bb_upper") and indicators.get("bb_lower") else None)
+            append_if_valid("VIX", indicators.get("vix"))
+            append_if_valid("SPY_ABS", abs(indicators.get("price", 0)))
+            
+            append_if_valid("IV", option_data.get("iv"))
+            append_if_valid("DELTA", option_data.get("delta"))
+            append_if_valid("SIZE", position_size)
+    
+            for k in LONG_TERM_DATA:
+                if len(LONG_TERM_DATA[k]) > 500:
+                    LONG_TERM_DATA[k] = LONG_TERM_DATA[k][-500:]
+        
         if trades:
             with open(META_LOG_PATH, "a") as f:
                 for t in trades:
