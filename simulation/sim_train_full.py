@@ -105,13 +105,27 @@ def normalize(value, value_range):
 
 def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, float]:
     vals: List[float] = []
+    
+    def to_list_safe(x):
+        if hasattr(x, "tolist"):
+            return x.tolist()
+        elif isinstance(x, list):
+            return x
+        else:
+            try:
+                return list(x)
+            except Exception:
+                return []
+    
     for df in long_term.values():
         if df is None or df.empty:
             continue
+        
         if feat == "EMA_DIST":
-            vals.extend((df["price"] - df["ema_20"]).tolist())
+            vals.extend(to_list_safe(df["price"] - df["ema_20"]))
         else:
-            vals.extend(df.get(feat, []).tolist())
+            vals.extend(to_list_safe(df.get(feat, [])))
+    
     return (min(vals), max(vals)) if vals else DEFAULT_RANGES[feat]
 
 def get_range(feat: str, long_term) -> Tuple[float, float]:
