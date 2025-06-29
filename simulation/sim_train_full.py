@@ -866,13 +866,24 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     logger.debug(f"📐 ATR(14): {atr:.2f}")
     
     meta_exit = build_meta_state_for_exit(
-        data_1m={"bars": bars_1m},
-        data_5m={"bars": bars_5m},
-        data_15m={"bars": bars_15m},
-        data_1h={"bars": bars_1h},
-        data_1d={"bars": bars_1d},
+        data_1m=bars_1m,
+        data_5m=bars_5m,
+        data_15m=bars_15m,
+        data_1h=bars_1h,
+        data_1d=bars_1d,
         confidence_score=agent_confidence,
         trade_type=int(is_swing),
+        entry_price=entry_price,
+        final_price=exit_price,
+        time_held_minutes=duration,
+        past_trades=past_trade_logs,
+        long_term_data=long_term_history,
+        classifier_output={
+            "trade_success_prob": trade_success_prob,
+            "predicted_direction": predicted_direction,
+            "class_probabilities": class_probabilities,
+            "entropy": entropy
+        }
     )
 
     if meta_exit is None or is_padded(meta_exit):
