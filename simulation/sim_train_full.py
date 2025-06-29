@@ -77,8 +77,21 @@ def get_range(feature_name: str, long_term_data: dict) -> tuple:
         "MACD": (-5, 5),
         "EMA_DIST": (-10, 10),
         "VOL": (0, 1e6),
+        "VIX": (10, 80),
+        "SPY_ABS": (0, 20),
+        "IV": (0, 2),
+        "DELTA": (-1, 1),
+        "SIZE": (0, 2),
+        "PROFIT": (-1, 1),
+        "DURATION": (0, 5000),
     }
-    return default_ranges.get(feature_name, (0, 1))
+
+    history = long_term_data.get(feature_name, [])
+
+    if not history:
+        return default_ranges.get(feature_name, (0, 1))
+
+    return (min(history), max(history))
 
 def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
     if len(vec) < dim:
