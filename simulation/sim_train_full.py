@@ -1004,7 +1004,7 @@ def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
 
     for day in range(SIM_DAYS):
-        # Skip first 14 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
+        # Skip first 110 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
         if day < WARM_UP_DAYS:
             logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
