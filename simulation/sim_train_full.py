@@ -801,13 +801,16 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
     
     meta_entry = build_meta_state_for_entry(
-        data_1m={"bars": bars_1m},
-        data_5m={"bars": bars_5m},
-        data_15m={"bars": bars_15m},
-        data_1h={"bars": bars_1h},
-        data_1d={"bars": bars_1d},
+        data_1m=bars_1m,
+        data_5m=bars_5m,
+        data_15m=bars_15m,
+        data_1h=bars_1h,
+        data_1d=bars_1d,
+        position_size=position_size,  # you can set this to 1.0 if you don't have it dynamic
         confidence_score=classifier_confidence,
         trade_type=int(is_swing),
+        past_trades=past_trades,
+        long_term_data=long_term_data,
         classifier_output={
             "trade_success_prob": trade_success_prob,
             "predicted_direction": predicted_direction,
@@ -815,6 +818,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
             "entropy": entropy
         }
     )
+    
     if meta_entry is None or is_padded(meta_entry):
         logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: entry_meta is invalid or padded")
         return None
