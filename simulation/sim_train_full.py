@@ -795,6 +795,10 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     except Exception as e:
         logger.debug(f"Classifier prediction failed: {e}")
         return None
+        
+    # Dynamic position sizing based on classifier confidence
+    confidence = classifier_output.get("trade_success_prob", 0.5)
+    position_size = MIN_POSITION_SIZE + (MAX_POSITION_SIZE - MIN_POSITION_SIZE) * confidence
     
     meta_entry = build_meta_state_for_entry(
         data_1m=bars_1m,
@@ -864,6 +868,10 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     except Exception as e:
         logger.debug(f"Classifier prediction failed: {e}")
         return None
+        
+    # Dynamic position sizing based on classifier confidence
+    confidence = classifier_output.get("trade_success_prob", 0.5)
+    position_size = MIN_POSITION_SIZE + (MAX_POSITION_SIZE - MIN_POSITION_SIZE) * confidence
     
     meta_exit = build_meta_state_for_exit(
         data_1m=bars_1m,
