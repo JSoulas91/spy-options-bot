@@ -89,6 +89,17 @@ def normalize(value, value_range):
         return PAD_VAL
     return max(PAD_VAL, min(1.0, (value - min_val) / (max_val - min_val)))
 
+def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, float]:
+    vals: List[float] = []
+    for df in long_term.values():
+        if df is None or df.empty:
+            continue
+        if feat == "EMA_DIST":
+            vals.extend((df["price"] - df["ema_20"]).tolist())
+        else:
+            vals.extend(df.get(feat, []).tolist())
+    return (min(vals), max(vals)) if vals else DEFAULT_RANGES[feat]
+
 def get_range(feat: str, long_term) -> Tuple[float, float]:
     now = time.time()
     if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
