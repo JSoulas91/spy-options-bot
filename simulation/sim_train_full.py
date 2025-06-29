@@ -1069,7 +1069,7 @@ def main():
         logger.debug(f"Day {day + 1}: Starting simulation with VIX shift {vix_shift:.2f}")
 
         for trade_idx in range(TRADES_PER_DAY):
-            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift)
+            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, LONG_TERM_DATA)
 
             if log_entry:
                 trades.append(log_entry)
