@@ -41,41 +41,41 @@ class ModelInference:
             "probs": probs.tolist()
         }
         
-def wrap_classifier_output(raw_output: dict) -> dict:
-    """
-    Converts binary classifier output into meta-state compatible multi-class format.
-
-    Args:
-        raw_output (dict): Output from predict_with_confidence(), must include:
-            - "confidence": float
-            - "predicted_class": int (0 or 1)
-            - "entropy": float
-            - "probs": list of [P(class=0), P(class=1)]
-
-    Returns:
-        dict: Formatted output for meta-state functions:
-            - trade_success_prob: float
-            - predicted_direction: int (0=down, 1=up, 2=flat)
-            - class_probabilities: list of 3 floats (down, up, flat)
-            - entropy: float
-    """
-    confidence = raw_output.get("confidence", 0.5)
-    predicted_class = raw_output.get("predicted_class", -1)
-    entropy = raw_output.get("entropy", 1.0)
-    probs = raw_output.get("probs", [0.5, 0.5])
-
-    # Heuristic: use confidence to determine up/down direction
-    predicted_direction = 1 if confidence > 0.55 else 0  # up if confident
-
-    # Extend binary probs to 3-class format [down, up, flat]
-    if isinstance(probs, list) and len(probs) == 2:
-        class_probabilities = [probs[0], probs[1], 0.0]  # no flat class in binary
-    else:
-        class_probabilities = [0.5, 0.5, 0.0]  # fallback
-
-    return {
-        "trade_success_prob": float(confidence),
-        "predicted_direction": predicted_direction,
-        "class_probabilities": class_probabilities,
-        "entropy": float(entropy)
-    }
+    def wrap_classifier_output(raw_output: dict) -> dict:
+        """
+        Converts binary classifier output into meta-state compatible multi-class format.
+    
+        Args:
+            raw_output (dict): Output from predict_with_confidence(), must include:
+                - "confidence": float
+                - "predicted_class": int (0 or 1)
+                - "entropy": float
+                - "probs": list of [P(class=0), P(class=1)]
+    
+        Returns:
+            dict: Formatted output for meta-state functions:
+                - trade_success_prob: float
+                - predicted_direction: int (0=down, 1=up, 2=flat)
+                - class_probabilities: list of 3 floats (down, up, flat)
+                - entropy: float
+        """
+        confidence = raw_output.get("confidence", 0.5)
+        predicted_class = raw_output.get("predicted_class", -1)
+        entropy = raw_output.get("entropy", 1.0)
+        probs = raw_output.get("probs", [0.5, 0.5])
+    
+        # Heuristic: use confidence to determine up/down direction
+        predicted_direction = 1 if confidence > 0.55 else 0  # up if confident
+    
+        # Extend binary probs to 3-class format [down, up, flat]
+        if isinstance(probs, list) and len(probs) == 2:
+            class_probabilities = [probs[0], probs[1], 0.0]  # no flat class in binary
+        else:
+            class_probabilities = [0.5, 0.5, 0.0]  # fallback
+    
+        return {
+            "trade_success_prob": float(confidence),
+            "predicted_direction": predicted_direction,
+            "class_probabilities": class_probabilities,
+            "entropy": float(entropy)
+        }
