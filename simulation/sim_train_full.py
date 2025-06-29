@@ -796,10 +796,6 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         logger.debug(f"Classifier prediction failed: {e}")
         return None
 
-    class_probabilities = {
-        "success": trade_success_prob,
-        "failure": 1 - trade_success_prob
-    }
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
     position_size = 1.0
     
