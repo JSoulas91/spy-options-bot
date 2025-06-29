@@ -125,13 +125,20 @@ def get_range(feat: str, long_term) -> Tuple[float, float]:
     return rng
     
 def update_long_term_stats(long_term_data: dict, features: dict):
+    import pandas as pd
+
     for key, val in features.items():
-        if key not in long_term_data:
-            long_term_data[key] = []
-        long_term_data[key].append(val)
-        # Limit history size to avoid memory issues
+        df = long_term_data.get(key)
+        row = pd.DataFrame([val])
+
+        if df is None:
+            long_term_data[key] = row
+        else:
+            long_term_data[key] = pd.concat([df, row], ignore_index=True)
+
+        # Limit history size
         if len(long_term_data[key]) > 5000:
-            long_term_data[key] = long_term_data[key][-5000:]
+            long_term_data[key] = long_term_data[key].iloc[-5000:]
 
 def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
     if len(vec) < dim:
