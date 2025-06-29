@@ -195,6 +195,7 @@ def construct_bars(prices, volumes, interval, start_time=None):
 
 
 def compute_all_indicators(prices, volumes, idx):
+    indicators = {}
     start_idx = max(0, idx - 100)
     window = prices[start_idx:idx + 1]
     vol_window = volumes[start_idx:idx + 1]
