@@ -56,7 +56,20 @@ long_term_data = {
     "DURATION": [],
     "PROFIT": [],
 }
-
+DEFAULT_RANGES: Dict[str, Tuple[float, float]] = {
+    "RSI": (0, 100),
+    "MACD": (-5, 5),
+    "EMA_DIST": (-10, 10),
+    "VOL": (0, 10_000_000),
+    "CONF": (0, 1),
+    "DURATION": (0, 390),
+    "PROFIT": (-1, 1),
+    "VIX": (10, 40),
+    "SPY_ABS": (350, 500),
+    "IV": (0, 1),
+    "DELTA": (-1, 1),
+    "SIZE": (0, MAX_POSITION_SIZE),
+}
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 RNG = random.Random(42)
