@@ -496,7 +496,10 @@ def build_meta_state_for_entry(
         else:
             state += [PAD_VAL] * 8
 
-        return build_sequence(state)
+        result = build_sequence(state)
+        if np.all(result == PAD_VAL):
+            logger.warning("⚠️ Meta state is fully padded at entry — likely due to earlier data issue.")
+        return result
 
     except Exception as e:
         logger.error(f"Error building meta state for entry: {e}")
