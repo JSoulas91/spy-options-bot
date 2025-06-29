@@ -789,15 +789,12 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         return None
 
     try:
-        class_probs = model_inference.predict_proba(features_df)
-        predicted_direction = int(np.argmax(class_probs))
-        trade_success_prob = float(class_probs[predicted_direction])
+        inference = ModelInference()
+        raw_output = inference.predict_with_confidence(features_df)
+        classifier_output = ModelInference.wrap_classifier_output(raw_output)
     except Exception as e:
         logger.debug(f"Classifier prediction failed: {e}")
         return None
-
-    entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
-    position_size = 1.0
     
     meta_entry = build_meta_state_for_entry(
         data_1m=bars_1m,
