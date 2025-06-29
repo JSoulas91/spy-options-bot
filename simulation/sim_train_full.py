@@ -71,27 +71,15 @@ def normalize(value, value_range):
         return PAD_VAL
     return max(PAD_VAL, min(1.0, (value - min_val) / (max_val - min_val)))
 
-def get_range(feature_name: str, long_term_data: dict) -> tuple:
-    default_ranges = {
-        "RSI": (0, 100),
-        "MACD": (-5, 5),
-        "EMA_DIST": (-10, 10),
-        "VOL": (0, 1e6),
-        "VIX": (10, 80),
-        "SPY_ABS": (0, 20),
-        "IV": (0, 2),
-        "DELTA": (-1, 1),
-        "SIZE": (0, 2),
-        "PROFIT": (-1, 1),
-        "DURATION": (0, 5000),
-    }
-
-    history = long_term_data.get(feature_name, [])
-
-    if not history:
-        return default_ranges.get(feature_name, (0, 1))
-
-    return (min(history), max(history))
+def get_range(feat: str, long_term) -> Tuple[float, float]:
+    now = time.time()
+    if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
+        return _DYNAMIC[feat][0]
+    rng = _calc_range(feat, long_term)
+    if rng[0] == rng[1]:
+        rng = DEFAULT_RANGES[feat]
+    _DYNAMIC[feat] = (rng, now)
+    return rng
 
 def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
     if len(vec) < dim:
