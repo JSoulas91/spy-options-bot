@@ -151,10 +151,12 @@ def update_long_term_stats(long_term_data: dict, features: dict):
         if len(long_term_data[key]) > 5000:
             long_term_data[key] = long_term_data[key].iloc[-5000:]
             
-def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
-    if len(vec) < dim:
-        return vec + [PAD_VAL] * (dim - len(vec))
-    return vec[:dim]
+def _pad(state: List[float]) -> np.ndarray:
+    padded = np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
+    state = np.array(state, dtype=np.float32)
+    length = min(len(state), STATE_DIM)
+    padded[:length] = state[:length]
+    return padded
     
 def _regime_one_hot(regime: str) -> List[float]:
     mapping = {"bull": [1.0, 0.0, 0.0], "bear": [0.0, 1.0, 0.0], "sideways": [0.0, 0.0, 1.0]}
