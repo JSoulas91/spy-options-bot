@@ -34,8 +34,8 @@ WARM_UP_DAYS = 110
 PAD_VAL = 0.5
 STATE_SEQUENCE_LENGTH = 20  # Adjust if your model uses more or fewer timesteps
 STATE_DIM = 83             # Must match what your model expects per timestep
-_DYNAMIC = {}
-_DYN_TTL = 30  # or whatever time (in seconds) you want the cache to stay valid
+_DYNAMIC: Dict[str, Tuple[Tuple[float, float], float]] = {}
+_DYN_TTL = 3600
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
 TRADE_HISTORY = []
@@ -56,6 +56,7 @@ long_term_data = {
     "DURATION": [],
     "PROFIT": [],
 }
+
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 RNG = random.Random(42)
