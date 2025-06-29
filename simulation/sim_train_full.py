@@ -856,6 +856,15 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     atr = indicators.get('atr_14', 1.0)
     logger.debug(f"📐 ATR(14): {atr:.2f}")
     
+    features_df = build_features_for_trade(classifier_features)
+    try:
+        inference = ModelInference()
+        raw_output = inference.predict_with_confidence(features_df)
+        classifier_output = ModelInference.wrap_classifier_output(raw_output)
+    except Exception as e:
+        logger.debug(f"Classifier prediction failed: {e}")
+        return None
+    
     meta_exit = build_meta_state_for_exit(
         data_1m=bars_1m,
         data_5m=bars_5m,
