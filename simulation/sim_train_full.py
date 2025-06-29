@@ -128,18 +128,20 @@ def update_long_term_stats(long_term_data: dict, features: dict):
     import pandas as pd
 
     for key, val in features.items():
-        df = long_term_data.get(key)
         row = pd.DataFrame([val])
 
-        if df is None:
+        # ✅ If key not present, create new DataFrame
+        if key not in long_term_data or not isinstance(long_term_data[key], pd.DataFrame):
             long_term_data[key] = row
         else:
+            # ✅ Ensure we're always appending to a DataFrame
+            df = long_term_data[key]
             long_term_data[key] = pd.concat([df, row], ignore_index=True)
 
-        # Limit history size
+        # ✅ Optional: Limit memory usage
         if len(long_term_data[key]) > 5000:
-            long_term_data[key] = long_term_data[key].iloc[-5000:]
-
+            long_term_data[key] = long_term_data[key].iloc[-5000:].reset_index(drop=True)
+            
 def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
     if len(vec) < dim:
         return vec + [PAD_VAL] * (dim - len(vec))
