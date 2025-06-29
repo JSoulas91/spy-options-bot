@@ -38,7 +38,7 @@ STATE_DIM = 83             # Must match what your model expects per timestep
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
 TRADE_HISTORY = []
-LONG_TERM_DATA = {
+long_term_data = {
     "RSI": [],
     "MACD": [],
     "MACD_HIST": [],
@@ -571,7 +571,7 @@ def build_meta_state_for_exit(
         return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
 
 
-def simulate_trade(day, trade_idx, closes, volumes, vix_shift, LONG_TERM_DATA):
+def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     logger.debug(f"🚀 Starting simulate_trade | Day: {day}, Trade Index: {trade_idx}")
 
     max_required = 50000
@@ -1069,7 +1069,7 @@ def main():
         logger.debug(f"Day {day + 1}: Starting simulation with VIX shift {vix_shift:.2f}")
 
         for trade_idx in range(TRADES_PER_DAY):
-            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, LONG_TERM_DATA)
+            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
 
             if log_entry:
                 trades.append(log_entry)
@@ -1083,8 +1083,8 @@ def main():
                     position_size = log_entry.get("position_size", 1.0)
 
                     def append_if_valid(key, val):
-                        if key in LONG_TERM_DATA and isinstance(val, (int, float)) and not math.isnan(val):
-                            LONG_TERM_DATA[key].append(val)
+                        if key in long_term_data and isinstance(val, (int, float)) and not math.isnan(val):
+                            long_term_data[key].append(val)
 
                     append_if_valid("RSI", indicators.get("rsi_14"))
                     append_if_valid("MACD", indicators.get("macd"))
@@ -1101,9 +1101,9 @@ def main():
                     append_if_valid("DELTA", option_data.get("delta"))
                     append_if_valid("SIZE", position_size)
 
-                    for k in LONG_TERM_DATA:
-                        if len(LONG_TERM_DATA[k]) > 500:
-                            LONG_TERM_DATA[k] = LONG_TERM_DATA[k][-500:]
+                    for k in long_term_data:
+                        if len(long_term_data[k]) > 500:
+                            long_term_data[k] = long_term_data[k][-500:]
 
             else:
                 logger.debug(f"❌ Trade {trade_idx + 1} skipped or failed (simulate_trade returned None)")
