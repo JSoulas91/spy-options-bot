@@ -801,6 +801,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "failure": 1 - trade_success_prob
     }
     entropy = -sum(p * math.log(p + 1e-9) for p in class_probabilities.values())
+    position_size = 1.0
     
     meta_entry = build_meta_state_for_entry(
         data_1m=bars_1m,
