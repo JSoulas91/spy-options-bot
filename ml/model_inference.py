@@ -41,6 +41,7 @@ class ModelInference:
             "probs": probs.tolist()
         }
         
+    @staticmethod
     def wrap_classifier_output(raw_output: dict) -> dict:
         """
         Converts binary classifier output into meta-state compatible multi-class format.
