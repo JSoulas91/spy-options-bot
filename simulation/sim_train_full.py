@@ -429,7 +429,7 @@ def build_meta_state_for_entry(
     import pandas as pd
     import numpy as np
     past_trades = past_trades or []
-    long_term_data = ensure_df(long_term_data)
+    long_term_data = long_term_data or {}
 
     def ensure_df(df):
         if isinstance(df, dict):
@@ -439,6 +439,8 @@ def build_meta_state_for_entry(
                 return pd.DataFrame([df])
         return df
 
+    long_term_data = ensure_df(long_term_data)
+    
     def build_sequence(state: List[float]) -> np.ndarray:
         padded = _pad(state)
         return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
