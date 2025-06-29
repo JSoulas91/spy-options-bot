@@ -38,6 +38,7 @@ STATE_DIM = 83             # Must match what your model expects per timestep
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
 TRADE_HISTORY = []
+long_term_data = {}
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 RNG = random.Random(42)
@@ -80,6 +81,15 @@ def get_range(feat: str, long_term) -> Tuple[float, float]:
         rng = DEFAULT_RANGES[feat]
     _DYNAMIC[feat] = (rng, now)
     return rng
+    
+def update_long_term_stats(long_term_data: dict, features: dict):
+    for key, val in features.items():
+        if key not in long_term_data:
+            long_term_data[key] = []
+        long_term_data[key].append(val)
+        # Limit history size to avoid memory issues
+        if len(long_term_data[key]) > 5000:
+            long_term_data[key] = long_term_data[key][-5000:]
 
 def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
     if len(vec) < dim:
@@ -783,6 +793,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     features_df = build_features_for_trade(classifier_features)
     logger.debug(f"🛠️ Built features DataFrame: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
 
+    update_long_term_stats(long_term_data, classifier_features)
+    
     # Ensure it's a proper DataFrame
     if not isinstance(features_df, pd.DataFrame):
         logger.debug("⚠️ build_features_for_trade returned non-DataFrame, coercing to DataFrame")
