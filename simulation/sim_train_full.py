@@ -38,7 +38,17 @@ STATE_DIM = 83             # Must match what your model expects per timestep
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
 TRADE_HISTORY = []
-long_term_data = {}
+LONG_TERM_DATA = {
+    "RSI": [],
+    "MACD": [],
+    "EMA_DIST": [],
+    "VOL": [],
+    "VIX": [],
+    "SPY_ABS": [],
+    "IV": [],
+    "DELTA": [],
+    "SIZE": [],
+}
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 RNG = random.Random(42)
