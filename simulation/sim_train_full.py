@@ -304,6 +304,8 @@ def compute_all_indicators(prices, volumes, idx):
     # ADX (simulated)
     adx = RNG.uniform(10, 35)
     indicators["adx_14"] = adx
+    
+    indicators["price"] = closes[-1] if closes else None
 
     # Round and print final indicators
     for k in indicators:
