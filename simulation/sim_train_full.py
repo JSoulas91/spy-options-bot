@@ -41,13 +41,19 @@ TRADE_HISTORY = []
 LONG_TERM_DATA = {
     "RSI": [],
     "MACD": [],
+    "MACD_HIST": [],
     "EMA_DIST": [],
-    "VOL": [],
+    "ATR": [],
+    "ADX": [],
+    "VWAP": [],
+    "BB_WIDTH": [],
     "VIX": [],
     "SPY_ABS": [],
     "IV": [],
     "DELTA": [],
     "SIZE": [],
+    "DURATION": [],
+    "PROFIT": [],
 }
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
@@ -729,10 +735,31 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
             sigma=0.25,
             call=(option_type == "C")
         )
-        logger.debug(f"Computed Black-Scholes option_price: {option_price:.4f}")
+    
+        option_delta = black_scholes_delta(
+            s=price_sig,
+            k=strike,
+            t=t_expiry,
+            r=0.01,
+            sigma=0.25,
+            call=(option_type == "C")
+        )
+    
+        option_data = {
+            "price": option_price,
+            "iv": 0.25,  # constant implied volatility for now
+            "delta": option_delta
+        }
+    
+        logger.debug(f"Computed Black-Scholes price: {option_price:.4f}, delta: {option_delta:.4f}")
+    
     except Exception as e:
-        logger.error(f"Error computing Black-Scholes price: {e}")
-        return None
+        logger.error(f"Error computing Black-Scholes price/delta: {e}")
+        option_data = {
+            "price": 0.0,
+            "iv": 0.25,
+            "delta": 0.0
+        }
     
     slippage = RNG.uniform(-0.5, 0.5) / 100
     fill_pct = RNG.uniform(0.7, 1.0)
