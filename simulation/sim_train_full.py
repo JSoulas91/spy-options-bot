@@ -480,8 +480,13 @@ def build_meta_state_for_entry(
             state.extend(dir_one_hot)
 
             class_probs = classifier_output.get("class_probabilities", [PAD_VAL] * 3)
-            if len(class_probs) != 3:
+            logger.warning(f"⚠️ class_probabilities format: {classifier_output.get('class_probabilities')}")
+            # Ensure it's a flat list of 3 floats
+            if not isinstance(class_probs, (list, tuple)) or len(class_probs) != 3:
                 class_probs = [PAD_VAL] * 3
+            else:
+                class_probs = [float(x) if isinstance(x, (int, float)) else PAD_VAL for x in class_probs]
+            
             state.extend(class_probs)
 
             entropy = classifier_output.get("entropy", PAD_VAL)
