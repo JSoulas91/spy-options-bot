@@ -126,27 +126,28 @@ def get_range(feat: str, long_term) -> Tuple[float, float]:
     
 def update_long_term_stats(long_term_data: dict, features: dict):
     import pandas as pd
+    import numpy as np
 
     for key, val in features.items():
-        # 🛡️ Flatten any list-like value to a scalar
+        # 🧼 Coerce list/array/tuple to scalar
         if isinstance(val, (list, tuple, np.ndarray)):
             if len(val) == 1:
                 val = val[0]
             else:
-                val = float(np.mean(val))  # Or raise an error if multiple elements is invalid
+                raise ValueError(f"🚫 Feature value for {key} is not scalar: {val} (type={type(val)})")
 
-        row = pd.DataFrame([{key: val}])
+        row = pd.DataFrame([{key: val}])  # Ensures column has correct name
 
         df = long_term_data.get(key)
+
         if df is None:
             long_term_data[key] = row
         elif isinstance(df, pd.DataFrame):
             long_term_data[key] = pd.concat([df, row], ignore_index=True)
         else:
-            # 🔥 Failsafe: convert list -> DataFrame here (shouldn’t happen anymore)
-            logger.warning(f"⚠️ Coercing long_term_data[{key}] from {type(df)} to DataFrame")
-            long_term_data[key] = pd.concat([pd.DataFrame(df), row], ignore_index=True)
+            raise TypeError(f"❌ long_term_data[{key}] corrupted before insert: expected DataFrame, got {type(df)}")
 
+        # Keep only last 5000 rows
         if len(long_term_data[key]) > 5000:
             long_term_data[key] = long_term_data[key].iloc[-5000:]
             
