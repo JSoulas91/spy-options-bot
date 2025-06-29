@@ -37,6 +37,7 @@ STATE_DIM = 83             # Must match what your model expects per timestep
 
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
+TRADE_HISTORY = []
 
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 RNG = random.Random(42)
@@ -774,6 +775,9 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         'adx_14': indicators['adx_14'],
     }
 
+    # Grab past N trades for meta-state summary
+    past_trades = TRADE_HISTORY[-10:] if len(TRADE_HISTORY) >= 10 else TRADE_HISTORY
+    
     # Build feature vector
     features_df = build_features_for_trade(classifier_features)
     logger.debug(f"🛠️ Built features DataFrame: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
@@ -884,7 +888,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         entry_price=entry_price,
         final_price=exit_price,
         time_held_minutes=duration,
-        past_trades=past_trade_logs,
+        past_trades=past_trades,
         long_term_data=long_term_history,
         classifier_output=classifier_output
     )
@@ -892,6 +896,12 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
     if meta_exit is None or is_padded(meta_exit):
         logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: exit_meta is invalid or padded")
         return None
+        
+    TRADE_HISTORY.append({
+        "profit": trade_return,  # percentage PnL, e.g., 0.12 for +12%
+        "duration": time_held_minutes,
+        "position_size": position_size,
+    })
     
     direction_correct = (
         (predicted_direction == 1 and final_price > price_sig) or
