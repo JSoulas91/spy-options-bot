@@ -811,12 +811,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         trade_type=int(is_swing),
         past_trades=past_trades,
         long_term_data=long_term_data,
-        classifier_output={
-            "trade_success_prob": trade_success_prob,
-            "predicted_direction": predicted_direction,
-            "class_probabilities": class_probabilities,
-            "entropy": entropy
-        }
+        classifier_output=classifier_output
     )
     
     if meta_entry is None or is_padded(meta_entry):
@@ -878,12 +873,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         time_held_minutes=duration,
         past_trades=past_trade_logs,
         long_term_data=long_term_history,
-        classifier_output={
-            "trade_success_prob": trade_success_prob,
-            "predicted_direction": predicted_direction,
-            "class_probabilities": class_probabilities,
-            "entropy": entropy
-        }
+        classifier_output=classifier_output
     )
 
     if meta_exit is None or is_padded(meta_exit):
