@@ -441,7 +441,7 @@ def build_meta_state_for_entry(
 
         for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
             df = long_term_data.get(p)
-            if df is not None and not df.empty:
+            if isinstance(df, pd.DataFrame) and not df.empty:
                 last = df.iloc[-1]
                 state += [
                     normalize(last.get("rsi", 50), rsi_rng),
