@@ -571,7 +571,7 @@ def build_meta_state_for_exit(
         return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
 
 
-def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
+def simulate_trade(day, trade_idx, closes, volumes, vix_shift, LONG_TERM_DATA):
     logger.debug(f"🚀 Starting simulate_trade | Day: {day}, Trade Index: {trade_idx}")
 
     max_required = 50000
