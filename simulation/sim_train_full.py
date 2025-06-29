@@ -429,7 +429,7 @@ def build_meta_state_for_entry(
     import pandas as pd
     import numpy as np
     past_trades = past_trades or []
-    long_term_data = long_term_data or {}
+    long_term_data = ensure_df(long_term_data)
 
     def ensure_df(df):
         if isinstance(df, dict):
