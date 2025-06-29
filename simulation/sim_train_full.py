@@ -117,17 +117,32 @@ def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, flo
             except Exception:
                 return []
     
-    for df in long_term.values():
-        if df is None or df.empty:
+    for idx, df in enumerate(long_term.values()):
+        if df is None:
+            continue
+        
+        # Defensive: if not a DataFrame, skip and log warning
+        if not hasattr(df, "columns"):
+            logger.warning(f"⚠️ long_term[{idx}] is not a DataFrame or missing columns attribute: type={type(df)}")
+            continue
+        
+        if df.empty:
             continue
         
         if feat == "EMA_DIST":
-            vals.extend(to_list_safe(df["price"] - df["ema_20"]))
+            if "price" in df.columns and "ema_20" in df.columns:
+                diff = df["price"] - df["ema_20"]
+                vals.extend(to_list_safe(diff))
+            else:
+                logger.warning(f"⚠️ long_term[{idx}] missing 'price' or 'ema_20' columns: {df.columns}")
         else:
-            vals.extend(to_list_safe(df.get(feat, [])))
+            if feat in df.columns:
+                vals.extend(to_list_safe(df[feat]))
+            else:
+                logger.warning(f"⚠️ long_term[{idx}] missing column '{feat}': {df.columns}")
     
     return (min(vals), max(vals)) if vals else DEFAULT_RANGES[feat]
-
+    
 def get_range(feat: str, long_term) -> Tuple[float, float]:
     now = time.time()
     if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
