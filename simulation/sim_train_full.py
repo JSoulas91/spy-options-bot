@@ -1038,13 +1038,14 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "position_size": position_size,
     }
 
+
 def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
 
     for day in range(SIM_DAYS):
-        # Skip first 110 days to allow multi-timeframe bars (1h, 4h, etc.) to build up
+        # Warm-up period for multi-timeframe indicators
         if day < WARM_UP_DAYS:
-            logger.debug(f"⏩ Skipping Day {day+1}: Warming up multi-timeframe history")
+            logger.debug(f"⏩ Skipping Day {day + 1}: Warming up multi-timeframe history")
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
             daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
             ACCUMULATED_CLOSES.extend(daily_prices)
@@ -1057,66 +1058,62 @@ def main():
 
         daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
         daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
-
         ACCUMULATED_CLOSES.extend(daily_prices)
         ACCUMULATED_VOLUMES.extend(daily_volumes)
 
         trades = []
-        logger.debug(f"Day {day+1}: Starting simulation with VIX shift {vix_shift:.2f}")
         successful_trades = 0
+        logger.debug(f"Day {day + 1}: Starting simulation with VIX shift {vix_shift:.2f}")
 
         for trade_idx in range(TRADES_PER_DAY):
             log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift)
+
             if log_entry:
                 trades.append(log_entry)
                 successful_trades += 1
-                logger.debug(f"✅ Trade {trade_idx+1} generated: PnL={log_entry['pct_pnl']}, duration={log_entry['duration']}")
-            else:
-                logger.debug(f"❌ Trade {trade_idx+1} skipped or failed (simulate_trade returned None)")
+                logger.debug(f"✅ Trade {trade_idx + 1} generated: PnL={log_entry['pct_pnl']}, duration={log_entry['duration']}")
 
-            # === Long-term data warm-up tracking ===
-        if day < WARM_UP_DAYS:
-            indicators = log_entry.get("indicators", {})
-            option_data = log_entry.get("option_data", {})
-            position_size = log_entry.get("position_size", 1.0)
-            
-            def append_if_valid(key, val):
-                if key in LONG_TERM_DATA and isinstance(val, (int, float)) and not math.isnan(val):
-                    LONG_TERM_DATA[key].append(val)
-    
-            append_if_valid("RSI", indicators.get("rsi_14"))
-            append_if_valid("MACD", indicators.get("macd"))
-            append_if_valid("MACD_HIST", indicators.get("macd_hist"))
-            append_if_valid("EMA_DIST", indicators.get("price") - indicators.get("ema_20") if "price" in indicators and "ema_20" in indicators else 0)
-            append_if_valid("ATR", indicators.get("atr_14"))
-            append_if_valid("ADX", indicators.get("adx_14"))
-            append_if_valid("VWAP", indicators.get("vwap"))
-            append_if_valid("BB_WIDTH", (indicators.get("bb_upper") - indicators.get("bb_lower")) if indicators.get("bb_upper") and indicators.get("bb_lower") else None)
-            append_if_valid("VIX", indicators.get("vix"))
-            append_if_valid("SPY_ABS", abs(indicators.get("price", 0)))
-            
-            append_if_valid("IV", option_data.get("iv"))
-            append_if_valid("DELTA", option_data.get("delta"))
-            append_if_valid("SIZE", position_size)
-    
-            for k in LONG_TERM_DATA:
-                if len(LONG_TERM_DATA[k]) > 500:
-                    LONG_TERM_DATA[k] = LONG_TERM_DATA[k][-500:]
-                    
-        # 🔹 2. Now append to daily trade list
-        trades.append(log_entry)
-        successful_trades += 1
-        logger.debug(f"✅ Trade {trade_idx+1} generated: PnL={log_entry['pct_pnl']}, duration={log_entry['duration
-        
+                # Accumulate long-term feature normalization stats during warm-up
+                if day < WARM_UP_DAYS:
+                    indicators = log_entry.get("indicators", {})
+                    option_data = log_entry.get("option_data", {})
+                    position_size = log_entry.get("position_size", 1.0)
+
+                    def append_if_valid(key, val):
+                        if key in LONG_TERM_DATA and isinstance(val, (int, float)) and not math.isnan(val):
+                            LONG_TERM_DATA[key].append(val)
+
+                    append_if_valid("RSI", indicators.get("rsi_14"))
+                    append_if_valid("MACD", indicators.get("macd"))
+                    append_if_valid("MACD_HIST", indicators.get("macd_hist"))
+                    append_if_valid("EMA_DIST", indicators.get("price") - indicators.get("ema_20") if "price" in indicators and "ema_20" in indicators else 0)
+                    append_if_valid("ATR", indicators.get("atr_14"))
+                    append_if_valid("ADX", indicators.get("adx_14"))
+                    append_if_valid("VWAP", indicators.get("vwap"))
+                    append_if_valid("BB_WIDTH", (indicators.get("bb_upper") - indicators.get("bb_lower")) if indicators.get("bb_upper") and indicators.get("bb_lower") else None)
+                    append_if_valid("VIX", indicators.get("vix"))
+                    append_if_valid("SPY_ABS", abs(indicators.get("price", 0)))
+
+                    append_if_valid("IV", option_data.get("iv"))
+                    append_if_valid("DELTA", option_data.get("delta"))
+                    append_if_valid("SIZE", position_size)
+
+                    for k in LONG_TERM_DATA:
+                        if len(LONG_TERM_DATA[k]) > 500:
+                            LONG_TERM_DATA[k] = LONG_TERM_DATA[k][-500:]
+
+            else:
+                logger.debug(f"❌ Trade {trade_idx + 1} skipped or failed (simulate_trade returned None)")
+
         if trades:
             with open(META_LOG_PATH, "a") as f:
                 for t in trades:
                     f.write(json.dumps(t) + "\n")
-            logger.debug(f"Day {day+1}: Logged {len(trades)} trades to {META_LOG_PATH}")
+            logger.debug(f"Day {day + 1}: Logged {len(trades)} trades to {META_LOG_PATH}")
         else:
-            logger.debug(f"Day {day+1}: No trades generated")
+            logger.debug(f"Day {day + 1}: No trades generated")
 
-        logger.info(f"Day {day+1}: {successful_trades}/{TRADES_PER_DAY} trades returned from simulate_trade()")
+        logger.info(f"Day {day + 1}: {successful_trades}/{TRADES_PER_DAY} trades returned from simulate_trade()")
 
         if (day + 1) % 50 == 0:
             logger.info(f"Simulated {day + 1} days.")
