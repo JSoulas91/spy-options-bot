@@ -1032,6 +1032,10 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         "agent_confidence": agent_confidence,
         "entry_state": meta_entry.tolist(),
         "exit_state": meta_exit.tolist(),
+        # ✅ New additions for warm-up data accumulation
+        "indicators": indicators,
+        "option_data": option_data,
+        "position_size": position_size,
     }
 
 def main():
@@ -1072,6 +1076,10 @@ def main():
 
             # === Long-term data warm-up tracking ===
         if day < WARM_UP_DAYS:
+            indicators = log_entry.get("indicators", {})
+            option_data = log_entry.get("option_data", {})
+            position_size = log_entry.get("position_size", 1.0)
+            
             def append_if_valid(key, val):
                 if key in LONG_TERM_DATA and isinstance(val, (int, float)) and not math.isnan(val):
                     LONG_TERM_DATA[key].append(val)
