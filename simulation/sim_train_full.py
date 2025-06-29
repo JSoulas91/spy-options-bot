@@ -128,19 +128,27 @@ def update_long_term_stats(long_term_data: dict, features: dict):
     import pandas as pd
 
     for key, val in features.items():
-        row = pd.DataFrame([val])
+        # 🛡️ Flatten any list-like value to a scalar
+        if isinstance(val, (list, tuple, np.ndarray)):
+            if len(val) == 1:
+                val = val[0]
+            else:
+                val = float(np.mean(val))  # Or raise an error if multiple elements is invalid
 
-        # ✅ If key not present, create new DataFrame
-        if key not in long_term_data or not isinstance(long_term_data[key], pd.DataFrame):
+        row = pd.DataFrame([{key: val}])
+
+        df = long_term_data.get(key)
+        if df is None:
             long_term_data[key] = row
-        else:
-            # ✅ Ensure we're always appending to a DataFrame
-            df = long_term_data[key]
+        elif isinstance(df, pd.DataFrame):
             long_term_data[key] = pd.concat([df, row], ignore_index=True)
+        else:
+            # 🔥 Failsafe: convert list -> DataFrame here (shouldn’t happen anymore)
+            logger.warning(f"⚠️ Coercing long_term_data[{key}] from {type(df)} to DataFrame")
+            long_term_data[key] = pd.concat([pd.DataFrame(df), row], ignore_index=True)
 
-        # ✅ Optional: Limit memory usage
         if len(long_term_data[key]) > 5000:
-            long_term_data[key] = long_term_data[key].iloc[-5000:].reset_index(drop=True)
+            long_term_data[key] = long_term_data[key].iloc[-5000:]
             
 def _pad(vec: List[float], dim: int = STATE_DIM) -> List[float]:
     if len(vec) < dim:
