@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from typing import List, Dict, Optional
-
+from config import ENABLE_DYNAMIC_SIZING, MIN_POSITION_SIZE, MAX_POSITION_SIZE, DEFAULT_POSITION_SIZE
 from meta.meta_agent import MetaAgent
 from meta.reward_shaper import RewardShaper
 from utils.telegram_utils import send_telegram_message
