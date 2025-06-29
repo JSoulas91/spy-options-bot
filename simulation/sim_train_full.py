@@ -876,6 +876,12 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     logger.debug(f"🛠️ Built features DataFrame: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
 
     update_long_term_stats(long_term_data, classifier_features)
+
+    # ✅ Validate long_term_data integrity immediately
+    for k, v in long_term_data.items():
+        if not isinstance(v, pd.DataFrame):
+            logger.error(f"❌ long_term_data[{k}] is not a DataFrame (type={type(v)}) — invalid long_term_data!")
+            raise TypeError(f"long_term_data[{k}] corrupted: expected DataFrame, got {type(v)}")
     
     # Ensure it's a proper DataFrame
     if not isinstance(features_df, pd.DataFrame):
