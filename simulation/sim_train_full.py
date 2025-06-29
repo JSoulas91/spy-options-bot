@@ -321,6 +321,13 @@ def black_scholes_price(s, k, t, r, sigma, call=True):
         return s * nd1 - k * math.exp(-r * t) * nd2
     else:
         return k * math.exp(-r * t) * (1 - nd2) - s * (1 - nd1)
+        
+def black_scholes_delta(s, k, t, r, sigma, call=True):
+    if t <= 0:
+        return 1.0 if call and s > k else 0.0 if call else -1.0 if s < k else 0.0
+    d1 = (math.log(s / k) + (r + 0.5 * sigma**2) * t) / (sigma * math.sqrt(t))
+    nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
+    return nd1 if call else nd1 - 1
 
 def clean_bars(bars):
     return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
