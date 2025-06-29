@@ -902,7 +902,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift):
         final_price=exit_price,
         time_held_minutes=duration,
         past_trades=past_trades,
-        long_term_data=long_term_history,
+        long_term_data=long_term_data,
         classifier_output=classifier_output
     )
 
