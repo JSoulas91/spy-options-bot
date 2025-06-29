@@ -1102,6 +1102,11 @@ def main():
             for k in LONG_TERM_DATA:
                 if len(LONG_TERM_DATA[k]) > 500:
                     LONG_TERM_DATA[k] = LONG_TERM_DATA[k][-500:]
+                    
+        # 🔹 2. Now append to daily trade list
+        trades.append(log_entry)
+        successful_trades += 1
+        logger.debug(f"✅ Trade {trade_idx+1} generated: PnL={log_entry['pct_pnl']}, duration={log_entry['duration
         
         if trades:
             with open(META_LOG_PATH, "a") as f:
