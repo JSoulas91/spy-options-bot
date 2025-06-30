@@ -444,11 +444,29 @@ def black_scholes_delta(s, k, t, r, sigma, call=True):
     nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
     return nd1 if call else nd1 - 1
 
-def clean_bars(bars):
-    return [
-        bar for bar in bars
-        if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])
-    ]
+def clean_bars(df):
+    try:
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(f"clean_bars expected pd.DataFrame, got {type(df)}")
+
+        required_cols = ["open", "high", "low", "close", "volume"]
+        for col in required_cols:
+            if col not in df.columns:
+                raise ValueError(f"Missing column in bars DataFrame: {col}")
+
+        # Remove rows with any non-numeric or NaN in required fields
+        df_clean = df.copy()
+        for col in required_cols:
+            df_clean = df_clean[pd.to_numeric(df_clean[col], errors="coerce").notna()]
+
+        df_clean.reset_index(drop=True, inplace=True)
+
+        logger.debug(f"🧽 clean_bars: cleaned bars from {len(df)} → {len(df_clean)} rows")
+        return df_clean
+
+    except Exception as e:
+        halt_on_error("clean_bars", e, input_type=str(type(df)), input_preview=str(df.head() if isinstance(df, pd.DataFrame) else df))
+        return pd.DataFrame()
     
 
 def build_meta_state_for_entry(
