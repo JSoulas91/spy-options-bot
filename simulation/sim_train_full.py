@@ -1155,25 +1155,36 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     logger.debug(f"📐 ATR(14): {atr:.2f}")
     
     # 🏁 Build exit meta-state
-    meta_exit = build_meta_state_for_exit(
-        data_1m=bars_1m,
-        data_5m=bars_5m,
-        data_15m=bars_15m,
-        data_1h=bars_1h,
-        data_1d=bars_1d,
-        confidence_score=agent_confidence,
-        trade_type=int(is_swing),
-        entry_price=entry_price,
-        final_price=exit_price,
-        time_held_minutes=duration,
-        past_trades=past_trades,
-        long_term_data=long_term_data,
-        classifier_output=classifier_output
-    )
+    try:
+        logger.debug(f"🧱 Calling build_meta_state_for_exit with keys: {[k for k in locals().keys()]}")
+        logger.debug(f"Types: bars_1m={type(bars_1m)}, past_trades={type(past_trades)}, long_term_data={type(long_term_data)}")
+        logger.debug(f"Classifier output keys: {list(classifier_output.keys())}")
+    
+        meta_exit = build_meta_state_for_exit(
+            data_1m=bars_1m,
+            data_5m=bars_5m,
+            data_15m=bars_15m,
+            data_1h=bars_1h,
+            data_1d=bars_1d,
+            confidence_score=agent_confidence,
+            trade_type=int(is_swing),
+            entry_price=entry_price,
+            final_price=exit_price,
+            time_held_minutes=duration,
+            past_trades=past_trades,
+            long_term_data=long_term_data,
+            classifier_output=classifier_output
+        )
+        logger.debug(f"🧩 meta_exit shape: {np.array(meta_exit).shape if meta_exit is not None else 'None'}")
+    
+    except Exception as e:
+        logger.exception("❌ Failed to build meta_exit")
+        return None
     
     if meta_exit is None:
         logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: meta_exit returned None")
         return None
+    
     if is_padded(meta_exit):
         logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: meta_exit is padded")
         return None
