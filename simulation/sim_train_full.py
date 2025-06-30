@@ -667,7 +667,6 @@ def build_meta_state_for_exit(
         data_15m = ensure_df(data_15m)
         data_1h = ensure_df(data_1h)
         data_1d = ensure_df(data_1d)
-        long_term_data = ensure_df(long_term_data)
 
         logger.debug(f"✅ Timeframe shapes: 1m={data_1m.shape}, 5m={data_5m.shape}, 15m={data_15m.shape}, 1h={data_1h.shape}, 1d={data_1d.shape}")
 
