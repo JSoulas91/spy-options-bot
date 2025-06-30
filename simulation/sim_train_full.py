@@ -1229,6 +1229,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         "position_size": position_size,
     })
     
+    predicted_direction = classifier_output.get("predicted_direction", -1)
+    
     # 🎯 Validate direction prediction
     direction_correct = (
         (predicted_direction == 1 and final_price > price_sig) or
