@@ -82,318 +82,349 @@ model_inference = ModelInference()
 
 print(f"SIM_DAYS={SIM_DAYS}, TRADES_PER_DAY={TRADES_PER_DAY}, START_PRICE={START_PRICE}")
 
+import traceback
+
+def debug_inputs(label: str, **kwargs):
+    logger.debug(f"\n[DEBUG] {label} input diagnostics:")
+    for name, val in kwargs.items():
+        if isinstance(val, (pd.DataFrame, pd.Series, np.ndarray)):
+            logger.debug(f"  - {name}: type={type(val)}, shape={val.shape}")
+        elif isinstance(val, list):
+            logger.debug(f"  - {name}: type=list, length={len(val)}")
+        elif isinstance(val, dict):
+            logger.debug(f"  - {name}: type=dict, keys={list(val.keys())}")
+        else:
+            logger.debug(f"  - {name}: type={type(val)}, value={val}")
+    logger.debug("-" * 60)
+
+def halt_on_error(context: str, err: Exception, **inputs):
+    logger.error(f"\n[ERROR] Failure in: {context}")
+    logger.error("Inputs at failure:")
+    for k, v in inputs.items():
+        logger.error(f"  - {k}: {type(v)}, {str(v)[:300]}")
+    logger.error("Traceback:")
+    logger.error(traceback.format_exc())
+    raise err
+
 def is_padded(meta):
-    meta = np.array(meta)
-    return np.allclose(meta, 0.5, atol=1e-6)
+    try:
+        meta = np.array(meta)
+        return np.allclose(meta, 0.5, atol=1e-6)
+    except Exception as e:
+        halt_on_error("is_padded", e, meta=meta)
 
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
-    prices = [s0]
-    for _ in range(1, n_steps):
-        shock = RNG.normalvariate(0, 1)
-        s_t = prices[-1] * math.exp((mu - 0.5 * sigma**2) * dt + sigma * math.sqrt(dt) * shock)
-        prices.append(round(s_t, 2))
-    print(f"GBM path generated with {n_steps} steps from {s0} starting price.")
-    print(f"First 5 prices: {prices[:5]}")
-    print(f"Last 5 prices: {prices[-5:]}")
-    return prices
+    try:
+        prices = [s0]
+        for _ in range(1, n_steps):
+            shock = RNG.normalvariate(0, 1)
+            s_t = prices[-1] * math.exp((mu - 0.5 * sigma**2) * dt + sigma * math.sqrt(dt) * shock)
+            prices.append(round(s_t, 2))
+        logger.debug(f"✅ GBM path generated with {n_steps} steps from {s0} starting price.")
+        logger.debug(f"First 5 prices: {prices[:5]}")
+        logger.debug(f"Last 5 prices: {prices[-5:]}")
+        return prices
+    except Exception as e:
+        halt_on_error("gbm_path", e, n_steps=n_steps, s0=s0, mu=mu, sigma=sigma, dt=dt)
 
 def normalize(value, value_range):
-    min_val, max_val = value_range
-    if max_val == min_val:
-        return PAD_VAL
-    return max(PAD_VAL, min(1.0, (value - min_val) / (max_val - min_val)))
+    try:
+        min_val, max_val = value_range
+        if max_val == min_val:
+            return PAD_VAL
+        return max(PAD_VAL, min(1.0, (value - min_val) / (max_val - min_val)))
+    except Exception as e:
+        halt_on_error("normalize", e, value=value, value_range=value_range)
 
-def _calc_range(feat: str, long_term: Dict[str, np.ndarray]) -> Tuple[float, float]:
+def _calc_range(feat: str, long_term: Dict[str, pd.DataFrame]) -> Tuple[float, float]:
     vals: List[float] = []
-    
+
     def to_list_safe(x):
-        if hasattr(x, "tolist"):
-            return x.tolist()
-        elif isinstance(x, list):
-            return x
-        else:
-            try:
+        try:
+            if hasattr(x, "tolist"):
+                return x.tolist()
+            elif isinstance(x, list):
+                return x
+            else:
                 return list(x)
-            except Exception:
-                return []
-    
+        except Exception:
+            logger.warning(f"[WARN] Failed to convert feature column to list for {feat}")
+            return []
+
     for idx, df in enumerate(long_term.values()):
-        if df is None:
+        if df is None or not isinstance(df, pd.DataFrame):
+            logger.warning(f"⚠️ long_term[{idx}] is not a valid DataFrame: type={type(df)}")
             continue
-        
-        # Defensive: if not a DataFrame, skip and log warning
-        if not hasattr(df, "columns"):
-            logger.warning(f"⚠️ long_term[{idx}] is not a DataFrame or missing columns attribute: type={type(df)}")
-            continue
-        
         if df.empty:
             continue
-        
+
         if feat == "EMA_DIST":
             if "price" in df.columns and "ema_20" in df.columns:
                 diff = df["price"] - df["ema_20"]
                 vals.extend(to_list_safe(diff))
             else:
-                logger.warning(f"⚠️ long_term[{idx}] missing 'price' or 'ema_20' columns: {df.columns}")
+                logger.warning(f"⚠️ EMA_DIST missing 'price' or 'ema_20' in long_term[{idx}] → cols: {df.columns}")
         else:
             if feat in df.columns:
                 vals.extend(to_list_safe(df[feat]))
             else:
-                logger.warning(f"⚠️ long_term[{idx}] missing column '{feat}': {df.columns}")
-    
+                logger.warning(f"⚠️ Feature '{feat}' missing in long_term[{idx}] → cols: {df.columns}")
+
     return (min(vals), max(vals)) if vals else DEFAULT_RANGES[feat]
-    
+
 def get_range(feat: str, long_term) -> Tuple[float, float]:
-    now = time.time()
-    if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
-        return _DYNAMIC[feat][0]
-    rng = _calc_range(feat, long_term)
-    if rng[0] == rng[1]:
-        rng = DEFAULT_RANGES[feat]
-    _DYNAMIC[feat] = (rng, now)
-    return rng
-    
+    try:
+        now = time.time()
+        if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
+            return _DYNAMIC[feat][0]
+        rng = _calc_range(feat, long_term)
+        if rng[0] == rng[1]:
+            rng = DEFAULT_RANGES[feat]
+        _DYNAMIC[feat] = (rng, now)
+        return rng
+    except Exception as e:
+        halt_on_error("get_range", e, feat=feat, long_term=long_term)
+
 def update_long_term_stats(long_term_data: dict, features: dict):
-    import pandas as pd
-    import numpy as np
+    try:
+        for key, val in features.items():
+            # 🧼 Ensure scalar value
+            if isinstance(val, (list, tuple, np.ndarray)):
+                if len(val) == 1:
+                    val = val[0]
+                else:
+                    raise ValueError(f"🚫 Feature '{key}' is not scalar: {val} (type={type(val)})")
 
-    for key, val in features.items():
-        # 🧼 Coerce list/array/tuple to scalar
-        if isinstance(val, (list, tuple, np.ndarray)):
-            if len(val) == 1:
-                val = val[0]
+            row = pd.DataFrame([{key: val}])  # One-row frame for consistent concat
+            df = long_term_data.get(key)
+
+            if df is None:
+                long_term_data[key] = row
+            elif isinstance(df, pd.DataFrame):
+                long_term_data[key] = pd.concat([df, row], ignore_index=True)
             else:
-                raise ValueError(f"🚫 Feature value for {key} is not scalar: {val} (type={type(val)})")
+                raise TypeError(f"❌ long_term_data[{key}] corrupted: expected DataFrame, got {type(df)}")
 
-        row = pd.DataFrame([{key: val}])  # Ensures column has correct name
-
-        df = long_term_data.get(key)
-
-        if df is None:
-            long_term_data[key] = row
-        elif isinstance(df, pd.DataFrame):
-            long_term_data[key] = pd.concat([df, row], ignore_index=True)
-        else:
-            raise TypeError(f"❌ long_term_data[{key}] corrupted before insert: expected DataFrame, got {type(df)}")
-
-        # Keep only last 5000 rows
-        if len(long_term_data[key]) > 5000:
-            long_term_data[key] = long_term_data[key].iloc[-5000:]
+            if len(long_term_data[key]) > 5000:
+                long_term_data[key] = long_term_data[key].iloc[-5000:]
+    except Exception as e:
+        halt_on_error("update_long_term_stats", e, long_term_data=long_term_data, features=features)
             
 def _pad(state: List[float]) -> np.ndarray:
-    padded = np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
-    state = np.array(state, dtype=np.float32)
-    length = min(len(state), STATE_DIM)
-    padded[:length] = state[:length]
-    return padded
-    
+    try:
+        state = np.array(state, dtype=np.float32)
+        padded = np.full(STATE_DIM, PAD_VAL, dtype=np.float32)
+        length = min(len(state), STATE_DIM)
+        padded[:length] = state[:length]
+        return padded
+    except Exception as e:
+        halt_on_error("_pad", e, state=state)
+
 def _regime_one_hot(regime: str) -> List[float]:
-    mapping = {"bull": [1.0, 0.0, 0.0], "bear": [0.0, 1.0, 0.0], "sideways": [0.0, 0.0, 1.0]}
-    return mapping.get(regime, [PAD_VAL, PAD_VAL, PAD_VAL])
-    
-def _classify_regime(day_bar, vix_val: float) -> str:
-    if vix_val > 30 or day_bar["rsi"] < 40:
-        return "bear"
-    elif vix_val < 20 and day_bar["rsi"] > 60:
-        return "bull"
-    else:
-        return "sideways"
-        
+    try:
+        mapping = {"bull": [1.0, 0.0, 0.0], "bear": [0.0, 1.0, 0.0], "sideways": [0.0, 0.0, 1.0]}
+        result = mapping.get(regime.lower(), [PAD_VAL, PAD_VAL, PAD_VAL])
+        if result == [PAD_VAL, PAD_VAL, PAD_VAL]:
+            logger.warning(f"[WARN] Unknown regime '{regime}', defaulting to PAD_VALs.")
+        return result
+    except Exception as e:
+        halt_on_error("_regime_one_hot", e, regime=regime)
+
+def _classify_regime(day_bar: dict, vix_val: float) -> str:
+    try:
+        if vix_val > 30 or day_bar.get("rsi", 50) < 40:
+            return "bear"
+        elif vix_val < 20 and day_bar.get("rsi", 50) > 60:
+            return "bull"
+        else:
+            return "sideways"
+    except Exception as e:
+        halt_on_error("_classify_regime", e, day_bar=day_bar, vix_val=vix_val)
+
 def fetch_vix_price() -> Optional[float]:
     try:
-        # REPLACE with real VIX fetching if available
+        # Placeholder — replace with live API call or historical lookup
         return 18.0
-    except Exception:
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to fetch VIX price: {str(e)}")
         return None
-        
+
 def get_minutes_since_open() -> int:
-    from datetime import datetime
-    now = datetime.utcnow()
-    market_open = now.replace(hour=13, minute=30, second=0, microsecond=0)  # 9:30 AM ET = 13:30 UTC
-    delta = now - market_open
-    return max(0, delta.seconds // 60)
-    
+    try:
+        from datetime import datetime
+        now = datetime.utcnow()
+        market_open = now.replace(hour=13, minute=30, second=0, microsecond=0)  # 9:30 AM ET
+        delta = now - market_open
+        minutes = max(0, delta.seconds // 60)
+        return minutes
+    except Exception as e:
+        halt_on_error("get_minutes_since_open", e)
+
 def summarise_past(past_trades: List[dict], profit_range: tuple, dur_range: tuple) -> List[float]:
-    if not past_trades:
-        return [PAD_VAL] * 6
+    try:
+        if not past_trades:
+            return [PAD_VAL] * 6
 
-    profits = [t.get("pnl", 0.0) for t in past_trades[-3:]]
-    durations = [t.get("duration", 0.0) for t in past_trades[-3:]]
+        recent = past_trades[-3:]
+        profits = [t.get("pnl", 0.0) for t in recent]
+        durations = [t.get("duration", 0.0) for t in recent]
 
-    normalized_profits = [normalize(p, profit_range) for p in profits]
-    normalized_durations = [normalize(d, dur_range) for d in durations]
+        normalized_profits = [normalize(p, profit_range) for p in profits]
+        normalized_durations = [normalize(d, dur_range) for d in durations]
 
-    return normalized_profits + normalized_durations
-    
+        return normalized_profits + normalized_durations
+    except Exception as e:
+        halt_on_error("summarise_past", e, past_trades=past_trades, profit_range=profit_range, dur_range=dur_range)
+
 def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
-    symbol = f"SPY{day.strftime('%y%m%d')}{c_or_p}{int(strike*100):08d}"
-    print(f"Option symbol created: {symbol}")
-    return symbol
-
+    try:
+        if c_or_p not in ("C", "P"):
+            raise ValueError(f"Invalid option type '{c_or_p}', must be 'C' or 'P'")
+        symbol = f"SPY{day.strftime('%y%m%d')}{c_or_p.upper()}{int(strike * 100):08d}"
+        logger.debug(f"✅ Option symbol created: {symbol}")
+        return symbol
+    except Exception as e:
+        halt_on_error("make_option_symbol", e, day=day, strike=strike, c_or_p=c_or_p)
 
 def construct_bars(prices, volumes, interval, start_time=None):
-    if start_time is None:
-        start_time = datetime(2025, 1, 1, 9, 30)
+    try:
+        if start_time is None:
+            start_time = datetime(2025, 1, 1, 9, 30)
 
-    if len(prices) != len(volumes):
-        logger.debug(f"⚠️ construct_bars: length mismatch - prices={len(prices)}, volumes={len(volumes)}")
-        return []
+        # Type checks
+        if not isinstance(prices, (list, np.ndarray)) or not isinstance(volumes, (list, np.ndarray)):
+            raise TypeError(f"Prices and volumes must be list or np.ndarray. Got types: prices={type(prices)}, volumes={type(volumes)}")
 
-    if len(prices) < interval:
-        logger.debug(f"⚠️ construct_bars: not enough data to form one bar - len(prices)={len(prices)}, interval={interval}")
-        return []
+        prices = list(prices)
+        volumes = list(volumes)
 
-    bars = []
-    for i in range(0, len(prices) - interval + 1, interval):
-        chunk = prices[i:i + interval]
-        vol_chunk = volumes[i:i + interval]
+        if len(prices) != len(volumes):
+            logger.warning(f"⚠️ construct_bars: length mismatch - prices={len(prices)}, volumes={len(volumes)}")
+            return []
 
-        if len(chunk) < interval or len(vol_chunk) < interval:
-            logger.debug(f"⚠️ construct_bars: incomplete chunk at i={i} - chunk_len={len(chunk)}, vol_len={len(vol_chunk)}")
-            continue
+        if len(prices) < interval:
+            logger.warning(f"⚠️ construct_bars: not enough data to form one bar - len(prices)={len(prices)}, interval={interval}")
+            return []
 
-        bar_time = start_time + timedelta(minutes=i)
+        bars = []
+        for i in range(0, len(prices) - interval + 1, interval):
+            chunk = prices[i:i + interval]
+            vol_chunk = volumes[i:i + interval]
 
-        bar = {
-            "timestamp": bar_time,
-            "open": chunk[0],
-            "high": max(chunk),
-            "low": min(chunk),
-            "close": chunk[-1],
-            "volume": sum(vol_chunk)
-        }
+            if len(chunk) < interval or len(vol_chunk) < interval:
+                logger.debug(f"⚠️ construct_bars: incomplete chunk at i={i} - chunk_len={len(chunk)}, vol_len={len(vol_chunk)}")
+                continue
 
-        bars.append(bar)
+            bar_time = start_time + timedelta(minutes=i)
 
-    logger.debug(f"✅ construct_bars: constructed {len(bars)} bars at interval={interval}min starting from {start_time.strftime('%Y-%m-%d %H:%M')}")
-    return bars
+            bar = {
+                "timestamp": bar_time,
+                "open": float(chunk[0]),
+                "high": float(max(chunk)),
+                "low": float(min(chunk)),
+                "close": float(chunk[-1]),
+                "volume": float(sum(vol_chunk))
+            }
+
+            bars.append(bar)
+
+        logger.debug(f"✅ construct_bars: constructed {len(bars)} bars at interval={interval}min from {start_time.strftime('%Y-%m-%d %H:%M')}")
+        return bars
+
+    except Exception as e:
+        halt_on_error("construct_bars", e, prices_len=len(prices), volumes_len=len(volumes), interval=interval, start_time=start_time)
 
 
 def compute_all_indicators(prices, volumes, idx):
-    indicators = {}
-    start_idx = max(0, idx - 100)
-    window = prices[start_idx:idx + 1]
-    vol_window = volumes[start_idx:idx + 1]
+    try:
+        indicators = {}
+        start_idx = max(0, idx - 100)
+        window = prices[start_idx:idx + 1]
+        vol_window = volumes[start_idx:idx + 1]
 
-    # --- [TRACE] Raw input debug ---
-    print(f"[TRACE] window raw (len={len(window)}): {window}")
-    print(f"[TRACE] vol_window raw (len={len(vol_window)}): {vol_window}")
+        logger.debug(f"[TRACE] compute_all_indicators: window len={len(window)}, vol_window len={len(vol_window)}")
 
-    # Ensure numeric and clean closes
-    closes_series = pd.to_numeric(pd.Series(window), errors="coerce")
-    vol_series = pd.to_numeric(pd.Series(vol_window), errors="coerce").fillna(0.0)
+        # Ensure numeric
+        closes_series = pd.to_numeric(pd.Series(window), errors="coerce")
+        vol_series = pd.to_numeric(pd.Series(vol_window), errors="coerce").fillna(0.0)
 
-    # --- [TRACE] Parsed debug ---
-    print(f"[TRACE] closes_series (len={len(closes_series)}): {closes_series.tolist()}")
-    print(f"[TRACE] vol_series (len={len(vol_series)}): {vol_series.tolist()}")
+        valid_mask = closes_series.notna()
+        if valid_mask.sum() == 0:
+            logger.error(f"[FATAL] All price entries NaN at idx={idx}")
+            return None
 
-    # Align volume with valid prices only
-    valid_mask = closes_series.notna()
+        closes = closes_series[valid_mask]
+        vol_series = vol_series[valid_mask]
 
-    if valid_mask.sum() == 0:
-        print(f"[ERROR] All closes are NaN at idx={idx}, cannot compute indicators")
-        return None
+        if len(closes) < 20:
+            logger.warning(f"[SKIP] Not enough valid data to compute indicators at idx={idx} (len={len(closes)})")
+            return None
 
-    # --- [DEBUG] NaN filtering summary ---
-    print(f"[DEBUG] Raw window (prices): {window[-5:]}")
-    print(f"[DEBUG] Parsed closes_series: {closes_series[-5:]}")
-    print(f"[DEBUG] Valid closes count: {valid_mask.sum()}")
+        logger.debug(f"[INFO] Computing indicators at idx={idx} using closes from idx={start_idx} to idx={idx}")
 
-    closes = closes_series[valid_mask]
-    vol_series = vol_series[valid_mask]
-    window = closes.values  # clean numeric window used for VWAP
+        # --- EMA 20 ---
+        ema_20 = closes.ewm(span=20).mean().iloc[-1]
+        indicators["ema_20"] = ema_20
 
-    if len(closes) < 20:
-        print(f"[DEBUG] idx={idx}, closes length: {len(closes)}, vol_series length: {len(vol_series)}")
-        print(f"[DEBUG] closes (last 5):\n{closes.tail()}")
-        print(f"[DEBUG] vol_series (last 5):\n{vol_series.tail()}")
-        print(f"[WARNING] Not enough valid numeric data for indicators at idx={idx}")
-        return None
+        # --- RSI 14 ---
+        delta = closes.diff()
+        up = delta.clip(lower=0)
+        down = -delta.clip(upper=0)
+        avg_gain = up.rolling(window=14).mean().iloc[-1]
+        avg_loss = down.rolling(window=14).mean().iloc[-1] or 1e-6
+        rs = avg_gain / avg_loss
+        indicators["rsi_14"] = 100 - (100 / (1 + rs))
 
-    indicators = {}
-    print(f"[DEBUG] idx={idx}, using window from {start_idx} to {idx} (length={len(closes)})")
-    
-    # EMA 20
-    ema_20 = closes.ewm(span=20).mean().iloc[-1]
-    if pd.isna(ema_20):
-        print(f"[WARNING] EMA 20 is NaN at idx={idx}")
-    indicators["ema_20"] = ema_20
+        # --- MACD ---
+        exp1 = closes.ewm(span=12, adjust=False).mean()
+        exp2 = closes.ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        indicators["macd"] = macd.iloc[-1]
+        indicators["macd_signal"] = signal.iloc[-1]
+        indicators["macd_hist"] = (macd - signal).iloc[-1]
 
-    # RSI 14
-    delta = closes.diff()
-    up, down = delta.clip(lower=0), -delta.clip(upper=0)
-    avg_gain = up.rolling(window=14).mean().iloc[-1]
-    avg_loss = down.rolling(window=14).mean().iloc[-1]
+        # --- Bollinger Bands (20) ---
+        std = closes.rolling(window=20).std().iloc[-1]
+        middle = closes.rolling(window=20).mean().iloc[-1]
+        indicators["bb_middle"] = middle
+        indicators["bb_upper"] = middle + 2 * std
+        indicators["bb_lower"] = middle - 2 * std
 
-    if avg_loss == 0:
-        print(f"[WARNING] avg_loss is zero at idx={idx}, adjusting to avoid div by zero")
-        avg_loss = 1e-6
+        # --- VWAP ---
+        window_clean = closes.values
+        vol_clean = vol_series.values
+        if len(window_clean) != len(vol_clean):
+            logger.error(f"[FATAL] VWAP mismatch at idx={idx}: prices={len(window_clean)}, volumes={len(vol_clean)}")
+            return None
+        indicators["vwap"] = np.average(window_clean, weights=vol_clean)
 
-    rs = avg_gain / avg_loss
-    rsi_14 = 100 - (100 / (1 + rs))
-    if pd.isna(rsi_14):
-        print(f"[WARNING] RSI 14 is NaN at idx={idx}")
-    indicators["rsi_14"] = rsi_14
+        # --- ATR 14 (True range approximation) ---
+        tr_list = [max(closes.iloc[i] - closes.iloc[i - 1], 0) for i in range(1, len(closes))]
+        atr_14 = pd.Series(tr_list).rolling(window=14).mean().iloc[-1]
+        indicators["atr_14"] = atr_14
 
-    # MACD
-    exp1 = closes.ewm(span=12, adjust=False).mean()
-    exp2 = closes.ewm(span=26, adjust=False).mean()
-    macd = exp1 - exp2
-    signal = macd.ewm(span=9, adjust=False).mean()
+        # --- Simulated ADX ---
+        adx = RNG.uniform(10, 35)
+        indicators["adx_14"] = adx
 
-    if pd.isna(macd.iloc[-1]) or pd.isna(signal.iloc[-1]):
-        print(f"[WARNING] MACD or signal line is NaN at idx={idx}")
+        # --- Final close price ---
+        indicators["price"] = closes.iloc[-1] if not closes.empty else None
 
-    indicators["macd"] = macd.iloc[-1]
-    indicators["macd_signal"] = signal.iloc[-1]
-    indicators["macd_hist"] = (macd - signal).iloc[-1]
+        # --- Final rounding ---
+        for k in indicators:
+            try:
+                indicators[k] = round(float(indicators[k]), 4)
+            except Exception as e:
+                logger.error(f"[ERROR] Failed to round {k} at idx={idx}: {e}")
+                indicators[k] = None
 
-    # Bollinger Bands
-    std = closes.rolling(window=20).std().iloc[-1]
-    middle = closes.rolling(window=20).mean().iloc[-1]
-    if pd.isna(std) or pd.isna(middle):
-        print(f"[WARNING] Bollinger Bands std or middle is NaN at idx={idx}")
+        logger.debug(f"[SUCCESS] Indicators at idx={idx}: {indicators}")
+        return indicators
 
-    indicators["bb_middle"] = middle
-    indicators["bb_upper"] = middle + 2 * std
-    indicators["bb_lower"] = middle - 2 * std
-
-    # VWAP
-    if len(window) != len(vol_series):
-        print(f"[ERROR] VWAP length mismatch: prices={len(window)}, volumes={len(vol_series)} at idx={idx}")
-        return None
-    else:
-        vwap = np.average(window, weights=vol_series)
-        indicators["vwap"] = vwap
-
-    # ATR 14
-    tr_list = []
-    for i in range(1, len(closes)):
-        tr_value = max(closes.iloc[i] - closes.iloc[i - 1], 0)
-        tr_list.append(tr_value)
-    tr = pd.Series(tr_list)
-    atr_14 = tr.rolling(window=14).mean().iloc[-1]
-    if pd.isna(atr_14):
-        print(f"[WARNING] ATR 14 is NaN at idx={idx}")
-    indicators["atr_14"] = atr_14
-
-    # ADX (simulated)
-    adx = RNG.uniform(10, 35)
-    indicators["adx_14"] = adx
-    
-    indicators["price"] = closes.iloc[-1] if not closes.empty else None
-
-    # Round and print final indicators
-    for k in indicators:
-        try:
-            indicators[k] = round(float(indicators[k]), 4)
-        except Exception as e:
-            print(f"[ERROR] Rounding indicator '{k}' failed at idx={idx} with error: {e}")
-            indicators[k] = None
-
-    print(f"[INFO] Indicators at idx={idx}: {indicators}")
-    return indicators
-
+    except Exception as e:
+        halt_on_error("compute_all_indicators", e, idx=idx, price_len=len(prices), volume_len=len(volumes))
+        
 def black_scholes_price(s, k, t, r, sigma, call=True):
     if t <= 0:
         return max(0.0, s - k) if call else max(0.0, k - s)
@@ -414,7 +445,10 @@ def black_scholes_delta(s, k, t, r, sigma, call=True):
     return nd1 if call else nd1 - 1
 
 def clean_bars(bars):
-    return [bar for bar in bars if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])]
+    return [
+        bar for bar in bars
+        if all(isinstance(bar.get(k), (int, float)) for k in ["open", "high", "low", "close", "volume"])
+    ]
     
 
 def build_meta_state_for_entry(
@@ -428,8 +462,17 @@ def build_meta_state_for_entry(
 ) -> np.ndarray:
     import pandas as pd
     import numpy as np
+    import traceback
+
     past_trades = past_trades or []
     long_term_data = long_term_data or {}
+
+    logger.debug("🔍 Starting build_meta_state_for_entry")
+    logger.debug(f"Types: 1m={type(data_1m)}, 5m={type(data_5m)}, 15m={type(data_15m)}, 1h={type(data_1h)}, 1d={type(data_1d)}")
+    logger.debug(f"position_size={position_size}, trade_type={trade_type}, confidence_score={confidence_score}")
+    logger.debug(f"past_trades={past_trades}")
+    logger.debug(f"classifier_output={classifier_output}")
+    logger.debug(f"long_term_data keys={list(long_term_data.keys())}")
 
     def ensure_df(df):
         if isinstance(df, dict):
@@ -440,16 +483,19 @@ def build_meta_state_for_entry(
         return df
 
     long_term_data = ensure_df(long_term_data)
-    
+
     def build_sequence(state: List[float]) -> np.ndarray:
         padded = _pad(state)
         return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
 
+    # Ensure all dataframes are valid
     data_1m = ensure_df(data_1m)
     data_5m = ensure_df(data_5m)
     data_15m = ensure_df(data_15m)
     data_1h = ensure_df(data_1h)
     data_1d = ensure_df(data_1d)
+
+    logger.debug(f"Data shapes: 1m={data_1m.shape}, 5m={data_5m.shape}, 15m={data_15m.shape}, 1h={data_1h.shape}, 1d={data_1d.shape}")
 
     try:
         rsi_rng = get_range("RSI", long_term_data)
@@ -459,10 +505,13 @@ def build_meta_state_for_entry(
         dur_rng = DEFAULT_RANGES["DURATION"]
         prof_rng = DEFAULT_RANGES["PROFIT"]
 
+        logger.debug("✅ Fetched long-term ranges successfully.")
+
         def tf_feats(df):
-            if df is None:
+            if df is None or len(df) == 0:
+                logger.warning(f"⚠️ tf_feats: DataFrame is None or empty. Using defaults.")
                 return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
-            if hasattr(df, "iloc") and len(df) > 0:
+            try:
                 last = df.iloc[-1]
                 return [
                     normalize(last.get("rsi", 50), rsi_rng),
@@ -470,13 +519,23 @@ def build_meta_state_for_entry(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                     normalize(last.get("volume", 0), vol_rng),
                 ]
-            return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
+            except Exception as e:
+                logger.error(f"❌ tf_feats error: {e}")
+                return [PAD_VAL] * 4
 
         vix_val = fetch_vix_price() or 20.0
-        regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
+        logger.debug(f"VIX value: {vix_val}")
+
+        if classifier_output and "regime_class" in classifier_output:
+            regime = classifier_output["regime_class"]
+        else:
+            logger.debug("Classifying regime using _classify_regime()")
+            regime = _classify_regime(data_1d.iloc[-1], vix_val)
 
         clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
         norm_conf = normalize(clf_conf if clf_conf is not None else confidence_score, DEFAULT_RANGES["CONF"])
+
+        logger.debug(f"Normalized confidence: {norm_conf}, Regime: {regime}")
 
         state: List[float] = [
             norm_conf,
@@ -500,6 +559,7 @@ def build_meta_state_for_entry(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                 ]
             else:
+                logger.warning(f"⚠️ Missing or empty long_term_data[{p}]")
                 state += [PAD_VAL] * 3
 
         if classifier_output:
@@ -513,27 +573,29 @@ def build_meta_state_for_entry(
             state.extend(dir_one_hot)
 
             class_probs = classifier_output.get("class_probabilities", [PAD_VAL] * 3)
-            logger.warning(f"⚠️ class_probabilities format: {classifier_output.get('class_probabilities')}")
-            # Ensure it's a flat list of 3 floats
             if not isinstance(class_probs, (list, tuple)) or len(class_probs) != 3:
+                logger.warning(f"⚠️ Invalid class_probabilities format: {class_probs}")
                 class_probs = [PAD_VAL] * 3
             else:
                 class_probs = [float(x) if isinstance(x, (int, float)) else PAD_VAL for x in class_probs]
-            
             state.extend(class_probs)
 
             entropy = classifier_output.get("entropy", PAD_VAL)
             state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
         else:
+            logger.debug("No classifier output provided, using PAD_VALs for classifier fields.")
             state += [PAD_VAL] * 8
 
         result = build_sequence(state)
         if np.all(result == PAD_VAL):
             logger.warning("⚠️ Meta state is fully padded at entry — likely due to earlier data issue.")
+        else:
+            logger.debug(f"✅ Meta state successfully built. Shape: {result.shape}")
         return result
 
     except Exception as e:
-        logger.error(f"Error building meta state for entry: {e}")
+        logger.error(f"❌ Exception in build_meta_state_for_entry: {e}")
+        logger.error(traceback.format_exc())
         return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
         
         
@@ -551,29 +613,38 @@ def build_meta_state_for_exit(
 ) -> np.ndarray:
     import pandas as pd
     import numpy as np
-
-    past_trades = past_trades or []
-    long_term_data = long_term_data or {}
-
-    def ensure_df(df):
-        if isinstance(df, dict):
-            if any(isinstance(v, (list, tuple, np.ndarray, pd.Series)) for v in df.values()):
-                return pd.DataFrame(df)
-            else:
-                return pd.DataFrame([df])
-        return df
-
-    def build_sequence(state: List[float]) -> np.ndarray:
-        padded = _pad(state)
-        return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
-
-    data_1m = ensure_df(data_1m)
-    data_5m = ensure_df(data_5m)
-    data_15m = ensure_df(data_15m)
-    data_1h = ensure_df(data_1h)
-    data_1d = ensure_df(data_1d)
+    import traceback
 
     try:
+        logger.debug("🚨 Building meta state for EXIT")
+        logger.debug(f"🔹 Inputs: position_size={position_size}, trade_type={trade_type}, confidence_score={confidence_score}, entry_price={entry_price}, final_price={final_price}, time_held_minutes={time_held_minutes}")
+        logger.debug(f"🔹 past_trades: {type(past_trades)}, len={len(past_trades) if past_trades else 0}")
+        logger.debug(f"🔹 classifier_output keys: {list(classifier_output.keys()) if classifier_output else None}")
+
+        past_trades = past_trades or []
+        long_term_data = long_term_data or {}
+
+        def ensure_df(df):
+            if isinstance(df, dict):
+                if any(isinstance(v, (list, tuple, np.ndarray, pd.Series)) for v in df.values()):
+                    return pd.DataFrame(df)
+                else:
+                    return pd.DataFrame([df])
+            return df
+
+        def build_sequence(state: List[float]) -> np.ndarray:
+            padded = _pad(state)
+            return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
+
+        data_1m = ensure_df(data_1m)
+        data_5m = ensure_df(data_5m)
+        data_15m = ensure_df(data_15m)
+        data_1h = ensure_df(data_1h)
+        data_1d = ensure_df(data_1d)
+        long_term_data = ensure_df(long_term_data)
+
+        logger.debug(f"✅ Timeframe shapes: 1m={data_1m.shape}, 5m={data_5m.shape}, 15m={data_15m.shape}, 1h={data_1h.shape}, 1d={data_1d.shape}")
+
         rsi_rng = get_range("RSI", long_term_data)
         macd_rng = get_range("MACD", long_term_data)
         ema_rng = get_range("EMA_DIST", long_term_data)
@@ -581,8 +652,9 @@ def build_meta_state_for_exit(
         dur_rng = DEFAULT_RANGES["DURATION"]
         prof_rng = DEFAULT_RANGES["PROFIT"]
 
-        def tf_feats(df):
+        def tf_feats(df, tf_name="unknown"):
             if df is None:
+                logger.warning(f"⚠️ {tf_name} df is None")
                 return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
             if hasattr(df, "iloc") and len(df) > 0:
                 last = df.iloc[-1]
@@ -592,11 +664,11 @@ def build_meta_state_for_exit(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                     normalize(last.get("volume", 0), vol_rng),
                 ]
+            logger.warning(f"⚠️ {tf_name} df is empty or malformed")
             return [normalize(50, rsi_rng), normalize(0, macd_rng), normalize(0, ema_rng), normalize(0, vol_rng)]
 
         vix_val = fetch_vix_price() or 20.0
         regime = classifier_output.get("regime_class") if classifier_output and "regime_class" in classifier_output else _classify_regime(data_1d.iloc[-1], vix_val)
-
         clf_conf = classifier_output.get("trade_success_prob") if classifier_output else None
         norm_conf = normalize(clf_conf if clf_conf is not None else confidence_score, DEFAULT_RANGES["CONF"])
 
@@ -613,8 +685,8 @@ def build_meta_state_for_exit(
             *_regime_one_hot(regime),
             *summarise_past(past_trades, prof_rng, dur_rng),
             norm_pnl,
-            *tf_feats(data_1m), *tf_feats(data_5m),
-            *tf_feats(data_15m), *tf_feats(data_1h), *tf_feats(data_1d),
+            *tf_feats(data_1m, "1m"), *tf_feats(data_5m, "5m"),
+            *tf_feats(data_15m, "15m"), *tf_feats(data_1h, "1h"), *tf_feats(data_1d, "1d"),
         ]
 
         for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
@@ -627,6 +699,7 @@ def build_meta_state_for_exit(
                     normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
                 ]
             else:
+                logger.warning(f"⚠️ Missing or empty long_term_data[{p}]")
                 state += [PAD_VAL] * 3
 
         if classifier_output:
@@ -640,27 +713,35 @@ def build_meta_state_for_exit(
             state.extend(dir_one_hot)
 
             class_probs = classifier_output.get("class_probabilities", [PAD_VAL] * 3)
-            if len(class_probs) != 3:
+            logger.debug(f"🧠 class_probs={class_probs}")
+            if not isinstance(class_probs, (list, tuple)) or len(class_probs) != 3:
                 class_probs = [PAD_VAL] * 3
+            else:
+                class_probs = [float(x) if isinstance(x, (int, float)) else PAD_VAL for x in class_probs]
             state.extend(class_probs)
 
             entropy = classifier_output.get("entropy", PAD_VAL)
-            state.append(entropy if 0 <= entropy <= 1 else PAD_VAL)
+            state.append(entropy if isinstance(entropy, (int, float)) and 0 <= entropy <= 1 else PAD_VAL)
         else:
+            logger.warning("⚠️ classifier_output missing or None — padding final 8 features.")
             state += [PAD_VAL] * 8
 
-        return build_sequence(state)
+        result = build_sequence(state)
+        if np.all(result == PAD_VAL):
+            logger.error("❌ Meta state for EXIT is fully padded! Likely due to bad input.")
+        logger.debug(f"✅ Final EXIT meta state shape: {result.shape}")
+        return result
 
     except Exception as e:
-        logger.error(f"Error building meta state for exit: {e}")
+        logger.error(f"❌ Exception in build_meta_state_for_exit: {e}")
+        logger.error(traceback.format_exc())
         return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
-
 
 def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     logger.debug(f"🚀 Starting simulate_trade | Day: {day}, Trade Index: {trade_idx}")
 
     max_required = 50000
-    
+
     if len(closes) < 2000:
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: not enough 1m bars (len(closes)={len(closes)})")
         return None
@@ -676,8 +757,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         "1h": 600,
         "1d": 60,
     }
-    
-    # Extra buffer bars to ensure indicators can initialize
+
     indicator_buffer = {
         "1m": 50,
         "5m": 50,
@@ -693,9 +773,10 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         "1h": (required_lookback["1h"] + indicator_buffer["1h"]) * 60,
         "1d": (required_lookback["1d"] + indicator_buffer["1d"]) * 390,
     }
-    
-    # Compute earliest bar required among all timeframes
+
     min_required_minutes = max(input_slices.values())
+    logger.debug(f"📏 Min required bars across timeframes: {min_required_minutes} minutes")
+
     if trade_minute < min_required_minutes:
         logger.debug(
             f"⏩ Skipping trade {trade_idx} on day {day}: "
@@ -707,7 +788,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     base_time = datetime(2025, 1, 1, 9, 30) + total_offset
 
     try:
-        logger.debug(f"🔧 Constructing bars using closes[{trade_minute - max_required}:{trade_minute}]")
+        logger.debug(f"🔧 Constructing bars with slices ending at trade_minute={trade_minute}")
 
         bars_1m = construct_bars(
             closes[trade_minute - input_slices["1m"]:trade_minute],
@@ -715,105 +796,120 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
             1,
             start_time=base_time - timedelta(minutes=input_slices["1m"] - 1)
         )
-        
+        logger.debug(f"✅ bars_1m: shape={bars_1m.shape} | last close={bars_1m.iloc[-1]['close']:.2f}")
+
         bars_5m = construct_bars(
             closes[trade_minute - input_slices["5m"]:trade_minute],
             volumes[trade_minute - input_slices["5m"]:trade_minute],
             5,
             start_time=base_time - timedelta(minutes=input_slices["5m"] - 5)
         )
-        
+        logger.debug(f"✅ bars_5m: shape={bars_5m.shape} | last close={bars_5m.iloc[-1]['close']:.2f}")
+
         bars_15m = construct_bars(
             closes[trade_minute - input_slices["15m"]:trade_minute],
             volumes[trade_minute - input_slices["15m"]:trade_minute],
             15,
             start_time=base_time - timedelta(minutes=input_slices["15m"] - 15)
         )
-        
+        logger.debug(f"✅ bars_15m: shape={bars_15m.shape} | last close={bars_15m.iloc[-1]['close']:.2f}")
+
         bars_1h = construct_bars(
             closes[trade_minute - input_slices["1h"]:trade_minute],
             volumes[trade_minute - input_slices["1h"]:trade_minute],
             60,
             start_time=base_time - timedelta(minutes=input_slices["1h"] - 60)
         )
-        
+        logger.debug(f"✅ bars_1h: shape={bars_1h.shape} | last close={bars_1h.iloc[-1]['close']:.2f}")
+
         bars_1d = construct_bars(
             closes[trade_minute - input_slices["1d"]:trade_minute],
             volumes[trade_minute - input_slices["1d"]:trade_minute],
             390,
             start_time=base_time - timedelta(minutes=input_slices["1d"] - 390)
         )
+        logger.debug(f"✅ bars_1d: shape={bars_1d.shape} | last close={bars_1d.iloc[-1]['close']:.2f}")
+
     except Exception as e:
-        logger.exception(f"❌ Exception during bar construction: {e}")
+        logger.exception(f"❌ Exception during bar construction for trade {trade_idx} on day {day}: {e}")
         return None
 
-    # Clean bars
+    # 🧹 Clean bars and log pre/post cleaning info
+    for tf_name, bars in zip(["1m", "5m", "15m", "1h", "1d"], [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
+        logger.debug(f"🧼 Cleaning bars for {tf_name}... pre-clean len={len(bars)}")
+        
     bars_1m = clean_bars(bars_1m)
     bars_5m = clean_bars(bars_5m)
     bars_15m = clean_bars(bars_15m)
     bars_1h = clean_bars(bars_1h)
     bars_1d = clean_bars(bars_1d)
-
-    # Validate lengths
+    
+    # ✅ Validate bar lengths
     required_bars = required_lookback
     for tf, bars in zip(required_bars, [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
-        if not isinstance(bars, list) or len(bars) < required_bars[tf]:
+        if not isinstance(bars, list):
+            logger.error(f"❌ Bars for {tf} is not a list (type={type(bars)}) — skipping trade {trade_idx} on day {day}")
+            return None
+        if len(bars) < required_bars[tf]:
             logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: only {len(bars)} bars for {tf} (required: {required_bars[tf]})")
             return None
-        logger.debug(f"✅ {tf} bars OK: {len(bars)}")
-        
-    #ohlcv construction
-    closes_1m = [bar["close"] for bar in bars_1m]
-    opens_1m = [bar["open"] for bar in bars_1m]
-    highs_1m = [bar["high"] for bar in bars_1m]
-    lows_1m = [bar["low"] for bar in bars_1m]
-    volumes_1m = [bar["volume"] for bar in bars_1m]
+        logger.debug(f"✅ {tf} bars OK: len={len(bars)} (required={required_bars[tf]})")
     
-    logger.debug(f"📊 Extracted OHLCV arrays from 1m bars:")
+    # 📊 OHLCV array construction from 1m bars
+    try:
+        closes_1m = [bar["close"] for bar in bars_1m]
+        opens_1m = [bar["open"] for bar in bars_1m]
+        highs_1m = [bar["high"] for bar in bars_1m]
+        lows_1m = [bar["low"] for bar in bars_1m]
+        volumes_1m = [bar["volume"] for bar in bars_1m]
+    except Exception as e:
+        logger.exception(f"❌ Failed to construct OHLCV arrays from bars_1m: {e}")
+        return None
+    
+    logger.debug(f"📊 OHLCV arrays extracted from 1m bars:")
     logger.debug(f"   • closes_1m[0:3]: {closes_1m[:3]} ... len={len(closes_1m)}")
     logger.debug(f"   • opens_1m[0:3]: {opens_1m[:3]} ... len={len(opens_1m)}")
     logger.debug(f"   • highs_1m[0:3]: {highs_1m[:3]} ... len={len(highs_1m)}")
     logger.debug(f"   • lows_1m[0:3]: {lows_1m[:3]} ... len={len(lows_1m)}")
     logger.debug(f"   • volumes_1m[0:3]: {volumes_1m[:3]} ... len={len(volumes_1m)}")
-
+    
+    # 🧱 Entry window validation
     if len(bars_1m) < required_bars["1m"]:
         logger.debug(
             f"⏩ Skipping trade {trade_idx} on day {day}: "
-            f"len(bars_1m) ({len(bars_1m)}) < required_bars['1m'] ({required_bars['1m']}) - insufficient bars to simulate trade entry."
+            f"len(bars_1m) ({len(bars_1m)}) < required_bars['1m'] ({required_bars['1m']})"
         )
         return None
-
-    max_start_idx = len(bars_1m) - required_bars["1m"]
-    logger.debug(
-        f"Computed max_start_idx = {max_start_idx} (len(bars_1m)={len(bars_1m)} - required_bars['1m']={required_bars['1m']})"
-    )
-
-    if max_start_idx < 0:
-        logger.debug(
-            f"⏩ Skipping trade {trade_idx} on day {day}: "
-            f"max_start_idx ({max_start_idx}) < 0 - not enough room to select a valid start index."
-        )
-        return None
-
-    start_idx = RNG.randint(0, max_start_idx)
-    logger.debug(f"Selected start_idx={start_idx} within [0, {max_start_idx}]")
     
+    max_start_idx = len(bars_1m) - required_bars["1m"]
+    logger.debug(f"🧮 max_start_idx = {max_start_idx} (bars_1m={len(bars_1m)} - required={required_bars['1m']})")
+    
+    if max_start_idx < 0:
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: max_start_idx={max_start_idx} < 0")
+        return None
+    
+    start_idx = RNG.randint(0, max_start_idx)
+    logger.debug(f"🎯 Chosen start_idx={start_idx} within range [0, {max_start_idx}]")
+    
+    # 💰 Option strike and pricing setup
     price_sig = closes_1m[start_idx]
-    logger.debug(f"Price signal at start_idx={start_idx} is {price_sig}")
+    logger.debug(f"📈 Price signal at start_idx={start_idx}: {price_sig:.2f}")
     
     strike = round(price_sig + RNG.uniform(-6, 6), 1)
-    logger.debug(f"Generated strike price: {strike}")
+    logger.debug(f"🎯 Generated strike price: {strike:.2f}")
     
     option_type = RNG.choice(["C", "P"])
-    logger.debug(f"Selected option type: {option_type}")
+    logger.debug(f"🔀 Selected option type: {option_type}")
     
     expiry_days = RNG.randint(7, 30)
     t_expiry = expiry_days / 365
-    logger.debug(f"Option expiry_days={expiry_days}, t_expiry={t_expiry:.4f} years")
+    logger.debug(f"🗓️ Option expiry_days={expiry_days}, t_expiry={t_expiry:.4f} years")
     
     day_dt = base_time + timedelta(days=day)
     option_symbol = make_option_symbol(day_dt, strike, option_type)
+    logger.debug(f"🏷️ Option symbol: {option_symbol}")
     
+    # 📉 Option price + delta via Black-Scholes
     try:
         option_price = black_scholes_price(
             s=price_sig,
@@ -835,69 +931,66 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     
         option_data = {
             "price": option_price,
-            "iv": 0.25,  # constant implied volatility for now
+            "iv": 0.25,
             "delta": option_delta
         }
-    
-        logger.debug(f"Computed Black-Scholes price: {option_price:.4f}, delta: {option_delta:.4f}")
+        logger.debug(f"📊 Black-Scholes price: {option_price:.4f}, delta: {option_delta:.4f}")
     
     except Exception as e:
-        logger.error(f"Error computing Black-Scholes price/delta: {e}")
+        logger.error(f"❌ Black-Scholes error: {e}")
         option_data = {
             "price": 0.0,
             "iv": 0.25,
             "delta": 0.0
         }
     
+    # 🎯 Slippage, fill %, entry price
     slippage = RNG.uniform(-0.5, 0.5) / 100
     fill_pct = RNG.uniform(0.7, 1.0)
     entry_price = round(option_price * (1 + slippage), 2)
-    logger.debug(f"Simulated slippage: {slippage*100:.2f}%, fill_pct: {fill_pct:.3f}, entry_price after slippage: {entry_price}")
+    logger.debug(f"💸 Slippage: {slippage*100:.2f}%, fill_pct: {fill_pct:.3f}, entry_price: {entry_price:.2f}")
     
-    is_swing = RNG.random() < 0.2  # random swing trade decision
-    logger.debug(f"is_swing trade decision: {is_swing}")
+    # 🌀 Swing trade randomization
+    is_swing = RNG.random() < 0.2
+    logger.debug(f"🔄 is_swing: {is_swing}")
     
     if len(bars_1m) < 101:
-        logger.debug("Not enough data for indicators, skipping trade simulation")
+        logger.debug("❌ Not enough bars for indicators (need ≥101). Skipping trade.")
         return None
-
-
+    
+    # 🧠 Compute indicators
     try:
         indicators = compute_all_indicators(closes_1m, volumes_1m, len(closes_1m) - 1)
-        if not indicators or any(
-            v is None or (isinstance(v, float) and not (v == v))  # NaN check
-            for v in indicators.values()
-        ):
-            logger.warning(f"Invalid or incomplete indicators at idx={len(bars_1m) - 1}")
+        if not indicators or any(v is None or (isinstance(v, float) and not (v == v)) for v in indicators.values()):
+            logger.warning(f"⚠️ Invalid indicators at idx={len(bars_1m) - 1}, skipping")
             return None
-        logger.debug(f"Indicators at {len(bars_1m)-1}: {indicators}")
+        logger.debug(f"🧠 Indicators OK at {len(bars_1m) - 1}: {indicators}")
     except Exception as e:
-        logger.exception("Exception during indicator computation")
+        logger.exception("❌ Exception during indicator computation")
         return None
     
-    # Classifier features
+    # 🔮 Classifier features
     classifier_confidence = round(np.random.beta(5, 2), 2)
-    logger.debug(f"Simulated classifier confidence: {classifier_confidence}")
-    
     setup_quality = round(RNG.uniform(0.6, 1.0), 2)
-    logger.debug(f"Simulated setup quality: {setup_quality}")
-    
     vix = round(RNG.uniform(15, 35), 2)
-    logger.debug(f"Simulated VIX: {vix}")
+    
+    logger.debug(f"🧪 Classifier confidence: {classifier_confidence}")
+    logger.debug(f"🧰 Setup quality: {setup_quality}")
+    logger.debug(f"🌪️ Simulated VIX: {vix}")
     
     if start_idx >= 20:
         realized_vol = round(np.std(closes_1m[start_idx - 20:start_idx]), 2)
-        logger.debug(f"Calculated realized_vol over last 20 prices: {realized_vol}")
+        logger.debug(f"📉 Realized vol over 20-bar window: {realized_vol}")
     else:
         realized_vol = 1.5
-        logger.debug(f"Insufficient data for realized_vol, defaulting to: {realized_vol}")
+        logger.debug("ℹ️ Not enough bars for realized_vol — defaulting to 1.5")
     
     trade_type = 0 if option_type == "C" else 1
-    logger.debug(f"Encoded trade_type: {trade_type} (0=Call, 1=Put)")
+    logger.debug(f"📦 Encoded trade_type: {trade_type} (0=Call, 1=Put)")
     
     total_signals_today = RNG.randint(0, 10)
-    logger.debug(f"Simulated total_signals_today: {total_signals_today}")
-
+    logger.debug(f"📊 Simulated total_signals_today: {total_signals_today}")
+    
     classifier_features = {
         'confidence': classifier_confidence,
         'setup_quality': setup_quality,
