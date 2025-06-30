@@ -195,27 +195,47 @@ def get_range(feat: str, long_term: Dict[str, pd.DataFrame]) -> Tuple[float, flo
         halt_on_error("get_range", e, feat=feat, long_term=long_term)
 
 def update_long_term_stats(long_term_data: dict, features: dict):
+    """
+    Updates each rolling time window (e.g., '5d', '10d') in long_term_data with a new row
+    of classifier features. Ensures each buffer remains a proper DataFrame with shape (N, 83).
+    """
     try:
-        for key, val in features.items():
-            # 🧼 Ensure scalar value
-            if isinstance(val, (list, tuple, np.ndarray)):
-                if len(val) == 1:
-                    val = val[0]
+        logger.debug(f"🔁 Updating long_term_data with {len(features)} features")
+
+        # Step 1: Clean and validate scalar values
+        cleaned = {}
+        for k, v in features.items():
+            if isinstance(v, (list, tuple, np.ndarray)):
+                if len(v) == 1:
+                    cleaned[k] = v[0]
                 else:
-                    raise ValueError(f"🚫 Feature '{key}' is not scalar: {val} (type={type(val)})")
-
-            row = pd.DataFrame([{key: val}])  # One-row frame for consistent concat
-            df = long_term_data.get(key)
-
-            if df is None:
-                long_term_data[key] = row
-            elif isinstance(df, pd.DataFrame):
-                long_term_data[key] = pd.concat([df, row], ignore_index=True)
+                    logger.error(f"🚫 Feature '{k}' is non-scalar: {v} (type={type(v)})")
+                    raise ValueError(f"Feature '{k}' must be scalar, got {v}")
             else:
-                raise TypeError(f"❌ long_term_data[{key}] corrupted: expected DataFrame, got {type(df)}")
+                cleaned[k] = v
 
-            if len(long_term_data[key]) > 5000:
-                long_term_data[key] = long_term_data[key].iloc[-5000:]
+        # Step 2: Construct new one-row DataFrame
+        row_df = pd.DataFrame([cleaned])
+        logger.debug(f"✅ Constructed row_df for update: shape={row_df.shape}")
+
+        # Step 3: Update each time window key
+        for key in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
+            if key not in long_term_data:
+                logger.warning(f"⚠️ Creating new long_term_data[{key}] buffer")
+                long_term_data[key] = row_df.copy()
+            else:
+                if not isinstance(long_term_data[key], pd.DataFrame):
+                    logger.error(f"❌ long_term_data[{key}] is not a DataFrame (got {type(long_term_data[key])})")
+                    raise TypeError(f"long_term_data[{key}] must be a DataFrame")
+
+                long_term_data[key] = pd.concat([long_term_data[key], row_df], ignore_index=True)
+
+            # Step 4: Truncate to avoid memory bloat
+            if len(long_term_data[key]) > 500:
+                long_term_data[key] = long_term_data[key].iloc[-500:]
+
+            logger.debug(f"📈 Updated long_term_data[{key}]: shape={long_term_data[key].shape}")
+
     except Exception as e:
         halt_on_error("update_long_term_stats", e, long_term_data=long_term_data, features=features)
             
