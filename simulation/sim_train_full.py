@@ -173,6 +173,8 @@ def _calc_range(feat: str, long_term: Dict[str, pd.DataFrame]) -> Tuple[float, f
 
 def get_range(feat: str, long_term: Dict[str, pd.DataFrame]) -> Tuple[float, float]:
     try:
+        if not isinstance(long_term, dict):
+            raise TypeError(f"💥 get_range expected dict, got {type(long_term)}")
         now = time.time()
         if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
             return _DYNAMIC[feat][0]
