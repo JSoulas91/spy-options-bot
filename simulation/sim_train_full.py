@@ -991,136 +991,163 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     total_signals_today = RNG.randint(0, 10)
     logger.debug(f"📊 Simulated total_signals_today: {total_signals_today}")
     
-    classifier_features = {
-        'confidence': classifier_confidence,
-        'setup_quality': setup_quality,
-        'vix': vix,
-        'realized_vol': realized_vol,
-        'trade_type': trade_type,
-        'total_signals_today': total_signals_today,
-        'ema_20': indicators['ema_20'],
-        'rsi_14': indicators['rsi_14'],
-        'macd': indicators['macd'],
-        'macd_signal': indicators['macd_signal'],
-        'macd_hist': indicators['macd_hist'],
-        'bb_upper': indicators['bb_upper'],
-        'bb_middle': indicators['bb_middle'],
-        'bb_lower': indicators['bb_lower'],
-        'vwap': indicators['vwap'],
-        'atr_14': indicators['atr_14'],
-        'adx_14': indicators['adx_14'],
-    }
+        # ============================
+    # Classifier feature construction
+    # ============================
+    try:
+        classifier_features = {
+            'confidence': classifier_confidence,
+            'setup_quality': setup_quality,
+            'vix': vix,
+            'realized_vol': realized_vol,
+            'trade_type': trade_type,
+            'total_signals_today': total_signals_today,
+            'ema_20': indicators['ema_20'],
+            'rsi_14': indicators['rsi_14'],
+            'macd': indicators['macd'],
+            'macd_signal': indicators['macd_signal'],
+            'macd_hist': indicators['macd_hist'],
+            'bb_upper': indicators['bb_upper'],
+            'bb_middle': indicators['bb_middle'],
+            'bb_lower': indicators['bb_lower'],
+            'vwap': indicators['vwap'],
+            'atr_14': indicators['atr_14'],
+            'adx_14': indicators['adx_14'],
+        }
+        logger.debug(f"✅ classifier_features constructed: keys={list(classifier_features.keys())}")
+    except KeyError as ke:
+        logger.error(f"❌ Missing key in indicators while building classifier_features: {ke}")
+        return None
+    except Exception as e:
+        logger.exception("❌ Exception during classifier_features construction")
+        return None
 
-    # Grab past N trades for meta-state summary
     past_trades = TRADE_HISTORY[-10:] if len(TRADE_HISTORY) >= 10 else TRADE_HISTORY
-    
-    # Build feature vector
-    features_df = build_features_for_trade(classifier_features)
-    logger.debug(f"🛠️ Built features DataFrame: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
+    logger.debug(f"🕒 Using {len(past_trades)} past trades for meta-state")
 
-    update_long_term_stats(long_term_data, classifier_features)
+    try:
+        features_df = build_features_for_trade(classifier_features)
+        logger.debug(f"🛠️ Built features_df: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
+    except Exception as e:
+        logger.exception("❌ Failed to build features_df")
+        return None
 
-    # ✅ Validate long_term_data integrity immediately
+    # Update long-term stats
+    try:
+        update_long_term_stats(long_term_data, classifier_features)
+    except Exception as e:
+        logger.exception("❌ Failed to update long_term_data")
+        return None
+
+    # Validate long_term_data integrity
     for k, v in long_term_data.items():
         if not isinstance(v, pd.DataFrame):
-            logger.error(f"❌ long_term_data[{k}] is not a DataFrame (type={type(v)}) — invalid long_term_data!")
-            raise TypeError(f"long_term_data[{k}] corrupted: expected DataFrame, got {type(v)}")
-    
-    # Ensure it's a proper DataFrame
+            logger.error(f"❌ long_term_data[{k}] is not a DataFrame (got {type(v)})")
+            raise TypeError(f"Invalid long_term_data[{k}]")
+
+    # Ensure proper DataFrame
     if not isinstance(features_df, pd.DataFrame):
-        logger.debug("⚠️ build_features_for_trade returned non-DataFrame, coercing to DataFrame")
+        logger.warning("⚠️ build_features_for_trade did not return DataFrame, coercing...")
         features_df = pd.DataFrame([classifier_features])
 
-    # Validate expected shape
     if features_df.shape[0] != 1:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: features_df has invalid shape {features_df.shape}, expected (1, N)")
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: invalid features_df shape {features_df.shape}")
         return None
 
     try:
         inference = ModelInference()
         raw_output = inference.predict_with_confidence(features_df)
         classifier_output = ModelInference.wrap_classifier_output(raw_output)
+        logger.debug(f"🧠 Classifier output: {classifier_output}")
     except Exception as e:
-        logger.debug(f"Classifier prediction failed: {e}")
+        logger.exception("❌ Model inference failed")
         return None
-        
-    # Dynamic position sizing based on classifier confidence
+
+    # Confidence-based position sizing
     confidence = classifier_output.get("trade_success_prob", 0.5)
     position_size = MIN_POSITION_SIZE + (MAX_POSITION_SIZE - MIN_POSITION_SIZE) * confidence
-    
-    meta_entry = build_meta_state_for_entry(
-        data_1m=bars_1m,
-        data_5m=bars_5m,
-        data_15m=bars_15m,
-        data_1h=bars_1h,
-        data_1d=bars_1d,
-        position_size=position_size,  # you can set this to 1.0 if you don't have it dynamic
-        confidence_score=classifier_confidence,
-        trade_type=int(is_swing),
-        past_trades=past_trades,
-        long_term_data=long_term_data,
-        classifier_output=classifier_output
-    )
-    
-    if meta_entry is None or is_padded(meta_entry):
-        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: entry_meta is invalid or padded")
+    logger.debug(f"📏 Position size based on confidence {confidence:.2f}: {position_size:.4f}")
+
+    # Build meta-entry
+    try:
+        meta_entry = build_meta_state_for_entry(
+            data_1m=bars_1m,
+            data_5m=bars_5m,
+            data_15m=bars_15m,
+            data_1h=bars_1h,
+            data_1d=bars_1d,
+            position_size=position_size,
+            confidence_score=classifier_confidence,
+            trade_type=int(is_swing),
+            past_trades=past_trades,
+            long_term_data=long_term_data,
+            classifier_output=classifier_output
+        )
+        logger.debug(f"🧩 meta_entry shape: {np.array(meta_entry).shape if meta_entry is not None else 'None'}")
+    except Exception as e:
+        logger.exception("❌ Failed to build meta_entry")
         return None
-    
-    action, agent_confidence = meta_agent.select_action(meta_entry)
-    logger.debug(f"🎯 Trade {trade_idx} on day {day}: Meta-agent selected action {action} with confidence {agent_confidence:.2f}")
+
+    if meta_entry is None or is_padded(meta_entry):
+        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: invalid or padded meta_entry")
+        return None
+
+    try:
+        action, agent_confidence = meta_agent.select_action(meta_entry)
+        logger.debug(f"🎯 Meta-agent action={action}, confidence={agent_confidence:.2f}")
+    except Exception as e:
+        logger.exception("❌ Meta-agent select_action failed")
+        return None
 
     if action == 0:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Meta-agent chose to skip (action=0)")
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: meta-agent skipped (action=0)")
         return None
 
     duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
-    logger.debug(f"📈 Trade {trade_idx} on day {day}: Duration={duration}, start_idx={start_idx}, total_prices={len(closes_1m)}")
+    logger.debug(f"📈 Planned trade duration: {duration} (swing={is_swing})")
 
     if start_idx + duration >= len(closes_1m):
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: Not enough future bars for trade duration ({start_idx + duration} >= {len(closes_1m)})")
+        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: duration exceeds data (start_idx={start_idx}, len={len(closes_1m)})")
         return None
 
     final_price = closes_1m[start_idx + duration]
+    logger.debug(f"📉 Final price at exit: {final_price:.2f}")
 
     minutes_per_year = 252 * 6.5 * 60
-    time_left = max(t_expiry - (duration * 1) / minutes_per_year, 0.01)
-    logger.debug(f"⏳ Time left to expiry: {time_left:.4f} years")
+    time_left = max(t_expiry - (duration / minutes_per_year), 0.01)
+    logger.debug(f"⏳ Time to expiry after holding: {time_left:.4f} years")
 
-    new_option_price = black_scholes_price(
-        s=final_price,
-        k=strike,
-        t=time_left,
-        r=0.01,
-        sigma=0.25,
-        call=(option_type == "C")
-    )
+    try:
+        new_option_price = black_scholes_price(
+            s=final_price,
+            k=strike,
+            t=time_left,
+            r=0.01,
+            sigma=0.25,
+            call=(option_type == "C")
+        )
+    except Exception as e:
+        logger.exception("❌ Error computing exit option price")
+        return None
+
     exit_price = round(new_option_price * (1 + slippage), 2)
-    logger.debug(f"💸 Exit option price (slippage-adjusted): {exit_price:.2f} | Final SPY: {final_price:.2f}")
+    logger.debug(f"💸 Slippage-adjusted exit price: {exit_price:.2f}")
 
     gross_pnl = (exit_price - entry_price) * CONTRACT_MULTIPLIER * fill_pct
     total_commission = 2 * COMMISSION_PER_CONTRACT
     raw_pnl = gross_pnl - total_commission
-    initial_cost = entry_price * CONTRACT_MULTIPLIER * fill_pct + 1e-9
+    initial_cost = entry_price * CONTRACT_MULTIPLIER * fill_pct + 1e-9  # Avoid division by zero
     pct_pnl = (raw_pnl / initial_cost) * 100
     trade_result = pct_pnl
-    logger.debug(f"📊 PnL: Gross={gross_pnl:.2f}, Raw={raw_pnl:.2f}, Pct={pct_pnl:.2f}%")
-    
+
+    logger.debug(f"📊 Trade PnL details:")
+    logger.debug(f"   • Entry price: {entry_price}, Exit price: {exit_price}")
+    logger.debug(f"   • Gross PnL: {gross_pnl:.2f}, Raw PnL: {raw_pnl:.2f}, % PnL: {pct_pnl:.2f}%")
+
     atr = indicators.get('atr_14', 1.0)
     logger.debug(f"📐 ATR(14): {atr:.2f}")
     
-    features_df = build_features_for_trade(classifier_features)
-    try:
-        inference = ModelInference()
-        raw_output = inference.predict_with_confidence(features_df)
-        classifier_output = ModelInference.wrap_classifier_output(raw_output)
-    except Exception as e:
-        logger.debug(f"Classifier prediction failed: {e}")
-        return None
-        
-    # Dynamic position sizing based on classifier confidence
-    confidence = classifier_output.get("trade_success_prob", 0.5)
-    position_size = MIN_POSITION_SIZE + (MAX_POSITION_SIZE - MIN_POSITION_SIZE) * confidence
-    
+    # 🏁 Build exit meta-state
     meta_exit = build_meta_state_for_exit(
         data_1m=bars_1m,
         data_5m=bars_5m,
@@ -1136,73 +1163,94 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         long_term_data=long_term_data,
         classifier_output=classifier_output
     )
-
-    if meta_exit is None or is_padded(meta_exit):
-        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: exit_meta is invalid or padded")
+    
+    if meta_exit is None:
+        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: meta_exit returned None")
         return None
-        
+    if is_padded(meta_exit):
+        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: meta_exit is padded")
+        return None
+    
+    # 🧠 Track trade history for future states
     TRADE_HISTORY.append({
-        "profit": trade_return,  # percentage PnL, e.g., 0.12 for +12%
-        "duration": time_held_minutes,
+        "profit": trade_result,
+        "duration": duration,
         "position_size": position_size,
     })
     
+    # 🎯 Validate direction prediction
     direction_correct = (
         (predicted_direction == 1 and final_price > price_sig) or
         (predicted_direction == 0 and final_price < price_sig)
     )
-    logger.debug(f"🎯 Direction predicted: {predicted_direction}, Correct: {direction_correct}")
+    logger.debug(f"🎯 Trade {trade_idx} on day {day}: Direction predicted={predicted_direction}, Actual={final_price:.2f} vs Signal={price_sig:.2f} → Correct={direction_correct}")
     
-    shaped_reward = reward_shaper.compute_shaped_reward(
-        trade_result={
-            "pct_pnl": trade_result,
-            "setup_quality": setup_quality,
-            "entry_quality": abs(trade_result) / atr,
-            "direction_correct": direction_correct,
-            "trades_today": trade_idx,
-            "was_successful": trade_result > 0,
-            "risk_reward_ratio": abs(trade_result) / atr,
-            "time_to_target": duration,
-            "max_drawdown": RNG.uniform(0, abs(trade_result) * 0.3),
-            "exploration_bonus": RNG.uniform(0, 0.2),
-            "skipped_strong_signal": RNG.random() < 0.05,
-        },
-        classifier_output={
-            "confidence": classifier_confidence,
-            "entropy": entropy
-        },
-        regime="neutral",
-        agent_confidence=agent_confidence,
-    )
-    logger.debug(f"🏅 Shaped reward: {shaped_reward:.2f}")
-    
-    if shaped_reward < -2 and RNG.random() > GARBAGE_KEEP_PROB:
-        logger.debug(f"🗑️ Skipping trade {trade_idx} on day {day}: shaped reward too low ({shaped_reward:.2f})")
+    # 🏆 Compute shaped reward
+    try:
+        shaped_reward = reward_shaper.compute_shaped_reward(
+            trade_result={
+                "pct_pnl": trade_result,
+                "setup_quality": setup_quality,
+                "entry_quality": abs(trade_result) / max(atr, 1e-6),
+                "direction_correct": direction_correct,
+                "trades_today": trade_idx,
+                "was_successful": trade_result > 0,
+                "risk_reward_ratio": abs(trade_result) / max(atr, 1e-6),
+                "time_to_target": duration,
+                "max_drawdown": RNG.uniform(0, abs(trade_result) * 0.3),
+                "exploration_bonus": RNG.uniform(0, 0.2),
+                "skipped_strong_signal": RNG.random() < 0.05,
+            },
+            classifier_output={
+                "confidence": classifier_confidence,
+                "entropy": entropy
+            },
+            regime="neutral",
+            agent_confidence=agent_confidence,
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to compute shaped reward: {e}")
         return None
     
+    logger.debug(f"🏅 Trade {trade_idx} on day {day}: Shaped reward = {shaped_reward:.2f}")
+    
+    # 🗑️ Garbage filtering
+    if shaped_reward < -2 and RNG.random() > GARBAGE_KEEP_PROB:
+        logger.debug(f"🗑️ Skipping trade {trade_idx} on day {day}: shaped_reward too low ({shaped_reward:.2f})")
+        return None
+    
+    # 📝 Timestamp conversion
     entry_bar = bars_1m[start_idx]
-    ts = entry_bar["timestamp"]
+    ts = entry_bar.get("timestamp", None)
     if isinstance(ts, (int, float)):
         ts = datetime.fromtimestamp(ts)
+    elif not isinstance(ts, datetime):
+        logger.warning(f"⚠️ Unexpected timestamp type: {type(ts)} — defaulting to now()")
+        ts = datetime.now()
     
-    log_training_example(
-        timestamp=ts,
-        close=entry_bar["close"],
-        features=classifier_features,
-        label=trade_result
-    )
+    # 💾 Log training example
+    try:
+        log_training_example(
+            timestamp=ts,
+            close=entry_bar.get("close", 0),
+            features=classifier_features,
+            label=trade_result
+        )
+        logger.debug(f"✅ Trade {trade_idx} logged | PnL={trade_result:.2f}% | Option={option_symbol} | Duration={duration}m")
+    except Exception as e:
+        logger.error(f"❌ Failed to log training example: {e}")
+        return None
     
-    logger.debug(f"✅ Logged trade {trade_idx} on day {day} | PnL: {trade_result:.2f}% | Option: {option_symbol} | Duration: {duration}m")
-    
-    # Ensure meta_entry and meta_exit are numpy arrays
+    # 🔍 Final shape/type safety for meta states
     if not isinstance(meta_entry, np.ndarray):
-        logger.warning(f"⚠️ meta_entry is not a NumPy array — type={type(meta_entry)}")
+        logger.warning(f"⚠️ meta_entry not ndarray (type={type(meta_entry)}), coercing")
         meta_entry = np.array(meta_entry)
     
     if not isinstance(meta_exit, np.ndarray):
-        logger.warning(f"⚠️ meta_exit is not a NumPy array — type={type(meta_exit)}")
+        logger.warning(f"⚠️ meta_exit not ndarray (type={type(meta_exit)}), coercing")
         meta_exit = np.array(meta_exit)
     
+    # 📦 Final trade result dict
     return {
         "timestamp": str(ts),
         "day": day,
@@ -1226,96 +1274,117 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         },
         "meta_action": action,
         "agent_confidence": agent_confidence,
-        "entry_state": meta_entry.tolist(),   # safe now
-        "exit_state": meta_exit.tolist(),     # safe now
-        # ✅ New additions for warm-up data accumulation
+        "entry_state": meta_entry.tolist(),
+        "exit_state": meta_exit.tolist(),
+        # ✅ Useful context for warm-up and post-trade learning
         "indicators": indicators,
         "option_data": option_data,
         "position_size": position_size,
     }
 
-
 def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
 
     for day in range(SIM_DAYS):
-        # Warm-up period for multi-timeframe indicators
-        if day < WARM_UP_DAYS:
-            logger.debug(f"⏩ Skipping Day {day + 1}: Warming up multi-timeframe history")
+        try:
+            # Warm-up period for multi-timeframe indicators
+            if day < WARM_UP_DAYS:
+                logger.debug(f"⏩ Skipping Day {day + 1}: Warming up multi-timeframe history")
+                daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
+                daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
+                ACCUMULATED_CLOSES.extend(daily_prices)
+                ACCUMULATED_VOLUMES.extend(daily_volumes)
+                continue
+
+            vix_shift = RNG.uniform(14, 28)
+            if RNG.random() < 0.08:
+                vix_shift += RNG.uniform(5, 15)
+
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
             daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
+
             ACCUMULATED_CLOSES.extend(daily_prices)
             ACCUMULATED_VOLUMES.extend(daily_volumes)
-            continue
 
-        vix_shift = RNG.uniform(14, 28)
-        if RNG.random() < 0.08:
-            vix_shift += RNG.uniform(5, 15)
+            trades = []
+            successful_trades = 0
+            logger.debug(f"📈 Day {day + 1}: Starting simulation with VIX shift {vix_shift:.2f} | Total prices: {len(ACCUMULATED_CLOSES)}")
 
-        daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
-        daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
-        ACCUMULATED_CLOSES.extend(daily_prices)
-        ACCUMULATED_VOLUMES.extend(daily_volumes)
+            for trade_idx in range(TRADES_PER_DAY):
+                try:
+                    log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
+                    if log_entry:
+                        trades.append(log_entry)
+                        successful_trades += 1
 
-        trades = []
-        successful_trades = 0
-        logger.debug(f"Day {day + 1}: Starting simulation with VIX shift {vix_shift:.2f}")
+                        logger.debug(f"✅ Trade {trade_idx + 1} | PnL={log_entry['pct_pnl']}% | Duration={log_entry['duration']} mins")
 
-        for trade_idx in range(TRADES_PER_DAY):
-            log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
+                        if day < WARM_UP_DAYS:
+                            indicators = log_entry.get("indicators", {})
+                            option_data = log_entry.get("option_data", {})
+                            position_size = log_entry.get("position_size", 1.0)
 
-            if log_entry:
-                trades.append(log_entry)
-                successful_trades += 1
-                logger.debug(f"✅ Trade {trade_idx + 1} generated: PnL={log_entry['pct_pnl']}, duration={log_entry['duration']}")
+                            def append_if_valid(key, val):
+                                if val is not None and isinstance(val, (int, float)) and not math.isnan(val):
+                                    long_term_data[key].append(val)
 
-                # Accumulate long-term feature normalization stats during warm-up
-                if day < WARM_UP_DAYS:
-                    indicators = log_entry.get("indicators", {})
-                    option_data = log_entry.get("option_data", {})
-                    position_size = log_entry.get("position_size", 1.0)
+                            try:
+                                append_if_valid("RSI", indicators.get("rsi_14"))
+                                append_if_valid("MACD", indicators.get("macd"))
+                                append_if_valid("MACD_HIST", indicators.get("macd_hist"))
+                                append_if_valid("EMA_DIST", indicators.get("price") - indicators.get("ema_20") if "price" in indicators and "ema_20" in indicators else None)
+                                append_if_valid("ATR", indicators.get("atr_14"))
+                                append_if_valid("ADX", indicators.get("adx_14"))
+                                append_if_valid("VWAP", indicators.get("vwap"))
+                                bb_width = (indicators.get("bb_upper") - indicators.get("bb_lower")) if indicators.get("bb_upper") and indicators.get("bb_lower") else None
+                                append_if_valid("BB_WIDTH", bb_width)
+                                append_if_valid("VIX", indicators.get("vix"))
+                                append_if_valid("SPY_ABS", abs(indicators.get("price", 0)))
 
-                    def append_if_valid(key, val):
-                        if key in long_term_data and isinstance(val, (int, float)) and not math.isnan(val):
-                            long_term_data[key].append(val)
+                                append_if_valid("IV", option_data.get("iv"))
+                                append_if_valid("DELTA", option_data.get("delta"))
+                                append_if_valid("SIZE", position_size)
 
-                    append_if_valid("RSI", indicators.get("rsi_14"))
-                    append_if_valid("MACD", indicators.get("macd"))
-                    append_if_valid("MACD_HIST", indicators.get("macd_hist"))
-                    append_if_valid("EMA_DIST", indicators.get("price") - indicators.get("ema_20") if "price" in indicators and "ema_20" in indicators else 0)
-                    append_if_valid("ATR", indicators.get("atr_14"))
-                    append_if_valid("ADX", indicators.get("adx_14"))
-                    append_if_valid("VWAP", indicators.get("vwap"))
-                    append_if_valid("BB_WIDTH", (indicators.get("bb_upper") - indicators.get("bb_lower")) if indicators.get("bb_upper") and indicators.get("bb_lower") else None)
-                    append_if_valid("VIX", indicators.get("vix"))
-                    append_if_valid("SPY_ABS", abs(indicators.get("price", 0)))
+                                for k in long_term_data:
+                                    if len(long_term_data[k]) > 500:
+                                        long_term_data[k] = long_term_data[k][-500:]
+                            except Exception:
+                                logger.error(f"⚠️ Error updating long_term_data from trade {trade_idx + 1}")
+                                traceback.print_exc()
 
-                    append_if_valid("IV", option_data.get("iv"))
-                    append_if_valid("DELTA", option_data.get("delta"))
-                    append_if_valid("SIZE", position_size)
+                    else:
+                        logger.debug(f"❌ Trade {trade_idx + 1} skipped or failed (simulate_trade returned None)")
+                except Exception as trade_err:
+                    logger.error(f"🔥 Exception in simulate_trade() for Day {day + 1}, Trade {trade_idx + 1}")
+                    traceback.print_exc()
 
-                    for k in long_term_data:
-                        if len(long_term_data[k]) > 500:
-                            long_term_data[k] = long_term_data[k][-500:]
-
+            if trades:
+                try:
+                    with open(META_LOG_PATH, "a") as f:
+                        for t in trades:
+                            f.write(json.dumps(t) + "\n")
+                    logger.debug(f"📝 Day {day + 1}: Logged {len(trades)} trades to {META_LOG_PATH}")
+                except Exception:
+                    logger.error(f"⚠️ Failed to write trades for Day {day + 1} to {META_LOG_PATH}")
+                    traceback.print_exc()
             else:
-                logger.debug(f"❌ Trade {trade_idx + 1} skipped or failed (simulate_trade returned None)")
+                logger.debug(f"🕳️ Day {day + 1}: No trades generated")
 
-        if trades:
-            with open(META_LOG_PATH, "a") as f:
-                for t in trades:
-                    f.write(json.dumps(t) + "\n")
-            logger.debug(f"Day {day + 1}: Logged {len(trades)} trades to {META_LOG_PATH}")
-        else:
-            logger.debug(f"Day {day + 1}: No trades generated")
+            logger.info(f"📊 Day {day + 1}: {successful_trades}/{TRADES_PER_DAY} trades returned from simulate_trade()")
 
-        logger.info(f"Day {day + 1}: {successful_trades}/{TRADES_PER_DAY} trades returned from simulate_trade()")
+            if (day + 1) % 50 == 0:
+                logger.info(f"📆 Simulated {day + 1} days.")
 
-        if (day + 1) % 50 == 0:
-            logger.info(f"Simulated {day + 1} days.")
+        except Exception as day_err:
+            logger.error(f"💥 Fatal error in simulation for Day {day + 1}")
+            traceback.print_exc()
 
     logger.info("✅ Simulation complete.")
-    send_telegram_message("✅ Simulation finished and saved to meta/meta_log.jsonl")
+    try:
+        send_telegram_message("✅ Simulation finished and saved to meta/meta_log.jsonl")
+    except Exception:
+        logger.warning("⚠️ Failed to send Telegram completion message.")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
