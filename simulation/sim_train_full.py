@@ -299,11 +299,11 @@ def construct_bars(prices, volumes, interval, start_time=None):
 
         if len(prices) != len(volumes):
             logger.warning(f"⚠️ construct_bars: length mismatch - prices={len(prices)}, volumes={len(volumes)}")
-            return []
+            return pd.DataFrame()
 
         if len(prices) < interval:
             logger.warning(f"⚠️ construct_bars: not enough data to form one bar - len(prices)={len(prices)}, interval={interval}")
-            return []
+            return pd.DataFrame()
 
         bars = []
         for i in range(0, len(prices) - interval + 1, interval):
@@ -327,12 +327,13 @@ def construct_bars(prices, volumes, interval, start_time=None):
 
             bars.append(bar)
 
-        logger.debug(f"✅ construct_bars: constructed {len(bars)} bars at interval={interval}min from {start_time.strftime('%Y-%m-%d %H:%M')}")
-        return bars
+        df = pd.DataFrame(bars)
+        logger.debug(f"✅ construct_bars: constructed {len(df)} bars at interval={interval}min from {start_time.strftime('%Y-%m-%d %H:%M')}")
+        return df
 
     except Exception as e:
         halt_on_error("construct_bars", e, prices_len=len(prices), volumes_len=len(volumes), interval=interval, start_time=start_time)
-
+        return pd.DataFrame()
 
 def compute_all_indicators(prices, volumes, idx):
     try:
