@@ -1067,7 +1067,13 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     confidence = classifier_output.get("trade_success_prob", 0.5)
     position_size = MIN_POSITION_SIZE + (MAX_POSITION_SIZE - MIN_POSITION_SIZE) * confidence
     logger.debug(f"📏 Position size based on confidence {confidence:.2f}: {position_size:.4f}")
-
+    
+    # 🔍 DEBUG: Log everything going into build_meta_state_for_entry
+    logger.debug(f"🧱 Calling build_meta_state_for_entry with keys: {[k for k in locals().keys()]}")
+    logger.debug(f"Types: bars_1m={type(bars_1m)}, past_trades={type(past_trades)}, long_term_data={type(long_term_data)}")
+    logger.debug(f"Classifier output keys: {list(classifier_output.keys())}")
+    logger.debug(f"Lengths: 1m={len(bars_1m)}, 5m={len(bars_5m)}, 15m={len(bars_15m)}, 1h={len(bars_1h)}, 1d={len(bars_1d)}")
+    
     # Build meta-entry
     try:
         meta_entry = build_meta_state_for_entry(
@@ -1084,6 +1090,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
             classifier_output=classifier_output
         )
         logger.debug(f"🧩 meta_entry shape: {np.array(meta_entry).shape if meta_entry is not None else 'None'}")
+    
     except Exception as e:
         logger.exception("❌ Failed to build meta_entry")
         return None
