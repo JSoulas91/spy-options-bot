@@ -171,7 +171,7 @@ def _calc_range(feat: str, long_term: Dict[str, pd.DataFrame]) -> Tuple[float, f
 
     return (min(vals), max(vals)) if vals else DEFAULT_RANGES[feat]
 
-def get_range(feat: str, long_term) -> Tuple[float, float]:
+def get_range(feat: str, long_term: Dict[str, pd.DataFrame]) -> Tuple[float, float]:
     try:
         now = time.time()
         if feat in _DYNAMIC and now - _DYNAMIC[feat][1] < _DYN_TTL:
