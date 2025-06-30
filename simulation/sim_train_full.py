@@ -865,8 +865,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     # ✅ Validate bar lengths
     required_bars = required_lookback
     for tf, bars in zip(required_bars, [bars_1m, bars_5m, bars_15m, bars_1h, bars_1d]):
-        if not isinstance(bars, list):
-            logger.error(f"❌ Bars for {tf} is not a list (type={type(bars)}) — skipping trade {trade_idx} on day {day}")
+        if not isinstance(bars, pd.DataFrame):
+            logger.error(f"❌ Bars for {tf} is not a DataFrame (type={type(bars)}) — skipping trade {trade_idx} on day {day}")
             return None
         if len(bars) < required_bars[tf]:
             logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: only {len(bars)} bars for {tf} (required: {required_bars[tf]})")
@@ -875,11 +875,11 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     
     # 📊 OHLCV array construction from 1m bars
     try:
-        closes_1m = [bar["close"] for bar in bars_1m]
-        opens_1m = [bar["open"] for bar in bars_1m]
-        highs_1m = [bar["high"] for bar in bars_1m]
-        lows_1m = [bar["low"] for bar in bars_1m]
-        volumes_1m = [bar["volume"] for bar in bars_1m]
+        closes_1m = bars_1m["close"].tolist()
+        opens_1m = bars_1m["open"].tolist()
+        highs_1m = bars_1m["high"].tolist()
+        lows_1m = bars_1m["low"].tolist()
+        volumes_1m = bars_1m["volume"].tolist()
     except Exception as e:
         logger.exception(f"❌ Failed to construct OHLCV arrays from bars_1m: {e}")
         return None
