@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import traceback
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -81,8 +82,6 @@ meta_agent = MetaAgent()
 model_inference = ModelInference()
 
 print(f"SIM_DAYS={SIM_DAYS}, TRADES_PER_DAY={TRADES_PER_DAY}, START_PRICE={START_PRICE}")
-
-import traceback
 
 def debug_inputs(label: str, **kwargs):
     logger.debug(f"\n[DEBUG] {label} input diagnostics:")
