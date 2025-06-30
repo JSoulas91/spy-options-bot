@@ -492,7 +492,15 @@ def build_meta_state_for_entry(
     logger.debug(f"position_size={position_size}, trade_type={trade_type}, confidence_score={confidence_score}")
     logger.debug(f"past_trades={past_trades}")
     logger.debug(f"classifier_output={classifier_output}")
-    logger.debug(f"long_term_data keys={list(long_term_data.keys())}")
+
+    # Validate long_term_data is a dict of DataFrames
+    if not isinstance(long_term_data, dict):
+        raise TypeError(f"❌ long_term_data must be a dict, got {type(long_term_data)}")
+    for k, v in long_term_data.items():
+        if not isinstance(v, pd.DataFrame):
+            raise TypeError(f"❌ long_term_data['{k}'] must be a DataFrame, got {type(v)}")
+
+    logger.debug(f"✅ long_term_data keys: {list(long_term_data.keys())}")
 
     def ensure_df(df):
         if isinstance(df, dict):
@@ -502,13 +510,11 @@ def build_meta_state_for_entry(
                 return pd.DataFrame([df])
         return df
 
-    long_term_data = ensure_df(long_term_data)
-
     def build_sequence(state: List[float]) -> np.ndarray:
         padded = _pad(state)
         return np.stack([padded.copy() for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
 
-    # Ensure all dataframes are valid
+    # Ensure all incoming DataFrames are converted properly
     data_1m = ensure_df(data_1m)
     data_5m = ensure_df(data_5m)
     data_15m = ensure_df(data_15m)
