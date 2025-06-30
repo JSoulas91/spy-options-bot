@@ -1099,6 +1099,14 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     logger.debug(f"Classifier output keys: {list(classifier_output.keys())}")
     logger.debug(f"Lengths: 1m={len(bars_1m)}, 5m={len(bars_5m)}, 15m={len(bars_15m)}, 1h={len(bars_1h)}, 1d={len(bars_1d)}")
     
+    # ✅ Validate long_term_data BEFORE using it in meta-state functions
+    if not isinstance(long_term_data, dict):
+        raise TypeError(f"❌ long_term_data must be a dict, got {type(long_term_data)}")
+    
+    for key in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
+        if key not in long_term_data or long_term_data[key] is None or long_term_data[key].empty:
+            logger.warning(f"⚠️ Missing or empty long_term_data[{key}]")
+            
     # Build meta-entry
     try:
         meta_entry = build_meta_state_for_entry(
