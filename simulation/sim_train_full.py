@@ -40,7 +40,14 @@ _DYN_TTL = 3600
 ACCUMULATED_CLOSES = []
 ACCUMULATED_VOLUMES = []
 TRADE_HISTORY = []
+
 long_term_data = {
+    "5d": pd.DataFrame(),
+    "10d": pd.DataFrame(),
+    "15d": pd.DataFrame(),
+    "1mo": pd.DataFrame(),
+    "3mo": pd.DataFrame(),
+    "6mo": pd.DataFrame(),
     "RSI": pd.DataFrame(),
     "MACD": pd.DataFrame(),
     "MACD_HIST": pd.DataFrame(),
@@ -57,6 +64,7 @@ long_term_data = {
     "DURATION": pd.DataFrame(),
     "PROFIT": pd.DataFrame(),
 }
+
 DEFAULT_RANGES: Dict[str, Tuple[float, float]] = {
     "RSI": (0, 100),
     "MACD": (-5, 5),
