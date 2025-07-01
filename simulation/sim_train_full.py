@@ -927,12 +927,21 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     logger.debug(f"   • volumes_1m[0:3]: {volumes_1m[:3]} ... len={len(volumes_1m)}")
     
     # 🧱 Entry window validation
-    if len(bars_1m) < required_bars["1m"]:
-        logger.debug(
-            f"⏩ Skipping trade {trade_idx} on day {day}: "
-            f"len(bars_1m) ({len(bars_1m)}) < required_bars['1m'] ({required_bars['1m']})"
-        )
-        return None
+    bars_by_tf = {
+        "1m": bars_1m,
+        "5m": bars_5m,
+        "15m": bars_15m,
+        "1h": bars_1h,
+        "1d": bars_1d  # assuming daily bars are stored in this variable
+    }
+    
+    for tf, bars in bars_by_tf.items():
+        if len(bars) < required_bars[tf]:
+            logger.debug(
+                f"⏩ Skipping trade {trade_idx} on day {day}: "
+                f"len(bars_{tf}) ({len(bars)}) < required_bars['{tf}'] ({required_bars[tf]})"
+            )
+            return None
     
     max_start_idx = len(bars_1m) - required_bars["1m"]
     logger.debug(f"🧮 max_start_idx = {max_start_idx} (bars_1m={len(bars_1m)} - required={required_bars['1m']})")
