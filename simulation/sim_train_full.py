@@ -736,17 +736,25 @@ def build_meta_state_for_exit(
         ]
 
         for p in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
-            df = long_term_data.get(p)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                last = df.iloc[-1]
-                state += [
-                    normalize(last.get("rsi", 50), rsi_rng),
-                    normalize(last.get("macd", 0), macd_rng),
-                    normalize(last.get("price", 0) - last.get("ema_20", 0), ema_rng),
-                ]
-            else:
-                logger.warning(f"⚠️ Missing or empty long_term_data[{p}]")
-                state += [PAD_VAL] * 3
+                df = long_term_data.get(p)
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    try:
+                        last = df.iloc[-1]
+                        rsi_val = last.get("rsi", np.nan)
+                        macd_val = last.get("macd", np.nan)
+                        ema_dist = last.get("price", np.nan) - last.get("ema_20", np.nan)
+    
+                        state += [
+                            normalize(rsi_val if pd.notna(rsi_val) else 50, rsi_rng),
+                            normalize(macd_val if pd.notna(macd_val) else 0, macd_rng),
+                            normalize(ema_dist if pd.notna(ema_dist) else 0, ema_rng),
+                        ]
+                    except Exception as e:
+                        logger.error(f"❌ Error extracting long_term_data[{p}]: {e}")
+                        state += [PAD_VAL] * 3
+                else:
+                    logger.warning(f"⚠️ Missing or empty long_term_data[{p}]")
+                    state += [PAD_VAL] * 3
 
         if classifier_output:
             state.append(normalize(classifier_output.get("trade_success_prob", 0.5), DEFAULT_RANGES["CONF"]))
