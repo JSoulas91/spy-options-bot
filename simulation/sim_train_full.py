@@ -48,7 +48,6 @@ long_term_data = {
     "1mo": pd.DataFrame(),
     "3mo": pd.DataFrame(),
     "6mo": pd.DataFrame(),
-    "RSI": pd.DataFrame(),
 }
 
 DEFAULT_RANGES: Dict[str, Tuple[float, float]] = {
