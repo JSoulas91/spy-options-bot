@@ -1157,6 +1157,34 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         if key not in long_term_data or long_term_data[key] is None or long_term_data[key].empty:
             logger.warning(f"⚠️ Missing or empty long_term_data[{key}]")
             
+    # 🧠 Log all inputs to build_meta_state_for_entry()
+    logger.debug("🔍 Logging inputs to build_meta_state_for_entry()")
+    
+    for tf_name, bars in {
+        "1m": bars_1m,
+        "5m": bars_5m,
+        "15m": bars_15m,
+        "1h": bars_1h,
+        "1d": bars_1d
+    }.items():
+        logger.debug(f"Bars {tf_name}: type={type(bars)}, shape={getattr(bars, 'shape', 'N/A')}")
+        if isinstance(bars, pd.DataFrame):
+            logger.debug(f"Bars {tf_name} head:\n{bars.head(2)}")
+    
+    logger.debug(f"classifier_output type: {type(classifier_output)}")
+    if isinstance(classifier_output, dict):
+        for k, v in classifier_output.items():
+            logger.debug(f"  {k}: type={type(v)}, shape={getattr(v, 'shape', 'N/A')}, value={v if isinstance(v, (int, float)) else str(v)[:200]}")
+    
+    logger.debug(f"long_term_data type: {type(long_term_data)}")
+    if isinstance(long_term_data, dict):
+        for k, v in long_term_data.items():
+            logger.debug(f"  {k}: type={type(v)}, shape={getattr(v, 'shape', 'N/A')}, value preview={str(v)[:200]}")
+    
+    logger.debug(f"past_trades type: {type(past_trades)}, length: {len(past_trades)}")
+    if past_trades:
+        logger.debug(f"First past_trade keys: {list(past_trades[0].keys()) if isinstance(past_trades[0], dict) else type(past_trades[0])}")
+            
     # Build meta-entry
     try:
         meta_entry = build_meta_state_for_entry(
