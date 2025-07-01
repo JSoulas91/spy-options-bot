@@ -1020,13 +1020,26 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.debug("❌ Not enough bars for indicators (need ≥101). Skipping trade.")
         return None
     
-    # 🧠 Compute indicators
+    # 🧠 Compute indicators with strict validation
     try:
         indicators = compute_all_indicators(closes_1m, volumes_1m, len(closes_1m) - 1)
-        if not indicators or any(v is None or (isinstance(v, float) and not (v == v)) for v in indicators.values()):
-            logger.warning(f"⚠️ Invalid indicators at idx={len(bars_1m) - 1}, skipping")
+        required_keys = [
+            'ema_20', 'rsi_14', 'macd', 'macd_signal', 'macd_hist',
+            'bb_upper', 'bb_middle', 'bb_lower', 'vwap', 'atr_14', 'adx_14'
+        ]
+        bad_keys = []
+        for key in required_keys:
+            val = indicators.get(key)
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                bad_keys.append(key)
+    
+        if bad_keys:
+            logger.error(f"🚫 Indicator computation failed or returned NaN for keys: {bad_keys}")
+            logger.debug(f"🧪 Full indicator output:\n{indicators}")
+            logger.debug(f"📉 closes_1m[-5:]: {closes_1m[-5:].tolist()}")
             return None
-        logger.debug(f"🧠 Indicators OK at {len(bars_1m) - 1}: {indicators}")
+        else:
+            logger.debug(f"🧠 Indicators valid at {len(bars_1m) - 1}: {indicators}")
     except Exception as e:
         logger.exception("❌ Exception during indicator computation")
         return None
