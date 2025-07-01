@@ -1091,14 +1091,20 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     except Exception as e:
         logger.exception("❌ Failed to update long_term_data")
         return None
-
+    
     # Validate long_term_data integrity
     for k, v in long_term_data.items():
         if not isinstance(v, pd.DataFrame):
             logger.error(f"❌ long_term_data[{k}] is not a DataFrame (got {type(v)})")
             raise TypeError(f"Invalid long_term_data[{k}]")
-
-    # Ensure proper DataFrame
+    
+    # 🔒 Ensure required long-term keys are populated
+    for horizon in ["5d", "10d", "15d", "1mo", "3mo", "6mo"]:
+        if horizon not in long_term_data or long_term_data[horizon].empty:
+            logger.warning(f"⚠️ Missing or empty long_term_data[{horizon}] — inserting fallback")
+            long_term_data[horizon] = pd.DataFrame([classifier_features])
+    
+    # Ensure proper DataFrame for classifier input
     if not isinstance(features_df, pd.DataFrame):
         logger.warning("⚠️ build_features_for_trade did not return DataFrame, coercing...")
         features_df = pd.DataFrame([classifier_features])
