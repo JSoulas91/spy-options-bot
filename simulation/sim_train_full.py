@@ -1122,6 +1122,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         classifier_output = ModelInference.wrap_classifier_output(raw_output)
         logger.debug(f"🧠 Classifier output: {classifier_output}")
         
+        confidence = classifier_output.get("trade_success_prob", 0.5)
         entropy = classifier_output.get("entropy", 1.0)
         trade_success_prob = classifier_output.get("trade_success_prob", 0.5)
         class_probabilities = classifier_output.get("class_probabilities", [0.5, 0.5, 0.0])
