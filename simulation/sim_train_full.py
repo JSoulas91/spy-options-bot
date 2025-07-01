@@ -1312,8 +1312,18 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.debug(f"🗑️ Skipping trade {trade_idx} on day {day}: shaped_reward too low ({shaped_reward:.2f})")
         return None
     
+    # 🧪 Check bounds before accessing bars_1m
+    if start_idx >= len(bars_1m):
+        logger.error(f"❌ start_idx={start_idx} out of bounds for bars_1m with length={len(bars_1m)}")
+        return None
+        
     # 📝 Timestamp conversion
-    entry_bar = bars_1m[start_idx]
+    try:
+        entry_bar = bars_1m.iloc[start_idx]  # ✅ FIXED
+    except Exception as e:
+        logger.exception(f"❌ Failed to access entry_bar at start_idx={start_idx} in bars_1m")
+        return None
+    
     ts = entry_bar.get("timestamp", None)
     if isinstance(ts, (int, float)):
         ts = datetime.fromtimestamp(ts)
