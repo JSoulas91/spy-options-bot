@@ -1075,6 +1075,10 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
             'adx_14': indicators['adx_14'],
         }
         logger.debug(f"✅ classifier_features constructed: keys={list(classifier_features.keys())}")
+      # 🔍 Sanity check for non-scalar values
+        for k, v in classifier_features.items():
+            if isinstance(v, (list, np.ndarray)) and len(v) != 1:
+                logger.warning(f"⚠️ classifier_feature '{k}' might be non-scalar: {v}")
     except KeyError as ke:
         logger.error(f"❌ Missing key in indicators while building classifier_features: {ke}")
         return None
