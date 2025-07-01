@@ -49,20 +49,6 @@ long_term_data = {
     "3mo": pd.DataFrame(),
     "6mo": pd.DataFrame(),
     "RSI": pd.DataFrame(),
-    "MACD": pd.DataFrame(),
-    "MACD_HIST": pd.DataFrame(),
-    "EMA_DIST": pd.DataFrame(),
-    "ATR": pd.DataFrame(),
-    "ADX": pd.DataFrame(),
-    "VWAP": pd.DataFrame(),
-    "BB_WIDTH": pd.DataFrame(),
-    "VIX": pd.DataFrame(),
-    "SPY_ABS": pd.DataFrame(),
-    "IV": pd.DataFrame(),
-    "DELTA": pd.DataFrame(),
-    "SIZE": pd.DataFrame(),
-    "DURATION": pd.DataFrame(),
-    "PROFIT": pd.DataFrame(),
 }
 
 DEFAULT_RANGES: Dict[str, Tuple[float, float]] = {
