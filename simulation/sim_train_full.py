@@ -1110,8 +1110,11 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         features_df = pd.DataFrame([classifier_features])
 
     if features_df.shape[0] != 1:
-        logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: invalid features_df shape {features_df.shape}")
-        return None
+        logger.error(f"🚫 Invalid features_df shape: {features_df.shape} (expected 1 row)")
+        logger.debug(f"🧬 Full features_df:\n{features_df}")
+        logger.debug(f"📦 Raw classifier_features:\n{classifier_features}")
+        logger.debug(f"🕒 Trade {trade_idx} on day {day}")
+        raise ValueError(f"Invalid features_df shape: {features_df.shape}")
 
     try:
         inference = ModelInference()
