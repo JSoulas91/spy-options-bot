@@ -1097,9 +1097,22 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.exception("❌ Exception during classifier_features construction")
         return None
 
-    past_trades = TRADE_HISTORY[-10:] if len(TRADE_HISTORY) >= 10 else TRADE_HISTORY
-    logger.debug(f"🕒 Using {len(past_trades)} past trades for meta-state")
-
+    # 🧹 Clean and validate TRADE_HISTORY before using
+    past_trades_raw = TRADE_HISTORY[-15:] if len(TRADE_HISTORY) >= 15 else TRADE_HISTORY
+    past_trades = []
+    for t in past_trades_raw:
+        if (
+            t is not None and isinstance(t, dict)
+            and 'pnl' in t and isinstance(t['pnl'], (int, float))
+            and 'classifier_features' in t and isinstance(t['classifier_features'], dict)
+        ):
+            past_trades.append(t)
+    
+    if len(past_trades) < 3:
+        logger.warning(f"⚠️ Insufficient valid past_trades ({len(past_trades)}). Padding may be applied.")
+    else:
+        logger.debug(f"🕒 Using {len(past_trades)} cleaned past_trades for meta-state")
+    
     try:
         features_df = build_features_for_trade(classifier_features)
         logger.debug(f"🛠️ Built features_df: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
