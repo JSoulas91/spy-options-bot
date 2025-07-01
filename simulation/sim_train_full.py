@@ -1206,10 +1206,24 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.exception("❌ Failed to build meta_entry")
         return None
 
-    if meta_entry is None or is_padded(meta_entry):
-        logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: invalid or padded meta_entry")
-        return None
-
+    if meta_entry is None:
+        logger.error(f"🚫 meta_entry is None — trade {trade_idx} on day {day} cannot proceed.")
+        raise ValueError("❌ Fatal: meta_entry is None")
+    
+    if is_padded(meta_entry):
+        logger.error(f"🚫 Padded meta_entry detected for trade {trade_idx} on day {day} — aborting.")
+    
+        try:
+            meta_np = np.array(meta_entry)
+            logger.error(f"🧩 meta_entry shape: {meta_np.shape}")
+            logger.error(f"🧩 meta_entry preview (first 10): {meta_np.flatten()[:10].tolist()}")
+            logger.error(f"🧩 meta_entry unique values: {np.unique(meta_np)}")
+    
+        except Exception as log_err:
+            logger.exception("❌ Failed to log meta_entry structure")
+    
+        raise ValueError(f"❌ Fatal: meta_entry is padded — trade {trade_idx}, day {day}")
+    
     try:
         action, agent_confidence = meta_agent.select_action(meta_entry)
         logger.debug(f"🎯 Meta-agent action={action}, confidence={agent_confidence:.2f}")
