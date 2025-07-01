@@ -1359,10 +1359,12 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     
     # 🧠 Track trade history for future states
     TRADE_HISTORY.append({
-        "profit": trade_result,
+        "pct_pnl": trade_result, 
         "duration": duration,
         "position_size": position_size,
+        "classifier_features": classifier_features,  # must match what was used to predict
     })
+    logger.debug(f"✅ Trade appended to TRADE_HISTORY — keys: {TRADE_HISTORY[-1].keys()}")
     
     predicted_direction = classifier_output.get("predicted_direction", -1)
     
