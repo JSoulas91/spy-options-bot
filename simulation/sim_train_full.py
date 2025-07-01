@@ -1123,15 +1123,13 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.debug(f"🧠 Classifier output: {classifier_output}")
         
         entropy = classifier_output.get("entropy", 1.0)
-        
+        trade_success_prob = classifier_output.get("trade_success_prob", 0.5)
+        class_probabilities = classifier_output.get("class_probabilities", [0.5, 0.5, 0.0])
     except Exception as e:
         logger.exception("❌ Model inference failed")
         return None
-
+    
     # Confidence-based position sizing
-    # Confidence-based position sizing
-    trade_success_prob = classifier_output.get("trade_success_prob", 0.5)
-    confidence = trade_success_prob  # keep naming consistent
     position_size = MIN_POSITION_SIZE + (MAX_POSITION_SIZE - MIN_POSITION_SIZE) * confidence
     logger.debug(f"📏 Position size based on confidence {confidence:.2f}: {position_size:.4f}")
         
