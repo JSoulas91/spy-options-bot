@@ -1129,10 +1129,12 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         return None
 
     # Confidence-based position sizing
-    confidence = classifier_output.get("trade_success_prob", 0.5)
+    # Confidence-based position sizing
+    trade_success_prob = classifier_output.get("trade_success_prob", 0.5)
+    confidence = trade_success_prob  # keep naming consistent
     position_size = MIN_POSITION_SIZE + (MAX_POSITION_SIZE - MIN_POSITION_SIZE) * confidence
     logger.debug(f"📏 Position size based on confidence {confidence:.2f}: {position_size:.4f}")
-    
+        
     # 🔍 DEBUG: Log everything going into build_meta_state_for_entry
     logger.debug(f"🧱 Calling build_meta_state_for_entry with keys: {[k for k in locals().keys()]}")
     logger.debug(f"Types: bars_1m={type(bars_1m)}, past_trades={type(past_trades)}, long_term_data={type(long_term_data)}")
