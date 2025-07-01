@@ -1184,7 +1184,24 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     logger.debug(f"past_trades type: {type(past_trades)}, length: {len(past_trades)}")
     if past_trades:
         logger.debug(f"First past_trade keys: {list(past_trades[0].keys()) if isinstance(past_trades[0], dict) else type(past_trades[0])}")
-            
+        
+    # 🔒 Validate classifier_output before building meta-state
+    required_classifier_keys = ["trade_success_prob", "entropy", "class_probabilities"]
+    missing_cls_keys = [k for k in required_classifier_keys if k not in classifier_output or classifier_output[k] is None]
+    
+    if missing_cls_keys:
+        logger.error(f"❌ classifier_output is missing or None for keys: {missing_cls_keys}")
+        raise ValueError(f"Invalid classifier_output: missing {missing_cls_keys}")
+    
+    for k in ["trade_success_prob", "entropy"]:
+        if not isinstance(classifier_output[k], (float, int)):
+            logger.error(f"❌ classifier_output['{k}'] must be numeric, got {type(classifier_output[k])}")
+            raise TypeError(f"Invalid type for classifier_output['{k}']")
+    
+    if not isinstance(classifier_output.get("class_probabilities", []), (list, np.ndarray)):
+        logger.error("❌ classifier_output['class_probabilities'] is not list or array")
+        raise TypeError("Invalid type for class_probabilities")
+                
     # Build meta-entry
     try:
         meta_entry = build_meta_state_for_entry(
