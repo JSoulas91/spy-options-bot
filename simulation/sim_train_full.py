@@ -1121,6 +1121,9 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         raw_output = inference.predict_with_confidence(features_df)
         classifier_output = ModelInference.wrap_classifier_output(raw_output)
         logger.debug(f"🧠 Classifier output: {classifier_output}")
+        
+        entropy = classifier_output.get("entropy", 1.0)
+        
     except Exception as e:
         logger.exception("❌ Model inference failed")
         return None
