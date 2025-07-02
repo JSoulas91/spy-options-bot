@@ -1105,6 +1105,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     # 🧹 Clean and validate TRADE_HISTORY before using
     past_trades_raw = TRADE_HISTORY[-15:] if len(TRADE_HISTORY) >= 15 else TRADE_HISTORY
     past_trades = []
+    
     for i, t in enumerate(past_trades_raw):
         if (
             isinstance(t, dict)
@@ -1120,12 +1121,18 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     else:
         logger.debug(f"🕒 Using {len(past_trades)} cleaned past_trades for meta-state")
     
+    # ✅ OPTIONAL: If you need the *latest* classifier_features for next-step processing
     try:
-        features_df = build_features_for_trade(classifier_features)
-        logger.debug(f"🛠️ Built features_df: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
+        if past_trades:
+            latest_features = past_trades[-1]["classifier_features"]
+            features_df = build_features_for_trade(latest_features)
+            logger.debug(f"🛠️ Built features_df: type={type(features_df)}, shape={getattr(features_df, 'shape', 'N/A')}")
+        else:
+            logger.warning("⚠️ No valid past_trades to extract classifier_features from.")
+            features_df = None
     except Exception as e:
         logger.exception("❌ Failed to build features_df")
-        return None
+        features_df = None
 
     # Update long-term stats
     try:
