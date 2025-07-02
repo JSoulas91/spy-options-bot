@@ -1301,6 +1301,18 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     if not isinstance(classifier_output.get("class_probabilities", []), (list, np.ndarray)):
         logger.error("❌ classifier_output['class_probabilities'] is not list or array")
         raise TypeError("Invalid type for class_probabilities")
+        
+        # 🔍 DEBUG BEFORE build_meta_state_for_entry
+    try:
+        log_input_debug_info(
+            entry_or_exit="ENTRY",
+            trade_info={"start_idx": start_idx, "trade_idx": trade_idx, "day": day},  # Simplified
+            long_term_data=long_term_data,
+            classifier_output=classifier_output,
+            past_trades=past_trades
+        )
+    except Exception as dbg_e:
+        logger.exception("❌ log_input_debug_info failed before meta_entry")
                 
     # Build meta-entry
     try:
@@ -1402,6 +1414,23 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.debug(f"Types: bars_1m={type(bars_1m)}, past_trades={type(past_trades)}, long_term_data={type(long_term_data)}")
         logger.debug(f"Classifier output keys: {list(classifier_output.keys())}")
     
+        # 🔍 Deep debug before building exit meta-state
+        try:
+            log_input_debug_info(
+                entry_or_exit="EXIT",
+                trade_info={
+                    "exit_price": exit_price,
+                    "duration": duration,
+                    "trade_idx": trade_idx,
+                    "day": day
+                },
+                long_term_data=long_term_data,
+                classifier_output=classifier_output,
+                past_trades=past_trades
+            )
+        except Exception as dbg_e:
+            logger.exception("❌ log_input_debug_info failed before meta_exit")
+            
         meta_exit = build_meta_state_for_exit(
             data_1m=bars_1m,
             data_5m=bars_5m,
