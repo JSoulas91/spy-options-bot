@@ -280,7 +280,7 @@ def summarise_past(past_trades: List[dict], profit_range: tuple, dur_range: tupl
             return [PAD_VAL] * 6
 
         recent = past_trades[-3:]
-        profits = [t.get("pnl", 0.0) for t in recent]
+        profits = [t.get("pct_pnl", 0.0) for t in recent]
         durations = [t.get("duration", 0.0) for t in recent]
 
         normalized_profits = [normalize(p, profit_range) for p in profits]
@@ -1105,13 +1105,15 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     # 🧹 Clean and validate TRADE_HISTORY before using
     past_trades_raw = TRADE_HISTORY[-15:] if len(TRADE_HISTORY) >= 15 else TRADE_HISTORY
     past_trades = []
-    for t in past_trades_raw:
+    for i, t in enumerate(past_trades_raw):
         if (
-            t is not None and isinstance(t, dict)
-            and 'pnl' in t and isinstance(t['pnl'], (int, float))
+            isinstance(t, dict)
+            and 'pct_pnl' in t and isinstance(t['pct_pnl'], (int, float))
             and 'classifier_features' in t and isinstance(t['classifier_features'], dict)
         ):
             past_trades.append(t)
+        else:
+            logger.warning(f"🛑 Skipped invalid past_trade[{i}] — keys: {list(t.keys()) if isinstance(t, dict) else t}, type: {type(t)}")
     
     if len(past_trades) < 3:
         logger.warning(f"⚠️ Insufficient valid past_trades ({len(past_trades)}). Padding may be applied.")
