@@ -7,7 +7,6 @@ import numpy as np
 # Paths for data logging
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "spy_data.csv")
-TRAINING_LOG_PATH = os.path.join(BASE_DIR, "training_log.jsonl")
 
 # Limit for how many rows to retain
 MAX_ROWS = 5000
@@ -30,7 +29,8 @@ def _get_all_feature_keys(features: dict) -> list:
 def log_training_example(timestamp, close, features: dict, label: int = None,
                          meta_entry_state: list = None, meta_exit_state: list = None):
     """
-    Appends a single training example to spy_data.csv and logs JSONL version.
+    Appends a single training example to spy_data.csv.
+    JSONL logging is disabled.
     """
     if isinstance(timestamp, str):
         timestamp = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
@@ -67,30 +67,6 @@ def log_training_example(timestamp, close, features: dict, label: int = None,
         _prune_if_necessary(fieldnames)
     except Exception as e:
         print(f"[logger.py] Failed to prune spy_data.csv: {e}")
-
-    try:
-        log_training_jsonl(timestamp, close, features, label, meta_entry_state, meta_exit_state)
-    except Exception as e:
-        print(f"[logger.py] JSONL logging failed: {e}")
-
-def log_training_jsonl(timestamp, close, features: dict, label: int = None,
-                       meta_entry_state: list = None, meta_exit_state: list = None):
-    """
-    Logs the training data as JSONL to training_log.jsonl for ML tracking/debugging.
-    """
-    payload = {
-        "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S") if isinstance(timestamp, datetime) else str(timestamp),
-        "close": close,
-        "features": features,
-        "label": label,
-        "meta_entry_state": meta_entry_state,
-        "meta_exit_state": meta_exit_state,
-    }
-    try:
-        with open(TRAINING_LOG_PATH, "a") as f:
-            f.write(json.dumps(payload, default=str) + "\n")
-    except Exception as e:
-        print(f"[logger.py] Failed to write to training_log.jsonl: {e}")
 
 
 def _prune_if_necessary(fieldnames: list):
