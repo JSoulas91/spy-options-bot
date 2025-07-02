@@ -518,26 +518,35 @@ def log_input_debug_info(entry_or_exit, trade_info, long_term_data, classifier_o
     logger.debug(f"\n==== {entry_or_exit} Meta-State DEBUG START ====")
     
     logger.debug(f"{entry_or_exit} | trade_info keys: {list(trade_info.keys())}")
-    
     if 'entry_index' in trade_info:
         logger.debug(f"{entry_or_exit} | entry_index: {trade_info['entry_index']}")
     if 'exit_index' in trade_info:
         logger.debug(f"{entry_or_exit} | exit_index: {trade_info['exit_index']}")
-
+    
+    # --- long_term_data ---
     try:
-        logger.debug(f"{entry_or_exit} | long_term_data shape: {long_term_data.shape}")
+        if hasattr(long_term_data, 'shape'):
+            logger.debug(f"{entry_or_exit} | long_term_data shape: {long_term_data.shape}")
+        elif isinstance(long_term_data, dict):
+            logger.debug(f"{entry_or_exit} | long_term_data keys: {list(long_term_data.keys())}")
+            for k, v in long_term_data.items():
+                logger.debug(f"{entry_or_exit} | long_term_data[{k}]: type={type(v)}, shape={getattr(v, 'shape', 'N/A')}, sample={str(v)[:200]}")
     except Exception as e:
         logger.error(f"{entry_or_exit} | Error with long_term_data: {e}")
     
+    # --- classifier_output ---
     try:
         logger.debug(f"{entry_or_exit} | classifier_output keys: {list(classifier_output.keys())}")
         for k, v in classifier_output.items():
-            logger.debug(f"{entry_or_exit} | classifier_output[{k}] shape: {np.shape(v)}")
+            logger.debug(f"{entry_or_exit} | classifier_output[{k}]: type={type(v)}, shape={np.shape(v)}, value={v if isinstance(v, (int, float)) else str(v)[:100]}")
     except Exception as e:
         logger.error(f"{entry_or_exit} | Error with classifier_output: {e}")
     
+    # --- past_trades ---
     try:
         logger.debug(f"{entry_or_exit} | past_trades count: {len(past_trades)}")
+        if isinstance(past_trades, list) and len(past_trades) > 0:
+            logger.debug(f"{entry_or_exit} | sample past_trades[0]: {str(past_trades[0])[:300]}")
     except Exception as e:
         logger.error(f"{entry_or_exit} | Error with past_trades: {e}")
 
