@@ -513,6 +513,35 @@ def clean_bars(df):
     except Exception as e:
         halt_on_error("clean_bars", e, input_type=str(type(df)), input_preview=str(df.head() if isinstance(df, pd.DataFrame) else df))
         return pd.DataFrame()
+        
+def log_input_debug_info(entry_or_exit, trade_info, long_term_data, classifier_output, past_trades):
+    logger.debug(f"\n==== {entry_or_exit} Meta-State DEBUG START ====")
+    
+    logger.debug(f"{entry_or_exit} | trade_info keys: {list(trade_info.keys())}")
+    
+    if 'entry_index' in trade_info:
+        logger.debug(f"{entry_or_exit} | entry_index: {trade_info['entry_index']}")
+    if 'exit_index' in trade_info:
+        logger.debug(f"{entry_or_exit} | exit_index: {trade_info['exit_index']}")
+
+    try:
+        logger.debug(f"{entry_or_exit} | long_term_data shape: {long_term_data.shape}")
+    except Exception as e:
+        logger.error(f"{entry_or_exit} | Error with long_term_data: {e}")
+    
+    try:
+        logger.debug(f"{entry_or_exit} | classifier_output keys: {list(classifier_output.keys())}")
+        for k, v in classifier_output.items():
+            logger.debug(f"{entry_or_exit} | classifier_output[{k}] shape: {np.shape(v)}")
+    except Exception as e:
+        logger.error(f"{entry_or_exit} | Error with classifier_output: {e}")
+    
+    try:
+        logger.debug(f"{entry_or_exit} | past_trades count: {len(past_trades)}")
+    except Exception as e:
+        logger.error(f"{entry_or_exit} | Error with past_trades: {e}")
+
+    logger.debug(f"==== {entry_or_exit} Meta-State DEBUG END ====\n")
     
 
 def build_meta_state_for_entry(
