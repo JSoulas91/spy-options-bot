@@ -27,11 +27,10 @@ def _get_all_feature_keys(features: dict) -> list:
     return static + dynamic
 
 
-def log_training_example(timestamp, close, features: dict, label: int = None):
+def log_training_example(timestamp, close, features: dict, label: int = None,
+                         meta_entry_state: list = None, meta_exit_state: list = None):
     """
-    Appends a single training example to spy_data.csv.
-    Ensures consistent header and trims file if it grows too large.
-    Also logs JSONL version to training_log.jsonl.
+    Appends a single training example to spy_data.csv and logs JSONL version.
     """
     if isinstance(timestamp, str):
         timestamp = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
@@ -39,7 +38,6 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
     feature_keys = _get_all_feature_keys(features)
     fieldnames = ['timestamp', 'open', 'high', 'low', 'close', 'volume'] + feature_keys + ['label']
 
-    # Build row for CSV
     row = {
         'timestamp': timestamp.strftime("%Y-%m-%d %H:%M:%S"),
         'open': _safe_scalar(features.get('open', '')),
@@ -52,9 +50,6 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
 
     for key in feature_keys:
         row[key] = _safe_scalar(features.get(key, ''))
-
-    if DEBUG:
-        print(f"[logger] Logging row: {row}")
 
     file_exists = os.path.exists(DATA_PATH)
 
@@ -74,12 +69,12 @@ def log_training_example(timestamp, close, features: dict, label: int = None):
         print(f"[logger.py] Failed to prune spy_data.csv: {e}")
 
     try:
-        log_training_jsonl(timestamp, close, features, label)
+        log_training_jsonl(timestamp, close, features, label, meta_entry_state, meta_exit_state)
     except Exception as e:
         print(f"[logger.py] JSONL logging failed: {e}")
 
-
-def log_training_jsonl(timestamp, close, features: dict, label: int = None):
+def log_training_jsonl(timestamp, close, features: dict, label: int = None,
+                       meta_entry_state: list = None, meta_exit_state: list = None):
     """
     Logs the training data as JSONL to training_log.jsonl for ML tracking/debugging.
     """
@@ -88,6 +83,8 @@ def log_training_jsonl(timestamp, close, features: dict, label: int = None):
         "close": close,
         "features": features,
         "label": label,
+        "meta_entry_state": meta_entry_state,
+        "meta_exit_state": meta_exit_state,
     }
     try:
         with open(TRAINING_LOG_PATH, "a") as f:
