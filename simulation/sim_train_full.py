@@ -1365,14 +1365,17 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         return None
     
     # 🧠 Track trade history for future states
-    TRADE_HISTORY.append({
-        "pct_pnl": trade_result, 
-        "duration": duration,
-        "position_size": position_size,
-        "classifier_features": classifier_features,  # must match what was used to predict
-    })
-    logger.debug(f"✅ Trade appended to TRADE_HISTORY — keys: {TRADE_HISTORY[-1].keys()}")
-    
+    if trade_result is not None and isinstance(classifier_features, dict):
+        TRADE_HISTORY.append({
+            "pct_pnl": trade_result,
+            "duration": duration,
+            "position_size": position_size,
+            "classifier_features": classifier_features,
+        })
+        logger.debug(f"✅ Trade appended to TRADE_HISTORY — keys: {TRADE_HISTORY[-1].keys()}")
+    else:
+        logger.warning(f"❌ Skipped appending invalid trade — trade_result: {trade_result}, classifier_features: {type(classifier_features)}")
+        
     predicted_direction = classifier_output.get("predicted_direction", -1)
     
     # 🎯 Validate direction prediction
