@@ -1451,7 +1451,9 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
             timestamp=ts,
             close=entry_bar.get("close", 0),
             features=classifier_features,
-            label=trade_result
+            label=trade_result,
+            meta_entry_state=meta_entry.tolist(),
+            meta_exit_state=meta_exit.tolist(),
         )
         logger.debug(f"✅ Trade {trade_idx} logged | PnL={trade_result:.2f}% | Option={option_symbol} | Duration={duration}m")
     except Exception as e:
