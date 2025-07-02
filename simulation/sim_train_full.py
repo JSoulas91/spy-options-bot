@@ -104,6 +104,37 @@ def is_padded(meta):
         return np.allclose(meta, 0.5, atol=1e-6)
     except Exception as e:
         halt_on_error("is_padded", e, meta=meta)
+        
+def write_to_meta_log(trade: dict, path: str = "meta/meta_log.jsonl"):
+    """
+    Writes a full trade record to meta_log.jsonl for meta-agent training or inspection.
+    """
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps({
+                "timestamp": trade.get("timestamp"),
+                "day": trade.get("day"),
+                "trade_idx": trade.get("trade_idx"),
+                "pct_pnl": trade.get("pct_pnl"),
+                "shaped_reward": trade.get("shaped_reward"),
+                "meta_entry_state": trade.get("entry_state"),
+                "meta_exit_state": trade.get("exit_state"),
+                "meta_action": trade.get("meta_action"),
+                "agent_confidence": trade.get("agent_confidence"),
+                "classifier": trade.get("classifier"),
+                "features": trade.get("features"),
+                "option": trade.get("option"),
+                "duration": trade.get("duration"),
+                "fill_pct": trade.get("fill_pct"),
+                "position_size": trade.get("position_size"),
+                "strike": trade.get("strike"),
+                "type": trade.get("type"),
+                "entry_price": trade.get("entry_price"),
+                "exit_price": trade.get("exit_price"),
+                "final_price": trade.get("final_price"),
+            }, default=str) + "\n")
+    except Exception as e:
+        logger.error(f"❌ Failed to write to meta_log.jsonl: {e}")
 
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     try:
@@ -1470,7 +1501,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         meta_exit = np.array(meta_exit)
     
     # 📦 Final trade result dict
-    return {
+    trade = {
         "timestamp": str(ts),
         "day": day,
         "trade_idx": trade_idx,
@@ -1495,12 +1526,20 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         "agent_confidence": agent_confidence,
         "entry_state": meta_entry.tolist(),
         "exit_state": meta_exit.tolist(),
-        # ✅ Useful context for warm-up and post-trade learning
         "indicators": indicators,
         "option_data": option_data,
         "position_size": position_size,
     }
-
+    
+    # ✅ Log full trade to meta log (robust version)
+    try:
+        write_to_meta_log(trade)
+    except Exception as e:
+        logger.error(f"❌ Failed to write trade to meta log: {e}")
+        traceback.print_exc()
+    
+    return trade
+    
 def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
 
