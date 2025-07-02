@@ -105,11 +105,39 @@ def is_padded(meta):
     except Exception as e:
         halt_on_error("is_padded", e, meta=meta)
         
-def write_to_meta_log(trade: dict, path: str = "meta/meta_log.jsonl"):
+import os
+import json
+import numpy as np
+
+def write_to_meta_log(trade: dict, path: str = "meta/meta_log.jsonl", error_path: str = "meta/meta_log_errors.jsonl"):
     """
     Writes a full trade record to meta_log.jsonl for meta-agent training or inspection.
+    Adds deep debugging, including detection of padded or malformed meta states.
     """
     try:
+        entry_state = trade.get("entry_state")
+        exit_state = trade.get("exit_state")
+
+        def shape_or_type(x):
+            return np.shape(x) if hasattr(x, "__len__") else type(x)
+
+        logger.debug(f"📝 Writing trade_id={trade.get('trade_idx')}, PnL={trade.get('pct_pnl')}, Reward={trade.get('shaped_reward')}")
+        logger.debug(f"📐 entry_state: {shape_or_type(entry_state)}, exit_state: {shape_or_type(exit_state)}")
+
+        # Extra checks for padded or broken states
+        padded_entry = isinstance(entry_state, (list, np.ndarray)) and all(v == 0.5 for v in entry_state)
+        padded_exit = isinstance(exit_state, (list, np.ndarray)) and all(v == 0.5 for v in exit_state)
+        if padded_entry or padded_exit:
+            logger.warning(f"⚠️ Padded Meta-State detected | trade_id={trade.get('trade_idx')} | padded_entry={padded_entry}, padded_exit={padded_exit}")
+            # Optionally dump bad trades to a separate error log for inspection
+            try:
+                with open(error_path, "a") as ef:
+                    ef.write(json.dumps(trade, default=str) + "\n")
+                logger.debug(f"🗃️ Dumped bad trade to {error_path}")
+            except Exception as e:
+                logger.error(f"❌ Failed to write bad meta state to {error_path}: {e}")
+
+        # Now write to main meta log
         with open(path, "a") as f:
             f.write(json.dumps({
                 "timestamp": trade.get("timestamp"),
@@ -117,8 +145,8 @@ def write_to_meta_log(trade: dict, path: str = "meta/meta_log.jsonl"):
                 "trade_idx": trade.get("trade_idx"),
                 "pct_pnl": trade.get("pct_pnl"),
                 "shaped_reward": trade.get("shaped_reward"),
-                "meta_entry_state": trade.get("entry_state"),
-                "meta_exit_state": trade.get("exit_state"),
+                "meta_entry_state": entry_state,
+                "meta_exit_state": exit_state,
                 "meta_action": trade.get("meta_action"),
                 "agent_confidence": trade.get("agent_confidence"),
                 "classifier": trade.get("classifier"),
@@ -133,9 +161,10 @@ def write_to_meta_log(trade: dict, path: str = "meta/meta_log.jsonl"):
                 "exit_price": trade.get("exit_price"),
                 "final_price": trade.get("final_price"),
             }, default=str) + "\n")
-    except Exception as e:
-        logger.error(f"❌ Failed to write to meta_log.jsonl: {e}")
 
+    except Exception as e:
+        logger.error(f"❌ Failed to write to meta_log.jsonl: {e}", exc_info=True)
+        
 def gbm_path(n_steps: int, s0: float, mu: float, sigma: float, dt: float):
     try:
         prices = [s0]
