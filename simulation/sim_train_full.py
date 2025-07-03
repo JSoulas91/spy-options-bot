@@ -734,7 +734,18 @@ def build_meta_state_for_entry(
         if len(state) < STATE_DIM:
             logger.warning(f"🚫 Meta state too short (length={len(state)}) — skipping")
             return None
-    
+        
+        logger.debug("🧩 Component check before sequence build:")
+        logger.debug(f" - len(state) = {len(state)} (expected ≥ {STATE_DIM})")
+        logger.debug(f" - Last 10 elements of state: {state[-10:]}")
+        logger.debug(f" - unique values: {set(np.round(state, 4))}")
+        logger.debug(f" - tf_feats 1m: {tf_feats(data_1m)}")
+        logger.debug(f" - tf_feats 5m: {tf_feats(data_5m)}")
+        logger.debug(f" - tf_feats 15m: {tf_feats(data_15m)}")
+        logger.debug(f" - tf_feats 1h: {tf_feats(data_1h)}")
+        logger.debug(f" - tf_feats 1d: {tf_feats(data_1d)}")
+        logger.debug(f" - classifier_output class_probs: {classifier_output.get('class_probabilities') if classifier_output else None}")
+
         result = build_sequence(state)
         if np.all(result == PAD_VAL):
             logger.warning("⚠️ Meta state is fully padded at entry — likely due to earlier data issue.")
