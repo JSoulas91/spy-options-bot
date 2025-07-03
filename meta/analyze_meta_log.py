@@ -8,8 +8,10 @@ META_LOG_PATH = "meta/meta_log.jsonl"
 
 # Storage
 rewards, losses, entropies, confidences = [], [], [], []
-entry_pad_indices, exit_pad_indices = [], []
-entry_lengths, exit_lengths = []
+entry_pad_indices = []
+exit_pad_indices = []
+entry_lengths = []
+exit_lengths = []
 
 def is_padded(state):
     return isinstance(state, list) and all(x == 0.5 for x in state)
