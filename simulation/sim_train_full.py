@@ -730,7 +730,11 @@ def build_meta_state_for_entry(
         else:
             logger.debug("No classifier output provided, using PAD_VALs for classifier fields.")
             state += [PAD_VAL] * 8
-
+        
+        if len(state) < STATE_DIM:
+            logger.warning(f"🚫 Meta state too short (length={len(state)}) — skipping")
+            return None
+    
         result = build_sequence(state)
         if np.all(result == PAD_VAL):
             logger.warning("⚠️ Meta state is fully padded at entry — likely due to earlier data issue.")
@@ -878,6 +882,10 @@ def build_meta_state_for_exit(
             logger.warning("⚠️ classifier_output missing or None — padding final 8 features.")
             state += [PAD_VAL] * 8
 
+        if len(state) < STATE_DIM:
+            logger.warning(f"🚫 Meta EXIT state too short (length={len(state)}) — skipping")
+            return None
+            
         result = build_sequence(state)
         if np.all(result == PAD_VAL):
             logger.error("❌ Meta state for EXIT is fully padded! Likely due to bad input.")
