@@ -1387,7 +1387,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     
     if is_padded(meta_entry):
         logger.error(f"🚫 Padded meta_entry detected for trade {trade_idx} on day {day} — aborting.")
-    
+        return None
+        
         try:
             meta_np = np.array(meta_entry)
             logger.error(f"🧩 meta_entry shape: {meta_np.shape}")
