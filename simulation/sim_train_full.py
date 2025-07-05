@@ -1723,6 +1723,8 @@ def main():
 
             for trade_idx in range(TRADES_PER_DAY):
                 try:
+                    logger.debug(f"📜 TRADE_HISTORY length: {len(TRADE_HISTORY)} before trade {trade_idx + 1}")
+                    
                     # 🚫 Delay meta-agent trades until 3 successful trades exist
                     if len(TRADE_HISTORY) < 3:
                         logger.debug(f"🟡 TRADE_HISTORY has only {len(TRADE_HISTORY)} trades — allowing early trades to accumulate")
