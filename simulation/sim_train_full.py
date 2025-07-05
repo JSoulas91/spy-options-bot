@@ -334,21 +334,35 @@ def get_minutes_since_open() -> int:
     except Exception as e:
         halt_on_error("get_minutes_since_open", e)
 
-def summarise_past(past_trades: List[dict], profit_range: tuple, dur_range: tuple) -> List[float]:
+def summarise_past(past_trades: List[dict], profit_range: tuple, dur_range: tuple, size_range: tuple) -> List[float]:
     try:
-        if not past_trades:
-            return [PAD_VAL] * 6
+        if len(past_trades) < 3:
+            raise ValueError("Not enough past trades to summarize without padding")
 
+        # Only take last 3 trades
         recent = past_trades[-3:]
-        profits = [t.get("pct_pnl", 0.0) for t in recent]
-        durations = [t.get("duration", 0.0) for t in recent]
 
-        normalized_profits = [normalize(p, profit_range) for p in profits]
-        normalized_durations = [normalize(d, dur_range) for d in durations]
+        features = []
+        for trade in recent:
+            pct_pnl = normalize(trade.get("pct_pnl", 0.0), profit_range)
+            duration = normalize(trade.get("duration", 0.0), dur_range)
+            size = normalize(trade.get("position_size", 1.0), size_range)
 
-        return normalized_profits + normalized_durations
+            # Start with core trade info
+            row = [pct_pnl, duration, size]
+
+            clf_feats = trade.get("classifier_features", {})
+            clf_values = [float(clf_feats[k]) for k in sorted(clf_feats.keys()) if isinstance(clf_feats[k], (int, float))]
+
+            row.extend(clf_values)
+
+            features.extend(row)
+
+        # Trim to exactly 29
+        return features[:29]
+
     except Exception as e:
-        halt_on_error("summarise_past", e, past_trades=past_trades, profit_range=profit_range, dur_range=dur_range)
+        halt_on_error("summarise_past", e, past_trades=past_trades)
 
 def make_option_symbol(day: datetime, strike: float, c_or_p: str) -> str:
     try:
