@@ -1700,6 +1700,11 @@ def main():
 
             for trade_idx in range(TRADES_PER_DAY):
                 try:
+                    # 🚫 Delay meta-agent trades until 3 successful trades exist
+                    if len(TRADE_HISTORY) < 3:
+                        logger.debug(f"⏳ Skipping trade {trade_idx} on day {day}: not enough past trades ({len(TRADE_HISTORY)})")
+                        continue
+                        
                     log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
                     if log_entry:
                         trades.append(log_entry)
