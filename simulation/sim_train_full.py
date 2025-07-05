@@ -1675,24 +1675,47 @@ def main():
 
     for day in range(SIM_DAYS):
         try:
-            # Warm-up period for multi-timeframe indicators
-            if day < WARM_UP_DAYS:
-                logger.debug(f"⏩ Skipping Day {day + 1}: Warming up multi-timeframe history")
-                daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
-                daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
-                ACCUMULATED_CLOSES.extend(daily_prices)
-                ACCUMULATED_VOLUMES.extend(daily_volumes)
-                continue
+            is_warmup = day < WARM_UP_DAYS
 
-            vix_shift = RNG.uniform(14, 28)
-            if RNG.random() < 0.08:
-                vix_shift += RNG.uniform(5, 15)
-
+            # === Generate price and volume for the day ===
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
             daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
 
             ACCUMULATED_CLOSES.extend(daily_prices)
             ACCUMULATED_VOLUMES.extend(daily_volumes)
+
+            # === Handle warm-up days ===
+            if is_warmup:
+                logger.debug(f"🌱 Warm-up Day {day + 1}: Populating market buffers")
+                vix_shift = RNG.uniform(14, 28)
+                trades = []
+
+                # Run 1–2 warm-up trades per day to populate TRADE_HISTORY
+                for trade_idx in range(min(2, TRADES_PER_DAY)):
+                    try:
+                        log_entry = simulate_trade(
+                            day,
+                            trade_idx,
+                            ACCUMULATED_CLOSES,
+                            ACCUMULATED_VOLUMES,
+                            vix_shift,
+                            long_term_data
+                        )
+
+                        if log_entry:
+                            TRADE_HISTORY.append(log_entry)
+                            logger.debug(f"🧪 Warm-up Trade {trade_idx + 1} added to TRADE_HISTORY | PnL={log_entry['pct_pnl']}%")
+                        else:
+                            logger.debug(f"❌ Warm-up trade {trade_idx + 1} failed")
+                    except Exception:
+                        logger.warning(f"⚠️ Exception in warm-up simulate_trade() for trade {trade_idx + 1}")
+                        traceback.print_exc()
+                continue  # Skip main logic during warm-up
+
+            # === Main simulation logic ===
+            vix_shift = RNG.uniform(14, 28)
+            if RNG.random() < 0.08:
+                vix_shift += RNG.uniform(5, 15)
 
             trades = []
             successful_trades = 0
@@ -1704,46 +1727,53 @@ def main():
                     if len(TRADE_HISTORY) < 3:
                         logger.debug(f"⏳ Skipping trade {trade_idx} on day {day}: not enough past trades ({len(TRADE_HISTORY)})")
                         continue
-                        
-                    log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
+
+                    log_entry = simulate_trade(
+                        day,
+                        trade_idx,
+                        ACCUMULATED_CLOSES,
+                        ACCUMULATED_VOLUMES,
+                        vix_shift,
+                        long_term_data
+                    )
+
                     if log_entry:
                         trades.append(log_entry)
                         successful_trades += 1
 
                         logger.debug(f"✅ Trade {trade_idx + 1} | PnL={log_entry['pct_pnl']}% | Duration={log_entry['duration']} mins")
 
-                        if day < WARM_UP_DAYS:
-                            indicators = log_entry.get("indicators", {})
-                            option_data = log_entry.get("option_data", {})
-                            position_size = log_entry.get("position_size", 1.0)
+                        indicators = log_entry.get("indicators", {})
+                        option_data = log_entry.get("option_data", {})
+                        position_size = log_entry.get("position_size", 1.0)
 
-                            def append_if_valid(key, val):
-                                if val is not None and isinstance(val, (int, float)) and not math.isnan(val):
-                                    long_term_data[key].append(val)
+                        def append_if_valid(key, val):
+                            if val is not None and isinstance(val, (int, float)) and not math.isnan(val):
+                                long_term_data[key].append(val)
 
-                            try:
-                                append_if_valid("RSI", indicators.get("rsi_14"))
-                                append_if_valid("MACD", indicators.get("macd"))
-                                append_if_valid("MACD_HIST", indicators.get("macd_hist"))
-                                append_if_valid("EMA_DIST", indicators.get("price") - indicators.get("ema_20") if "price" in indicators and "ema_20" in indicators else None)
-                                append_if_valid("ATR", indicators.get("atr_14"))
-                                append_if_valid("ADX", indicators.get("adx_14"))
-                                append_if_valid("VWAP", indicators.get("vwap"))
-                                bb_width = (indicators.get("bb_upper") - indicators.get("bb_lower")) if indicators.get("bb_upper") and indicators.get("bb_lower") else None
-                                append_if_valid("BB_WIDTH", bb_width)
-                                append_if_valid("VIX", indicators.get("vix"))
-                                append_if_valid("SPY_ABS", abs(indicators.get("price", 0)))
+                        try:
+                            append_if_valid("RSI", indicators.get("rsi_14"))
+                            append_if_valid("MACD", indicators.get("macd"))
+                            append_if_valid("MACD_HIST", indicators.get("macd_hist"))
+                            append_if_valid("EMA_DIST", indicators.get("price") - indicators.get("ema_20") if "price" in indicators and "ema_20" in indicators else None)
+                            append_if_valid("ATR", indicators.get("atr_14"))
+                            append_if_valid("ADX", indicators.get("adx_14"))
+                            append_if_valid("VWAP", indicators.get("vwap"))
+                            bb_width = (indicators.get("bb_upper") - indicators.get("bb_lower")) if indicators.get("bb_upper") and indicators.get("bb_lower") else None
+                            append_if_valid("BB_WIDTH", bb_width)
+                            append_if_valid("VIX", indicators.get("vix"))
+                            append_if_valid("SPY_ABS", abs(indicators.get("price", 0)))
 
-                                append_if_valid("IV", option_data.get("iv"))
-                                append_if_valid("DELTA", option_data.get("delta"))
-                                append_if_valid("SIZE", position_size)
+                            append_if_valid("IV", option_data.get("iv"))
+                            append_if_valid("DELTA", option_data.get("delta"))
+                            append_if_valid("SIZE", position_size)
 
-                                for k in long_term_data:
-                                    if len(long_term_data[k]) > 500:
-                                        long_term_data[k] = long_term_data[k][-500:]
-                            except Exception:
-                                logger.error(f"⚠️ Error updating long_term_data from trade {trade_idx + 1}")
-                                traceback.print_exc()
+                            for k in long_term_data:
+                                if len(long_term_data[k]) > 500:
+                                    long_term_data[k] = long_term_data[k][-500:]
+                        except Exception:
+                            logger.error(f"⚠️ Error updating long_term_data from trade {trade_idx + 1}")
+                            traceback.print_exc()
 
                     else:
                         logger.debug(f"❌ Trade {trade_idx + 1} skipped or failed (simulate_trade returned None)")
@@ -1751,6 +1781,7 @@ def main():
                     logger.error(f"🔥 Exception in simulate_trade() for Day {day + 1}, Trade {trade_idx + 1}")
                     traceback.print_exc()
 
+            # === Write meta log if trades exist ===
             if trades:
                 try:
                     with open(META_LOG_PATH, "a") as f:
