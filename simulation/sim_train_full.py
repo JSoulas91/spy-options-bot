@@ -695,7 +695,7 @@ def build_meta_state_for_entry(
             normalize(vix_val, DEFAULT_RANGES["VIX"]),
             normalize(position_size, DEFAULT_RANGES["SIZE"]),
             *_regime_one_hot(regime),
-            *summarise_past(past_trades, prof_rng, dur_rng),
+            *summarise_past(past_trades, prof_rng, dur_rng, DEFAULT_RANGES["SIZE"]),
             *tf_feats(data_1m), *tf_feats(data_5m),
             *tf_feats(data_15m), *tf_feats(data_1h), *tf_feats(data_1d),
         ]
@@ -856,7 +856,7 @@ def build_meta_state_for_exit(
             normalize(vix_val, DEFAULT_RANGES["VIX"]),
             normalize(position_size, DEFAULT_RANGES["SIZE"]),
             *_regime_one_hot(regime),
-            *summarise_past(past_trades, prof_rng, dur_rng),
+            *summarise_past(past_trades, prof_rng, dur_rng, DEFAULT_RANGES["SIZE"]),
             norm_pnl,
             *tf_feats(data_1m, "1m"), *tf_feats(data_5m, "5m"),
             *tf_feats(data_15m, "15m"), *tf_feats(data_1h, "1h"), *tf_feats(data_1d, "1d"),
