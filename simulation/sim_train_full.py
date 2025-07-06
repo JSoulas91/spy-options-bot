@@ -1699,11 +1699,10 @@ def main():
             if is_warmup:
                 logger.debug(f"🌱 Warm-up Day {day + 1}: Populating market buffers")
                 vix_shift = RNG.uniform(14, 28)
-                trades = []
 
-                # Run 1–2 warm-up trades per day to populate TRADE_HISTORY
                 for trade_idx in range(min(2, TRADES_PER_DAY)):
                     try:
+                        logger.debug(f"🧪 Attempting warm-up trade {trade_idx + 1} on Day {day + 1}")
                         log_entry = simulate_trade(
                             day,
                             trade_idx,
@@ -1715,12 +1714,15 @@ def main():
 
                         if log_entry:
                             TRADE_HISTORY.append(log_entry)
-                            logger.debug(f"🧪 Warm-up Trade {trade_idx + 1} added to TRADE_HISTORY | PnL={log_entry['pct_pnl']}%")
+                            logger.debug(f"✅ Warm-up Trade {trade_idx + 1} appended to TRADE_HISTORY: total={len(TRADE_HISTORY)}")
                         else:
-                            logger.debug(f"❌ Warm-up trade {trade_idx + 1} failed")
+                            logger.debug(f"❌ Warm-up trade {trade_idx + 1} failed (simulate_trade returned None)")
                     except Exception:
                         logger.warning(f"⚠️ Exception in warm-up simulate_trade() for trade {trade_idx + 1}")
                         traceback.print_exc()
+
+                if day == WARM_UP_DAYS - 1:
+                    logger.debug(f"📦 TRADE_HISTORY after warm-up: {len(TRADE_HISTORY)} trades collected")
                 continue  # Skip main logic during warm-up
 
             # === Main simulation logic ===
@@ -1735,34 +1737,23 @@ def main():
             for trade_idx in range(TRADES_PER_DAY):
                 try:
                     logger.debug(f"📜 TRADE_HISTORY length: {len(TRADE_HISTORY)} before trade {trade_idx + 1}")
-                    
-                    # 🚫 Delay meta-agent trades until 3 successful trades exist
+
                     if len(TRADE_HISTORY) < 3:
                         logger.debug(f"🟡 TRADE_HISTORY has only {len(TRADE_HISTORY)} trades — allowing early trades to accumulate")
                         log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
                         if log_entry:
                             trades.append(log_entry)
                             TRADE_HISTORY.append(log_entry)
-                        continue  # Skip meta-agent logic but accumulate data
+                            logger.debug(f"✅ Trade appended to TRADE_HISTORY: total={len(TRADE_HISTORY)}")
+                        continue  # Skip meta-agent logic
 
-                    log_entry = simulate_trade(
-                        day,
-                        trade_idx,
-                        ACCUMULATED_CLOSES,
-                        ACCUMULATED_VOLUMES,
-                        vix_shift,
-                        long_term_data
-                    )
+                    log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
 
                     if log_entry:
                         trades.append(log_entry)
-                        TRADE_HISTORY.append(log_entry)  # ✅ Patch 2: Append to history
+                        TRADE_HISTORY.append(log_entry)
                         logger.debug(f"✅ Trade appended to TRADE_HISTORY: total={len(TRADE_HISTORY)}")
                         successful_trades += 1
-                        
-                    if len(TRADE_HISTORY) < MIN_PAST_TRADES:
-                        logger.debug(f"🟡 TRADE_HISTORY has only {len(TRADE_HISTORY)} trades — allowing early trades to accumulate")
-                        # continue or pass to allow trades through
 
                         logger.debug(f"✅ Trade {trade_idx + 1} | PnL={log_entry['pct_pnl']}% | Duration={log_entry['duration']} mins")
 
@@ -1800,6 +1791,7 @@ def main():
 
                     else:
                         logger.debug(f"❌ Trade {trade_idx + 1} skipped or failed (simulate_trade returned None)")
+
                 except Exception as trade_err:
                     logger.error(f"🔥 Exception in simulate_trade() for Day {day + 1}, Trade {trade_idx + 1}")
                     traceback.print_exc()
