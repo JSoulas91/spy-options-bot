@@ -98,6 +98,35 @@ def halt_on_error(context: str, err: Exception, **inputs):
     logger.error(traceback.format_exc())
     raise err
 
+def generate_dummy_trade():
+    return {
+        "pct_pnl": RNG.uniform(-0.05, 0.05),  # +/- 5% PnL
+        "duration": RNG.randint(10, 120),     # 10 to 120 minutes
+        "position_size": RNG.uniform(0.5, 2.0),
+        "classifier_output": [RNG.uniform(0, 1) for _ in range(3)],
+        "classifier_features": [RNG.uniform(-1, 1) for _ in range(29)],
+        "meta_entry": [RNG.uniform(0, 1) for _ in range(64)],
+        "meta_exit": [RNG.uniform(0, 1) for _ in range(64)],
+        "option_data": {
+            "iv": RNG.uniform(0.1, 0.6),
+            "delta": RNG.uniform(0.2, 0.8),
+        },
+        "indicators": {
+            "rsi_14": RNG.uniform(30, 70),
+            "macd": RNG.uniform(-1, 1),
+            "macd_hist": RNG.uniform(-1, 1),
+            "ema_20": RNG.uniform(400, 500),
+            "price": RNG.uniform(400, 500),
+            "atr_14": RNG.uniform(1, 10),
+            "adx_14": RNG.uniform(10, 30),
+            "vwap": RNG.uniform(400, 500),
+            "bb_upper": RNG.uniform(410, 520),
+            "bb_lower": RNG.uniform(380, 490),
+            "vix": RNG.uniform(14, 28),
+        }
+    }
+
+
 def is_padded(meta):
     try:
         meta = np.array(meta)
