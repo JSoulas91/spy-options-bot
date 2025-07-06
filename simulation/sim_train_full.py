@@ -1713,6 +1713,12 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
 def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
 
+     === Inject dummy trades before simulation starts ===
+    if len(TRADE_HISTORY) < 10:
+        logger.debug("🤖 Injecting 10 dummy trades into TRADE_HISTORY to bootstrap simulation")
+        for _ in range(10):
+            TRADE_HISTORY.append(generate_dummy_trade())
+            
     for day in range(SIM_DAYS):
         try:
             is_warmup = day < WARM_UP_DAYS
