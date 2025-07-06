@@ -1668,7 +1668,14 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.error(f"❌ Failed to write trade to meta log: {e}")
         traceback.print_exc()
     
-    return trade
+    # ✅ Final validation before returning
+    required_keys = ["entry_price", "exit_price", "pct_pnl", "meta_entry", "meta_exit"]
+    if all(k in trade and trade[k] is not None for k in required_keys):
+        logger.debug("✅ Trade dict complete — returning trade")
+        return trade
+    else:
+        logger.warning(f"🚫 Incomplete trade dict — missing keys: {[k for k in required_keys if k not in trade or trade[k] is None]}")
+        return None
     
 def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
