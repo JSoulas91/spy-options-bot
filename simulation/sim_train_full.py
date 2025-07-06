@@ -1757,6 +1757,7 @@ def main():
                     if log_entry:
                         trades.append(log_entry)
                         TRADE_HISTORY.append(log_entry)  # ✅ Patch 2: Append to history
+                        logger.debug(f"✅ Trade appended to TRADE_HISTORY: total={len(TRADE_HISTORY)}")
                         successful_trades += 1
                         
                     if len(TRADE_HISTORY) < MIN_PAST_TRADES:
