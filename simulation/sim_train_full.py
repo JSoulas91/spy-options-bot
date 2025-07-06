@@ -1754,6 +1754,10 @@ def main():
                         trades.append(log_entry)
                         TRADE_HISTORY.append(log_entry)  # ✅ Patch 2: Append to history
                         successful_trades += 1
+                        
+                    if len(TRADE_HISTORY) < MIN_PAST_TRADES:
+                        logger.debug(f"🟡 TRADE_HISTORY has only {len(TRADE_HISTORY)} trades — allowing early trades to accumulate")
+                        # continue or pass to allow trades through
 
                         logger.debug(f"✅ Trade {trade_idx + 1} | PnL={log_entry['pct_pnl']}% | Duration={log_entry['duration']} mins")
 
