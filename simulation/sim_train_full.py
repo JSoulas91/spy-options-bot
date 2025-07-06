@@ -612,6 +612,10 @@ def build_meta_state_for_entry(
     past_trades = past_trades or []
     long_term_data = long_term_data or {}
 
+    MIN_PAST_TRADES = 3  # enforce your required number here
+    if len(past_trades) < MIN_PAST_TRADES:
+        raise ValueError(f"🚫 Not enough past trades to build meta-state without padding (got {len(past_trades)}, need ≥ {MIN_PAST_TRADES})")
+
     logger.debug("🔍 Starting build_meta_state_for_entry")
     logger.debug(f"Types: 1m={type(data_1m)}, 5m={type(data_5m)}, 15m={type(data_15m)}, 1h={type(data_1h)}, 1d={type(data_1d)}")
     logger.debug(f"position_size={position_size}, trade_type={trade_type}, confidence_score={confidence_score}")
