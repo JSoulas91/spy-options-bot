@@ -1752,6 +1752,7 @@ def main():
 
                     if log_entry:
                         trades.append(log_entry)
+                        TRADE_HISTORY.append(log_entry)  # ✅ Patch 2: Append to history
                         successful_trades += 1
 
                         logger.debug(f"✅ Trade {trade_idx + 1} | PnL={log_entry['pct_pnl']}% | Duration={log_entry['duration']} mins")
