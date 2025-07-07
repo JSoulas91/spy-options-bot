@@ -56,6 +56,10 @@ class RewardShaper:
         base_reward = np.tanh(pct_pnl / 30.0)
         duration_penalty = -0.015 * math.log1p(duration)
         reward = base_reward + duration_penalty
+        # 🚨 Penalize catastrophic losses regardless of success flag
+        if pct_pnl < -20:
+            logger.warning(f"⚠️ Severe loss detected: pct_pnl={pct_pnl:.2f}. Forcing heavy reward penalty.")
+            reward -= (abs(pct_pnl) / 20)  # e.g. -82.65% → -4.13 penalty
 
         # Classifier shaping
         if was_successful and confidence > 0.55:
@@ -167,4 +171,8 @@ class RewardShaper:
             logger.info(f"  agent_conf_penalty={agent_conf_penalty:.4f}, agent_classifier_agreement={agent_classifier_agreement:.4f}")
             logger.info(f"  total_reward={total_reward:.4f}")
 
+        if pct_pnl < -20 and total_reward > 0:
+            logger.warning(f"❌ Overriding positive reward for large loss (pct_pnl={pct_pnl:.2f}) → Forcing reward ≤ 0")
+            total_reward = min(total_reward, 0)
+        
         return total_reward
