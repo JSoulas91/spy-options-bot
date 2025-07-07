@@ -1266,24 +1266,36 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.exception("❌ Exception during classifier_features construction")
         return None
 
-    # 🧹 Clean and validate TRADE_HISTORY before using
+  # ✅ Forced acceptance of dummy past trades for debugging
     past_trades_raw = TRADE_HISTORY[-15:] if len(TRADE_HISTORY) >= 15 else TRADE_HISTORY
     past_trades = []
     
+    # 💥 Skip strict validation and force usage
     for i, t in enumerate(past_trades_raw):
-        if (
-            isinstance(t, dict)
-            and 'pct_pnl' in t and isinstance(t['pct_pnl'], (int, float))
-            and 'classifier_features' in t and isinstance(t['classifier_features'], dict)
-        ):
+        if isinstance(t, dict):
             past_trades.append(t)
         else:
-            logger.warning(f"🛑 Skipped invalid past_trade[{i}] — keys: {list(t.keys()) if isinstance(t, dict) else t}, type: {type(t)}")
+            logger.warning(f"🛑 Skipped invalid past_trade[{i}] — Not a dict, type: {type(t)}")
     
-    if len(past_trades) < 3:
-        logger.warning(f"⚠️ Insufficient valid past_trades ({len(past_trades)}). Padding may be applied.")
-    else:
-        logger.debug(f"🕒 Using {len(past_trades)} cleaned past_trades for meta-state")
+    # 🧱 Ensure we have at least 3 past trades by padding with dummy data if needed
+    MIN_PAST_TRADES = 3
+    if len(past_trades) < MIN_PAST_TRADES:
+        logger.warning(f"⚠️ Only {len(past_trades)} past_trades found. Padding with dummy trades...")
+        dummy_trade = {
+            'pct_pnl': 0.0,
+            'duration': 1,
+            'position_size': 1,
+            'classifier_output': [0.33, 0.33, 0.33],
+            'classifier_features': {f'feat_{i}': 0.0 for i in range(30)},
+            'meta_entry': [0.5]*64,
+            'meta_exit': [0.5]*64,
+            'option_data': {},
+            'indicators': {}
+        }
+        while len(past_trades) < MIN_PAST_TRADES:
+            past_trades.append(dummy_trade)
+    
+    logger.debug(f"✅ Using {len(past_trades)} past_trades (with padding if needed) for meta-state")
     
     # ✅ OPTIONAL: If you need the *latest* classifier_features for next-step processing
     try:
