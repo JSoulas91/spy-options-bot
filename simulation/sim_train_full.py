@@ -104,7 +104,7 @@ def generate_dummy_trade():
         "duration": RNG.randint(10, 120),     # 10 to 120 minutes
         "position_size": RNG.uniform(0.5, 2.0),
         "classifier_output": [RNG.uniform(0, 1) for _ in range(3)],
-        "classifier_features": [RNG.uniform(-1, 1) for _ in range(29)],
+        "classifier_features": {f"feat_{i}": RNG.uniform(-1, 1) for i in range(29)},  # ✅ dict, not list
         "meta_entry": [RNG.uniform(0, 1) for _ in range(64)],
         "meta_exit": [RNG.uniform(0, 1) for _ in range(64)],
         "option_data": {
