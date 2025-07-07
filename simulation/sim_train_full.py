@@ -1597,7 +1597,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         (predicted_direction == 0 and final_price < price_sig)
     )
     logger.debug(f"🎯 Trade {trade_idx} on day {day}: Direction predicted={predicted_direction}, Actual={final_price:.2f} vs Signal={price_sig:.2f} → Correct={direction_correct}")
-    
+    logger.debug(f"📈 Trade result before reward shaping: {trade_result}")
     # 🏆 Compute shaped reward
     try:
         shaped_reward = reward_shaper.compute_shaped_reward(
