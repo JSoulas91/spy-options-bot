@@ -1734,19 +1734,19 @@ def main():
     for day in range(SIM_DAYS):
         try:
             is_warmup = day < WARM_UP_DAYS
-
+    
             # === Generate price and volume for the day ===
             daily_prices = gbm_path(5000, START_PRICE, GBM_MU, GBM_SIGMA, 1 / 390)
             daily_volumes = [RNG.randint(300_000, 1_000_000) for _ in daily_prices]
-
+    
             ACCUMULATED_CLOSES.extend(daily_prices)
             ACCUMULATED_VOLUMES.extend(daily_volumes)
-
+    
             # === Handle warm-up days ===
             if is_warmup:
                 logger.debug(f"🌱 Warm-up Day {day + 1}: Populating market buffers")
                 vix_shift = RNG.uniform(14, 28)
-
+    
                 for trade_idx in range(min(2, TRADES_PER_DAY)):
                     try:
                         logger.debug(f"🧪 Attempting warm-up trade {trade_idx + 1} on Day {day + 1}")
@@ -1758,7 +1758,7 @@ def main():
                             vix_shift,
                             long_term_data
                         )
-
+    
                         if log_entry:
                             TRADE_HISTORY.append(log_entry)
                             logger.debug(f"✅ Warm-up Trade {trade_idx + 1} appended to TRADE_HISTORY: total={len(TRADE_HISTORY)}")
@@ -1767,11 +1767,17 @@ def main():
                     except Exception:
                         logger.warning(f"⚠️ Exception in warm-up simulate_trade() for trade {trade_idx + 1}")
                         traceback.print_exc()
-
+    
                 if day == WARM_UP_DAYS - 1:
                     logger.debug(f"📦 TRADE_HISTORY after warm-up: {len(TRADE_HISTORY)} trades collected")
                 continue  # Skip main logic during warm-up
-
+    
+            # ✅ Inject dummy trades once after warm-up
+            if day == WARM_UP_DAYS and len(TRADE_HISTORY) == 0:
+                for _ in range(10):
+                    TRADE_HISTORY.append(generate_dummy_trade())
+                logger.info("🧪 Injected 10 dummy trades on day 110 to seed trade history")
+    
             # === Main simulation logic ===
             vix_shift = RNG.uniform(14, 28)
             if RNG.random() < 0.08:
