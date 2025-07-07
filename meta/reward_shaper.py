@@ -45,6 +45,9 @@ class RewardShaper:
         pct_pnl = trade_result.get("pct_pnl", 0.0)
         duration = trade_result.get("duration", 1)
         was_successful = trade_result.get("was_successful", False)
+        #sanity check
+        assert isinstance(pct_pnl, (float, int)), f"pct_pnl is not a float/int: {pct_pnl} ({type(pct_pnl)})"
+        assert -1000 < pct_pnl < 1000, f"Unrealistic pct_pnl={pct_pnl}, possible bug in trade_result"
 
         confidence = classifier_output.get("confidence", 0.5)
         entropy = classifier_output.get("entropy", 0.0)
