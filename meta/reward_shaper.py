@@ -45,9 +45,14 @@ class RewardShaper:
         pct_pnl = trade_result.get("pct_pnl", 0.0)
         duration = trade_result.get("duration", 1)
         was_successful = trade_result.get("was_successful", False)
-        #sanity check
+        
+        # Sanity checks
         assert isinstance(pct_pnl, (float, int)), f"pct_pnl is not a float/int: {pct_pnl} ({type(pct_pnl)})"
         assert -1000 < pct_pnl < 1000, f"Unrealistic pct_pnl={pct_pnl}, possible bug in trade_result"
+        
+        # Bonus scaling based on magnitude of PnL
+        abs_pnl = abs(pct_pnl)
+        bonus_scaler = min(1.0, abs_pnl / 10.0)  # Bonuses scale up to full at ±10% PnL
 
         confidence = classifier_output.get("confidence", 0.5)
         entropy = classifier_output.get("entropy", 0.0)
@@ -128,17 +133,17 @@ class RewardShaper:
         if agent_confidence > 0.75 and confidence > 0.75:
             agent_classifier_agreement = 0.4 if was_successful else -0.4
 
-        # Total reward
-        total_reward = (
-            reward + classifier_shaping + regime_bonus + streak_bonus + sharpe_boost +
+         # Scale bonus components based on trade magnitude
+        bonus_total = bonus_scaler * (
+            classifier_shaping + regime_bonus + streak_bonus + sharpe_boost +
             risk_penalty + entry_timing_bonus + rrr_bonus + confidence_alignment_penalty +
             setup_bonus + exploration_bonus + trade_count_bonus +
             missed_opportunity_penalty + direction_bonus + speed_bonus +
             agent_conf_penalty + agent_classifier_agreement
         )
-
-        total_reward = max(min(total_reward, 6), -6)
-
+        
+        total_reward = reward + bonus_total
+        
         # Log to CSV
         if self.csv_log_path:
             with open(self.csv_log_path, "a", newline='') as f:
