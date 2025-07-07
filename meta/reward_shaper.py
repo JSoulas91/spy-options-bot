@@ -161,7 +161,7 @@ class RewardShaper:
         # Logging
         if abs(total_reward) > 4.5:
             logger.info(f"⚡ High reward: {total_reward:.2f} → PCT_PNL={pct_pnl:.2f}, conf={confidence:.2f}, agent_conf={agent_confidence:.2f}, rrr={rrr:.2f}")
-
+        
         if self.debug:
             logger.info(f"🔎 Reward components:")
             logger.info(f"  base_reward={base_reward:.4f}, duration_penalty={duration_penalty:.4f}")
@@ -175,9 +175,13 @@ class RewardShaper:
             logger.info(f"  direction_bonus={direction_bonus:.4f}, speed_bonus={speed_bonus:.4f}")
             logger.info(f"  agent_conf_penalty={agent_conf_penalty:.4f}, agent_classifier_agreement={agent_classifier_agreement:.4f}")
             logger.info(f"  total_reward={total_reward:.4f}")
-
-        if pct_pnl < -20 and total_reward > 0:
-            logger.warning(f"❌ Overriding positive reward for large loss (pct_pnl={pct_pnl:.2f}) → Forcing reward ≤ 0")
-            total_reward = min(total_reward, 0)
+        
+        # Final safety override logic for catastrophic and moderate losses
+        if pct_pnl <= -20.0:
+            logger.warning(f"❌ Severe loss (pct_pnl={pct_pnl:.2f}) → Forcing reward ≤ -2.0")
+            total_reward = min(total_reward, -2.0)
+        elif -20.0 < pct_pnl < -2.0 and total_reward > 0:
+            logger.warning(f"⚠️ Moderate loss (pct_pnl={pct_pnl:.2f}) with positive reward ({total_reward:.2f}) → Forcing reward ≤ 0")
+            total_reward = min(total_reward, 0.0)
         
         return total_reward
