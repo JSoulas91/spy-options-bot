@@ -26,7 +26,7 @@ from ml.feature_pipeline import build_features_for_trade
 reward_shaper = RewardShaper()
 
 # ───────── simulation params ───────────────
-SIM_DAYS = 500
+SIM_DAYS = 1200
 TRADES_PER_DAY = 12
 GBM_MU = 0.08
 GBM_SIGMA = 0.22
