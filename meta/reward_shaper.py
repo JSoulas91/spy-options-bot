@@ -188,5 +188,7 @@ class RewardShaper:
             logger.warning(f"⚠️ Positive trade (pct_pnl={pct_pnl:.2f}) with negative reward ({total_reward:.2f}) → Forcing reward ≥ 0")
             total_reward = max(total_reward, 0.0)
         
+        total_reward = np.clip(total_reward, -10.0, 10.0)
+        
         return total_reward
         
