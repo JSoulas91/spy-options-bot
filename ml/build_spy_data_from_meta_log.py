@@ -37,13 +37,13 @@ bot_logger = logger
 # === Feature Extractor ===
 def extract_features(entry: dict):
     try:
-        if "features" not in entry or "label" not in entry or "timestamp" not in entry:
-            bot_logger.warning(f"[Skip] Missing keys in meta log entry: {entry.keys()}")
+        if "features" not in entry or "pct_pnl" not in entry or "timestamp" not in entry:
+            bot_logger.warning(f"[Skip] Missing expected keys: {entry.keys()}")
             return None
 
         features = entry["features"]
-        label = entry["label"]
         timestamp = entry["timestamp"]
+        label = 1 if entry["pct_pnl"] >= 0 else 0
 
         if not isinstance(features, list) or len(features) != len(FEATURE_NAMES):
             bot_logger.warning(f"[Skip] Invalid feature vector length: {len(features)} (expected {len(FEATURE_NAMES)})")
