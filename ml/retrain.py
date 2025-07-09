@@ -32,11 +32,7 @@ FEATURE_NAMES = [
     "bb_lower",
     "vwap",
     "atr_14",
-    "adx_14",
-    "regime_class",      # from sim meta-state
-    "class_prob_0",      # from prior classifier inference
-    "class_prob_1",
-    "class_prob_2"
+    "adx_14"
 ]
 
 def load_data():
