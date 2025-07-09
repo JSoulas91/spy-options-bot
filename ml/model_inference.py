@@ -8,9 +8,18 @@ CAL_MODEL_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "models/xgb_calibr
 
 class ModelInference:
     def __init__(self):
-        if not os.path.exists(CAL_MODEL_PATH):
-            raise FileNotFoundError(f"Calibrated model not found at {CAL_MODEL_PATH}. Run retrain first.")
-        self.model = joblib.load(CAL_MODEL_PATH)
+        latest_model_path_file = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models/latest_model_path.txt"))
+        
+        if not os.path.exists(latest_model_path_file):
+            raise FileNotFoundError(f"[ModelInference] Missing latest_model_path.txt at {latest_model_path_file}. Run retrain first.")
+
+        with open(latest_model_path_file, "r") as f:
+            model_path = f.read().strip()
+
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"[ModelInference] Model file listed in latest_model_path.txt does not exist: {model_path}")
+
+        self.model = joblib.load(model_path)
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """
