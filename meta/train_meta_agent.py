@@ -29,7 +29,7 @@ DEBUG = True
 MIN_HIGH_REWARD = 1.5
 MIN_REWARD_SPREAD = 0.5
 MAX_RECENT_SKIP = 300
-SEQ_LEN = 10  # sequence length for meta state
+SEQ_LEN = 20  # sequence length for meta state
 
 def _load_rows() -> List[Dict]:
     if not os.path.exists(META_LOG_PATH):
