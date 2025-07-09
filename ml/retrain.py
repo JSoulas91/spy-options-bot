@@ -93,7 +93,11 @@ def retrain_model():
         calibrated_path = f"models/xgb_calibrated_{timestamp}.pkl"
         joblib.dump(calibrator, calibrated_path)
         logger.info("[Save Model] Calibrated model saved")
-
+        # Save a pointer to the latest model path
+        with open("models/latest_model_path.txt", "w") as f:
+            f.write(calibrated_path)
+        logger.info(f"[Save Model] Latest model path recorded to models/latest_model_path.txt")
+        
         # Accuracy
         X_train, X_val, y_train, y_val = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
         acc_in = calibrator.score(X_train, y_train)
