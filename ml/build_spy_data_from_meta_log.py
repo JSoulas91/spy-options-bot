@@ -12,16 +12,11 @@ OUTPUT_CSV = Path("ml/spy_data.csv")
 OUTPUT_NPZ = Path("ml/spy_data.npz")
 MAX_ROWS = 50000
 
-# === Features ===
+# === 17 Expected Feature Keys ===
 FEATURE_NAMES = [
-    "spy_return", "spy_volatility", "vix_level", "put_call_ratio",
-    "rsi_5", "rsi_14", "macd", "macd_signal",
-    "sma_5", "sma_20", "sma_50", "sma_200",
-    "spy_volume", "open_interest_ratio", "skew",
-    "classifier_confidence", "classifier_signal",
-    "trade_duration", "position_size", "pct_pnl",
-    "greek_delta", "greek_gamma", "greek_theta", "greek_vega", "greek_rho",
-    "meta_action", "entry_confidence", "exit_confidence", "entry_signal"
+    "confidence", "setup_quality", "vix", "realized_vol", "trade_type",
+    "total_signals_today", "ema_20", "rsi_14", "macd", "macd_signal",
+    "macd_hist", "bb_upper", "bb_middle", "bb_lower", "vwap", "atr_14", "adx_14"
 ]
 
 # === Logger Setup ===
@@ -37,19 +32,27 @@ bot_logger = logger
 # === Feature Extractor ===
 def extract_features(entry: dict):
     try:
-        if "features" not in entry or "pct_pnl" not in entry or "timestamp" not in entry:
-            bot_logger.warning(f"[Skip] Missing expected keys: {entry.keys()}")
+        if "features" not in entry or not isinstance(entry["features"], dict):
+            bot_logger.warning(f"[Skip] Missing or malformed 'features' field: {entry.get('features')}")
             return None
 
         features = entry["features"]
-        timestamp = entry["timestamp"]
-        label = 1 if entry["pct_pnl"] >= 0 else 0
+        timestamp = entry.get("timestamp")
+        pct_pnl = entry.get("pct_pnl")
 
-        if not isinstance(features, list) or len(features) != len(FEATURE_NAMES):
-            bot_logger.warning(f"[Skip] Invalid feature vector length: {len(features)} (expected {len(FEATURE_NAMES)})")
+        if timestamp is None or pct_pnl is None:
+            bot_logger.warning(f"[Skip] Missing timestamp or pct_pnl: keys={entry.keys()}")
             return None
 
-        return features, label, timestamp
+        # Ensure all required feature keys are present
+        if not all(k in features for k in FEATURE_NAMES):
+            bot_logger.warning(f"[Skip] Missing keys in features: {features}")
+            return None
+
+        feature_vector = [features[k] for k in FEATURE_NAMES]
+        label = 1 if pct_pnl >= 0 else 0
+
+        return feature_vector, label, timestamp
     except Exception as e:
         bot_logger.exception(f"[extract_features] Exception: {e}")
         return None
