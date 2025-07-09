@@ -14,34 +14,12 @@ OUTPUT_NPZ = Path("ml/dataset.npz")
 MAX_ROWS = 30000
 
 FEATURE_NAMES = [
-    "confidence",
-    "setup_quality",
-    "vix",
-    "realized_vol",
-    "trade_type",
-    "total_signals_today",
-    "ema_20",
-    "rsi_14",
-    "macd",
-    "macd_signal",
-    "macd_hist",
-    "bb_upper",
-    "bb_middle",
-    "bb_lower",
-    "vwap",
-    "atr_14",
-    "adx_14",
-    "regime_class",
-    "classifier_prob",
-    "classifier_pred_up",
-    "classifier_pred_down",
-    "classifier_pred_flat",
-    "class_prob_0",
-    "class_prob_1",
-    "class_prob_2",
-    "classifier_entropy",
-    "agent_confidence",
-    "classifier_confidence"
+    "confidence", "setup_quality", "vix", "realized_vol", "trade_type", "total_signals_today",
+    "ema_20", "rsi_14", "macd", "macd_signal", "macd_hist",
+    "bb_upper", "bb_middle", "bb_lower", "vwap", "atr_14", "adx_14", "regime_class",
+    "classifier_prob", "classifier_pred_up", "classifier_pred_down", "classifier_pred_flat",
+    "class_prob_0", "class_prob_1", "class_prob_2",
+    "classifier_entropy", "agent_confidence", "classifier_confidence"
 ]
 
 def normalize(val, min_val, max_val):
@@ -60,118 +38,100 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     classifier = trade.get("classifier", {})
     timestamp = entry.get("timestamp")
 
-    open_, high, low, close = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close")
-    volume = bar.get("volume", 1.0)
-
-    if None in (open_, high, low, close):
-        bot_logger.warning(f"[Feature Extract] Missing OHLC data for timestamp {timestamp}")
+    if not all(k in bar for k in ("open", "high", "low", "close", "volume")):
+        bot_logger.warning(f"[Skip] Missing OHLCV data @ {timestamp}")
         return None
 
     try:
         df_bar = pd.DataFrame([{
-            'open': open_,
-            'high': high,
-            'low': low,
-            'close': close,
-            'volume': volume
+            'open': float(bar['open']),
+            'high': float(bar['high']),
+            'low': float(bar['low']),
+            'close': float(bar['close']),
+            'volume': float(bar['volume']),
         }])
         df_ind = calculate_indicators(df_bar)
         row = df_ind.iloc[0]
-        print(f"[DEBUG] Indicators at {timestamp}:\n{row}")
 
-        def safe_val(name: str, fallback: float = 0.0):
-            val = row.get(name)
-            return fallback if pd.isna(val) else float(val)
+        for ind in ["EMA_20", "RSI_14", "MACD", "MACD_signal", "MACD_hist",
+                    "BB_upper", "BB_middle", "BB_lower", "VWAP", "ATR_14", "ADX_14"]:
+            if pd.isna(row.get(ind)):
+                bot_logger.warning(f"[Skip] Missing indicator '{ind}' @ {timestamp}")
+                return None
 
-        # Label based on PnL (relaxed thresholds for debug)
-        pct_pnl = float(trade.get("pct_pnl", 0.0))
+        pct_pnl = trade.get("pct_pnl")
+        if pct_pnl is None:
+            bot_logger.warning(f"[Skip] Missing pct_pnl @ {timestamp}")
+            return None
+        pct_pnl = float(pct_pnl)
         if pct_pnl < -1:
             label = 0
         elif pct_pnl > 2:
             label = 1
         else:
-            print(f"[DEBUG] Skipping ambiguous PnL at {timestamp}: {pct_pnl}")
+            bot_logger.debug(f"[Skip] Ambiguous PnL @ {timestamp}: {pct_pnl}")
             return None
 
-        confidence_raw = float(trade.get("confidence", 0.0))
-        setup_quality_raw = float(trade.get("setup_quality", 0.5))
-        vix_raw = float(market.get("vix", 20.0))
-        realized_vol_raw = float(market.get("realized_vol", 0.02))
+        for key in ["confidence", "setup_quality", "trade_type", "total_signals_today"]:
+            if key not in trade:
+                bot_logger.warning(f"[Skip] Missing trade.{key} @ {timestamp}")
+                return None
 
-        confidence = normalize(confidence_raw, 0.0, 1.0)
-        setup_quality = normalize(setup_quality_raw, 0.0, 1.0)
-        vix = normalize(vix_raw, 12.0, 40.0)
-        realized_vol = normalize(realized_vol_raw, 0.01, 0.1)
+        for key in ["vix", "realized_vol"]:
+            if key not in market:
+                bot_logger.warning(f"[Skip] Missing market.{key} @ {timestamp}")
+                return None
 
-        trade_type = int(trade.get("trade_type", 0))
-        total_signals_today = int(trade.get("total_signals_today", 0))
-        vwap_value = safe_val("VWAP", fallback=close)
-
-        regime_class = int(classifier.get("regime_class", 1))
-        regime_class = max(0, min(regime_class, 3))
-
-        class_probs = classifier.get("class_probabilities", [])
-        if len(class_probs) != 3:
-            print(f"[DEBUG] Invalid class probabilities at {timestamp}: {class_probs}")
+        class_probs = classifier.get("class_probabilities")
+        if not isinstance(class_probs, list) or len(class_probs) != 3:
+            bot_logger.warning(f"[Skip] Invalid class_probabilities @ {timestamp}: {class_probs}")
             return None
 
-        classifier_prob = float(classifier.get("probability", 0.5))
-        classifier_pred = int(classifier.get("predicted_class", 1))
-        classifier_entropy = calc_entropy(class_probs)
-
+        classifier_pred = classifier.get("predicted_class")
         if classifier_pred not in (0, 1, 2):
-            print(f"[DEBUG] Invalid classifier prediction at {timestamp}: {classifier_pred}")
+            bot_logger.warning(f"[Skip] Invalid predicted_class @ {timestamp}: {classifier_pred}")
             return None
-
-        prob_0, prob_1, prob_2 = map(float, class_probs)
-        pred_up = 1.0 if classifier_pred == 0 else 0.0
-        pred_down = 1.0 if classifier_pred == 1 else 0.0
-        pred_flat = 1.0 if classifier_pred == 2 else 0.0
-
-        agent_confidence = normalize(float(trade.get("confidence", 0.5)), 0.0, 1.0)
-        classifier_confidence = normalize(float(classifier.get("prob", 0.5)), 0.0, 1.0)
 
         features = np.array([
-            confidence,
-            setup_quality,
-            vix,
-            realized_vol,
-            trade_type,
-            total_signals_today,
-            safe_val("EMA_20"),
-            safe_val("RSI_14", 50.0),
-            safe_val("MACD"),
-            safe_val("MACD_signal"),
-            safe_val("MACD_hist"),
-            safe_val("BB_upper"),
-            safe_val("BB_middle"),
-            safe_val("BB_lower"),
-            vwap_value,
-            safe_val("ATR_14"),
-            safe_val("ADX_14"),
-            regime_class,
-            classifier_prob,
-            pred_up,
-            pred_down,
-            pred_flat,
-            prob_0,
-            prob_1,
-            prob_2,
-            classifier_entropy,
-            agent_confidence,
-            classifier_confidence
+            normalize(float(trade["confidence"]), 0.0, 1.0),
+            normalize(float(trade["setup_quality"]), 0.0, 1.0),
+            normalize(float(market["vix"]), 12.0, 40.0),
+            normalize(float(market["realized_vol"]), 0.01, 0.1),
+            int(trade["trade_type"]),
+            int(trade["total_signals_today"]),
+            float(row["EMA_20"]),
+            float(row["RSI_14"]),
+            float(row["MACD"]),
+            float(row["MACD_signal"]),
+            float(row["MACD_hist"]),
+            float(row["BB_upper"]),
+            float(row["BB_middle"]),
+            float(row["BB_lower"]),
+            float(row["VWAP"]),
+            float(row["ATR_14"]),
+            float(row["ADX_14"]),
+            int(classifier.get("regime_class", 1)),
+            float(classifier.get("probability", 0.5)),
+            1.0 if classifier_pred == 0 else 0.0,
+            1.0 if classifier_pred == 1 else 0.0,
+            1.0 if classifier_pred == 2 else 0.0,
+            float(class_probs[0]),
+            float(class_probs[1]),
+            float(class_probs[2]),
+            calc_entropy(class_probs),
+            normalize(float(trade["confidence"]), 0.0, 1.0),
+            normalize(float(classifier.get("prob", 0.5)), 0.0, 1.0),
         ], dtype=np.float32)
 
-        print(f"[DEBUG] Extracted feature vector at {timestamp}: PnL={pct_pnl}, label={label}")
         return features, label, timestamp
 
     except Exception as e:
-        bot_logger.warning(f"[Feature Extract] Skipping entry: {e}")
+        bot_logger.error(f"[Extract Error @ {timestamp}] {e}", exc_info=True)
         return None
 
 def build_dataset():
     if not META_LOG_PATH.exists():
-        bot_logger.error(f"[Build Dataset] Missing: {META_LOG_PATH}")
+        bot_logger.error(f"[Build Dataset] Missing meta log: {META_LOG_PATH}")
         return
 
     features, labels, timestamps = [], [], []
@@ -194,10 +154,11 @@ def build_dataset():
                 else:
                     skip += 1
             except json.JSONDecodeError:
-                bot_logger.warning(f"[Build Dataset] Malformed JSON at line {line_num}")
+                bot_logger.warning(f"[Build Dataset] JSON parse error at line {line_num}")
+                skip += 1
 
     if not features:
-        bot_logger.error("[Build Dataset] No valid features extracted.")
+        bot_logger.error("[Build Dataset] No features extracted.")
         return
 
     df_new = pd.DataFrame(features, columns=FEATURE_NAMES)
@@ -217,7 +178,7 @@ def build_dataset():
     if OUTPUT_CSV.exists():
         backup_path = OUTPUT_CSV.with_name(f"spy_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         shutil.copy(OUTPUT_CSV, backup_path)
-        bot_logger.info(f"[Build Dataset] Backup saved: {backup_path}")
+        bot_logger.info(f"[Backup] Existing CSV backed up: {backup_path}")
 
     df_combined.to_csv(OUTPUT_CSV, index=False)
     np.savez_compressed(OUTPUT_NPZ,
@@ -226,4 +187,4 @@ def build_dataset():
         timestamps=df_combined["timestamp"].values
     )
 
-    bot_logger.info(f"[Build Dataset] ✅ {len(df_new)} new, {len(df_combined)} total | pos={pos}, neg={neg}, skip={skip}")
+    bot_logger.info(f"[✅ Build Complete] +{len(df_new)} new rows, {len(df_combined)} total | pos={pos}, neg={neg}, skip={skip}")
