@@ -40,8 +40,8 @@ FEATURE_NAMES = [
     "class_prob_1",
     "class_prob_2",
     "classifier_entropy",
-    "agent_confidence",           # <-- NEW
-    "classifier_confidence"       # <-- NEW
+    "agent_confidence",
+    "classifier_confidence"
 ]
 
 def normalize(val, min_val, max_val):
@@ -64,6 +64,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
     volume = bar.get("volume", 1.0)
 
     if None in (open_, high, low, close):
+        bot_logger.warning(f"[Feature Extract] Missing OHLC data for timestamp {timestamp}")
         return None
 
     try:
@@ -76,19 +77,21 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         }])
         df_ind = calculate_indicators(df_bar)
         row = df_ind.iloc[0]
+        print(f"[DEBUG] Indicators at {timestamp}:\n{row}")
 
         def safe_val(name: str, fallback: float = 0.0):
             val = row.get(name)
             return fallback if pd.isna(val) else float(val)
 
-        # Label based on PnL
+        # Label based on PnL (relaxed thresholds for debug)
         pct_pnl = float(trade.get("pct_pnl", 0.0))
-        if pct_pnl < -2:
+        if pct_pnl < -1:
             label = 0
-        elif pct_pnl > 5:
+        elif pct_pnl > 2:
             label = 1
         else:
-            return None  # ambiguous
+            print(f"[DEBUG] Skipping ambiguous PnL at {timestamp}: {pct_pnl}")
+            return None
 
         confidence_raw = float(trade.get("confidence", 0.0))
         setup_quality_raw = float(trade.get("setup_quality", 0.5))
@@ -108,11 +111,16 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         regime_class = max(0, min(regime_class, 3))
 
         class_probs = classifier.get("class_probabilities", [])
+        if len(class_probs) != 3:
+            print(f"[DEBUG] Invalid class probabilities at {timestamp}: {class_probs}")
+            return None
+
         classifier_prob = float(classifier.get("probability", 0.5))
         classifier_pred = int(classifier.get("predicted_class", 1))
-        classifier_entropy = calc_entropy(class_probs) if len(class_probs) == 3 else 1.0
+        classifier_entropy = calc_entropy(class_probs)
 
-        if len(class_probs) != 3 or classifier_pred not in (0, 1, 2):
+        if classifier_pred not in (0, 1, 2):
+            print(f"[DEBUG] Invalid classifier prediction at {timestamp}: {classifier_pred}")
             return None
 
         prob_0, prob_1, prob_2 = map(float, class_probs)
@@ -120,7 +128,6 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
         pred_down = 1.0 if classifier_pred == 1 else 0.0
         pred_flat = 1.0 if classifier_pred == 2 else 0.0
 
-        # NEW: agent vs classifier confidence
         agent_confidence = normalize(float(trade.get("confidence", 0.5)), 0.0, 1.0)
         classifier_confidence = normalize(float(classifier.get("prob", 0.5)), 0.0, 1.0)
 
@@ -155,6 +162,7 @@ def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
             classifier_confidence
         ], dtype=np.float32)
 
+        print(f"[DEBUG] Extracted feature vector at {timestamp}: PnL={pct_pnl}, label={label}")
         return features, label, timestamp
 
     except Exception as e:
@@ -206,13 +214,11 @@ def build_dataset():
     if len(df_combined) > MAX_ROWS:
         df_combined = df_combined.tail(MAX_ROWS)
 
-    # Backup old CSV
     if OUTPUT_CSV.exists():
         backup_path = OUTPUT_CSV.with_name(f"spy_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         shutil.copy(OUTPUT_CSV, backup_path)
         bot_logger.info(f"[Build Dataset] Backup saved: {backup_path}")
 
-    # Save final dataset
     df_combined.to_csv(OUTPUT_CSV, index=False)
     np.savez_compressed(OUTPUT_NPZ,
         X=df_combined[FEATURE_NAMES].values.astype(np.float32),
