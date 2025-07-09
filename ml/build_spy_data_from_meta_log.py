@@ -188,3 +188,6 @@ def build_dataset():
     )
 
     bot_logger.info(f"[✅ Build Complete] +{len(df_new)} new rows, {len(df_combined)} total | pos={pos}, neg={neg}, skip={skip}")
+    
+    if __name__ == "__main__":
+    build_dataset()
