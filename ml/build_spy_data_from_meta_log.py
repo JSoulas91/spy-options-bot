@@ -1,134 +1,61 @@
 import json
-import numpy as np
 import pandas as pd
-from pathlib import Path
-from utils.logger import bot_logger
-from technical_analysis.indicators import calculate_indicators
-from datetime import datetime
+import numpy as np
 import shutil
-import math
+from pathlib import Path
+from datetime import datetime
+import logging
 
+# === Constants ===
 META_LOG_PATH = Path("meta/meta_log.jsonl")
 OUTPUT_CSV = Path("ml/spy_data.csv")
-OUTPUT_NPZ = Path("ml/dataset.npz")
-MAX_ROWS = 30000
+OUTPUT_NPZ = Path("ml/spy_data.npz")
+MAX_ROWS = 50000
 
+# === Features ===
 FEATURE_NAMES = [
-    "confidence", "setup_quality", "vix", "realized_vol", "trade_type", "total_signals_today",
-    "ema_20", "rsi_14", "macd", "macd_signal", "macd_hist",
-    "bb_upper", "bb_middle", "bb_lower", "vwap", "atr_14", "adx_14", "regime_class",
-    "classifier_prob", "classifier_pred_up", "classifier_pred_down", "classifier_pred_flat",
-    "class_prob_0", "class_prob_1", "class_prob_2",
-    "classifier_entropy", "agent_confidence", "classifier_confidence"
+    "spy_return", "spy_volatility", "vix_level", "put_call_ratio",
+    "rsi_5", "rsi_14", "macd", "macd_signal",
+    "sma_5", "sma_20", "sma_50", "sma_200",
+    "spy_volume", "open_interest_ratio", "skew",
+    "classifier_confidence", "classifier_signal",
+    "trade_duration", "position_size", "pct_pnl",
+    "greek_delta", "greek_gamma", "greek_theta", "greek_vega", "greek_rho",
+    "meta_action", "entry_confidence", "exit_confidence", "entry_signal"
 ]
 
-def normalize(val, min_val, max_val):
-    if max_val == min_val:
-        return 0.0
-    return max(0.0, min(1.0, (val - min_val) / (max_val - min_val)))
+# === Logger Setup ===
+logger = logging.getLogger("build_spy_data_from_meta_log")
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s — %(levelname)s — %(name)s — %(funcName)s — Line %(lineno)d — %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+bot_logger = logger
 
-def calc_entropy(probs: list[float]) -> float:
-    eps = 1e-8
-    return -sum(p * math.log(p + eps) for p in probs)
 
-def extract_features(entry: dict) -> tuple[np.ndarray, int, str] | None:
-    trade = entry.get("trade", {})
-    bar = entry.get("bar", {})
-    market = entry.get("market", {})
-    classifier = trade.get("classifier", {})
-    timestamp = entry.get("timestamp")
-
-    if not all(k in bar for k in ("open", "high", "low", "close", "volume")):
-        bot_logger.warning(f"[Skip] Missing OHLCV data @ {timestamp}")
-        return None
-
+# === Feature Extractor ===
+def extract_features(entry: dict):
     try:
-        df_bar = pd.DataFrame([{
-            'open': float(bar['open']),
-            'high': float(bar['high']),
-            'low': float(bar['low']),
-            'close': float(bar['close']),
-            'volume': float(bar['volume']),
-        }])
-        df_ind = calculate_indicators(df_bar)
-        row = df_ind.iloc[0]
-
-        for ind in ["EMA_20", "RSI_14", "MACD", "MACD_signal", "MACD_hist",
-                    "BB_upper", "BB_middle", "BB_lower", "VWAP", "ATR_14", "ADX_14"]:
-            if pd.isna(row.get(ind)):
-                bot_logger.warning(f"[Skip] Missing indicator '{ind}' @ {timestamp}")
-                return None
-
-        pct_pnl = trade.get("pct_pnl")
-        if pct_pnl is None:
-            bot_logger.warning(f"[Skip] Missing pct_pnl @ {timestamp}")
-            return None
-        pct_pnl = float(pct_pnl)
-        if pct_pnl < -1:
-            label = 0
-        elif pct_pnl > 2:
-            label = 1
-        else:
-            bot_logger.debug(f"[Skip] Ambiguous PnL @ {timestamp}: {pct_pnl}")
+        if "features" not in entry or "label" not in entry or "timestamp" not in entry:
+            bot_logger.warning(f"[Skip] Missing keys in meta log entry: {entry.keys()}")
             return None
 
-        for key in ["confidence", "setup_quality", "trade_type", "total_signals_today"]:
-            if key not in trade:
-                bot_logger.warning(f"[Skip] Missing trade.{key} @ {timestamp}")
-                return None
+        features = entry["features"]
+        label = entry["label"]
+        timestamp = entry["timestamp"]
 
-        for key in ["vix", "realized_vol"]:
-            if key not in market:
-                bot_logger.warning(f"[Skip] Missing market.{key} @ {timestamp}")
-                return None
-
-        class_probs = classifier.get("class_probabilities")
-        if not isinstance(class_probs, list) or len(class_probs) != 3:
-            bot_logger.warning(f"[Skip] Invalid class_probabilities @ {timestamp}: {class_probs}")
+        if not isinstance(features, list) or len(features) != len(FEATURE_NAMES):
+            bot_logger.warning(f"[Skip] Invalid feature vector length: {len(features)} (expected {len(FEATURE_NAMES)})")
             return None
-
-        classifier_pred = classifier.get("predicted_class")
-        if classifier_pred not in (0, 1, 2):
-            bot_logger.warning(f"[Skip] Invalid predicted_class @ {timestamp}: {classifier_pred}")
-            return None
-
-        features = np.array([
-            normalize(float(trade["confidence"]), 0.0, 1.0),
-            normalize(float(trade["setup_quality"]), 0.0, 1.0),
-            normalize(float(market["vix"]), 12.0, 40.0),
-            normalize(float(market["realized_vol"]), 0.01, 0.1),
-            int(trade["trade_type"]),
-            int(trade["total_signals_today"]),
-            float(row["EMA_20"]),
-            float(row["RSI_14"]),
-            float(row["MACD"]),
-            float(row["MACD_signal"]),
-            float(row["MACD_hist"]),
-            float(row["BB_upper"]),
-            float(row["BB_middle"]),
-            float(row["BB_lower"]),
-            float(row["VWAP"]),
-            float(row["ATR_14"]),
-            float(row["ADX_14"]),
-            int(classifier.get("regime_class", 1)),
-            float(classifier.get("probability", 0.5)),
-            1.0 if classifier_pred == 0 else 0.0,
-            1.0 if classifier_pred == 1 else 0.0,
-            1.0 if classifier_pred == 2 else 0.0,
-            float(class_probs[0]),
-            float(class_probs[1]),
-            float(class_probs[2]),
-            calc_entropy(class_probs),
-            normalize(float(trade["confidence"]), 0.0, 1.0),
-            normalize(float(classifier.get("prob", 0.5)), 0.0, 1.0),
-        ], dtype=np.float32)
 
         return features, label, timestamp
-
     except Exception as e:
-        bot_logger.error(f"[Extract Error @ {timestamp}] {e}", exc_info=True)
+        bot_logger.exception(f"[extract_features] Exception: {e}")
         return None
 
+
+# === Main Dataset Builder ===
 def build_dataset():
     if not META_LOG_PATH.exists():
         bot_logger.error(f"[Build Dataset] Missing meta log: {META_LOG_PATH}")
@@ -188,6 +115,8 @@ def build_dataset():
     )
 
     bot_logger.info(f"[✅ Build Complete] +{len(df_new)} new rows, {len(df_combined)} total | pos={pos}, neg={neg}, skip={skip}")
-    
+
+
+# === Entry Point ===
 if __name__ == "__main__":
     build_dataset()
