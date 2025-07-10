@@ -38,10 +38,20 @@ def _load_rows() -> List[Dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 def _discover_state_dim(rows):
+    """
+    Look for a list-of-vectors in any of these keys:
+      • meta_state        (legacy)
+      • meta_entry_state  (current)
+      • meta_exit_state   (optional)
+    Return the length of 1 vector (the real state_dim), or -1 if not found.
+    """
+    candidate_keys = ("meta_state", "meta_entry_state", "meta_exit_state")
+
     for r in rows:
-        ms = r.get("meta_state")
-        if isinstance(ms, list) and isinstance(ms[0], (list, np.ndarray)) and len(ms[0]) >= 83:
-            return len(ms[0])
+        for k in candidate_keys:
+            ms = r.get(k)
+            if isinstance(ms, list) and ms and isinstance(ms[0], (list, np.ndarray)):
+                return len(ms[0])          # <- FOUND IT ✔
     return -1
 
 def _pad_or_trim(seq, dim, seq_len=SEQ_LEN):
@@ -86,11 +96,24 @@ def _prep_buffer(rows, dim):
     buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
     rewards = []
 
-    filtered = rows[-BUFFER_CAPACITY - MAX_RECENT_SKIP:-MAX_RECENT_SKIP] if len(rows) > MAX_RECENT_SKIP else rows
+    candidate_keys = ("meta_state", "meta_entry_state", "meta_exit_state")
+
+    filtered = rows[-BUFFER_CAPACITY - MAX_RECENT_SKIP:-MAX_RECENT_SKIP] \
+               if len(rows) > MAX_RECENT_SKIP else rows
     np.random.shuffle(filtered)
 
     for row in filtered:
-        ms = row.get("meta_state")
+        # ---- NEW: grab whichever meta-state key exists ----
+        ms = None
+        for k in candidate_keys:
+            if k in row:
+                ms = row[k]
+                break
+        if ms is None:
+            logger.debug("Skipping row with no meta state key")
+            continue
+        # ---------------------------------------------------
+
         try:
             st = _pad_or_trim(ms, dim, seq_len=SEQ_LEN)
         except Exception as e:
