@@ -93,7 +93,12 @@ def _log_entropy_vs_reward(rows):
         logger.info("🔍 Classifier-entropy vs reward correlation: %.4f", corr)
 
 def _prep_buffer(rows, dim):
-    buf = PrioritizedReplayBuffer(capacity=BUFFER_CAPACITY, alpha=BUFFER_ALPHA)
+    buf = PrioritizedReplayBuffer(
+        capacity=BUFFER_CAPACITY,
+        alpha=BUFFER_ALPHA,
+        sequence_length=SEQ_LEN,
+        state_dim=dim
+    )
     rewards = []
 
     candidate_keys = ("meta_state", "meta_entry_state", "meta_exit_state")
