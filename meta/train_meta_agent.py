@@ -171,17 +171,26 @@ def train():
         logger.error("Replay buffer too small to train.")
         return
 
-    if np.max(all_rewards) < MIN_HIGH_REWARD:
-        logger.warning("No high-reward trades (reward > %.2f). Training skipped.", MIN_HIGH_REWARD)
-        return
-
     rewards_np = np.array(all_rewards)
+
+    # Skip only if truly no signal
+    if np.all(rewards_np == 0):
+        logger.warning("All rewards are zero. Training skipped.")
+        return
+    
+    # Proceed with normal quantile split for buffer sampling
     high_rew_cutoff = np.percentile(rewards_np, 75)
     low_rew_cutoff = np.percentile(rewards_np, 20)
-    if high_rew_cutoff - low_rew_cutoff < MIN_REWARD_SPREAD:
-        logger.warning("Insufficient reward diversity. Training skipped.")
+    reward_spread = high_rew_cutoff - low_rew_cutoff
+    
+    if reward_spread < 1e-3:  # replace with a small constant if needed
+        logger.warning(
+            "Training skipped due to low reward diversity: "
+            "75th percentile = %.4f, 20th percentile = %.4f, spread = %.4f",
+            high_rew_cutoff, low_rew_cutoff, reward_spread
+        )
         return
-
+    
     agent = PPOAgent(state_dim=state_dim)
     agent.entropy_coef.data.fill_(ENTROPY_COEF_START)
     decay_rate = (ENTROPY_COEF_END / ENTROPY_COEF_START) ** (1 / EPOCHS)
