@@ -116,22 +116,23 @@ def _prep_buffer(rows, dim):
             logger.debug("Skipping row with no meta state key")
             continue
         # ---------------------------------------------------
-
+    
         try:
             st = _pad_or_trim(ms, dim, seq_len=SEQ_LEN)
         except Exception as e:
             logger.warning(f"Skipping malformed meta_state: {e}")
             continue
-
-        rew = float(row.get("reward", 0))
+    
+        # ✅ Use shaped_reward if present
+        rew = float(row.get("shaped_reward", row.get("reward", 0.0)))
         rewards.append(rew)
-
+    
         act_raw = row.get("meta_action", {"dir": 1, "conf": 0.5})
         if isinstance(act_raw, dict):
             act = (int(act_raw.get("dir", 1)), float(act_raw.get("conf", 0.5)))
         else:
             act = (int(act_raw), 0.5)
-
+    
         buf.add(st, act, rew, st, True)
 
     logger.info("Replay buffer size: %d | Skipped most recent %d rows", len(buf), MAX_RECENT_SKIP)
