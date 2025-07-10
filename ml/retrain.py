@@ -38,7 +38,7 @@ FEATURE_NAMES = [
 def load_data():
     df = pd.read_csv("ml/spy_data.csv")
     df = df.drop(columns=["timestamp"], errors="ignore")
-    df = df[df["label"].notnull()].fillna(method="ffill").fillna(method="bfill")
+    df = df[df["label"].notnull()].ffill().bfill()
 
     missing_cols = [col for col in FEATURE_NAMES if col not in df.columns]
     if missing_cols:
