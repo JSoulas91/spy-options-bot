@@ -231,4 +231,4 @@ class PPOAgent:
                      policy_loss.mean().item(), conf_loss.mean().item(), value_loss.mean().item(),
                      entropy.mean().item(), approx_kl)
 
-        return (advantages.detach() ** 2)
+        return
