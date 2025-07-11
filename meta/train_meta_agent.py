@@ -289,7 +289,17 @@ def train():
                 },
                 history_rewards
             )
-
+            try:
+                send_telegram_message(
+                    f"📊 PPO Epoch {epoch} Summary:\n"
+                    f"Avg Reward: {avg_reward:.4f}\n"
+                    f"Max: {max_reward:.2f} | Min: {min_reward:.2f} | Std: {std_reward:.2f}\n"
+                    f"Entropy Coef: {agent.entropy_coef.item():.6f}\n"
+                    f"LR: {current_lr:.6f}"
+                )
+            except Exception as e:
+                logger.error("Failed to send Telegram summary: %s", str(e))
+                
     agent.save()
     update_status("last_ppo")
 
