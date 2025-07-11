@@ -144,7 +144,9 @@ class PPOAgent:
         old_logp: Optional[torch.Tensor],
         weights: Optional[torch.Tensor] = None,
         prev_conf: Optional[torch.Tensor] = None,
-        advantages: Optional[torch.Tensor] = None
+        advantages: Optional[torch.Tensor] = None,
+        conf_mask: Optional[torch.Tensor] = None,
+        confidence_penalty_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         device = next(self.net.parameters()).device
         states, next_states = states.to(device), next_states.to(device)
@@ -176,15 +178,24 @@ class PPOAgent:
         surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         policy_loss = -torch.min(surr1, surr2)
 
-        # 🎯 Confidence loss (only for high-reward samples)
-        conf_mask = (rewards >= 0.0)
-        conf_loss = nn.functional.mse_loss(conf_pred.squeeze(-1), target_conf, reduction="none")
-        conf_loss = conf_loss * conf_mask.to(conf_loss.dtype)
+      # 🎯 Confidence loss (only for selected trades via conf_mask)
+    conf_pred = conf_pred.squeeze(-1)  # Shape: (batch,)
+    conf_loss = nn.functional.mse_loss(conf_pred, target_conf, reduction="none")  # Still (batch,)
 
-        # ❗ Overconfidence penalty (penalize confident wrong trades)
-        overconf = conf_pred.squeeze(-1) * (returns < 0).float()
-        conf_loss += self.overconfidence_penalty * overconf
-
+    if conf_mask is not None:
+        conf_mask = conf_mask.to(conf_pred.device)
+        conf_loss = conf_loss * conf_mask
+        conf_loss = conf_loss.sum() / (conf_mask.sum() + 1e-8)
+    else:
+        conf_loss = conf_loss.mean()
+    
+    # ❗ Overconfidence penalty (only on bad trades via penalty mask)
+    if confidence_penalty_mask is not None:
+        confidence_penalty_mask = confidence_penalty_mask.to(conf_pred.device)
+        penalty_loss = (conf_pred ** 2) * confidence_penalty_mask
+        penalty_loss = penalty_loss.sum() / (confidence_penalty_mask.sum() + 1e-8)
+        conf_loss += self.overconfidence_penalty * penalty_loss
+    
         # 🧠 Value loss with Huber loss
         value_loss = nn.functional.smooth_l1_loss(value_pred.squeeze(-1), returns, reduction="none")
 
