@@ -262,8 +262,6 @@ def train():
         _append_csv(epoch, avg_reward)
 
         current_lr = agent.optimizer.param_groups[0].get("lr", 0.0)
-        if agent.scheduler:
-            agent.scheduler.step(avg_reward)
 
         logger.info(
             "📈 Epoch %d/%d – avg: %.4f  max: %.2f  min: %.2f  std: %.2f  entropy_coef: %.8f  lr: %.8f",
