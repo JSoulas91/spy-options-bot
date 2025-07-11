@@ -144,6 +144,7 @@ class PPOAgent:
         old_logp: Optional[torch.Tensor],
         weights: Optional[torch.Tensor] = None,
         prev_conf: Optional[torch.Tensor] = None
+        advantages: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         device = next(self.net.parameters()).device
         states, next_states = states.to(device), next_states.to(device)
