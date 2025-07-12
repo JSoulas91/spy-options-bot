@@ -78,7 +78,7 @@ ENABLE_DIRECTIONAL_SKEW   = os.getenv("ENABLE_DIRECTIONAL_SKEW", "true").lower()
 DEBUG_OPTION_FILTER       = os.getenv("DEBUG_OPTION_FILTER", "false").lower() == "true"
 
 # === META / PPO TRAINING ===
-EPOCHS               = int(os.getenv("EPOCHS", 100))
+EPOCHS               = int(os.getenv("EPOCHS", 200))
 BATCH_SIZE           = int(os.getenv("BATCH_SIZE", 128))
 BUFFER_ALPHA         = float(os.getenv("BUFFER_ALPHA", 0.6))
 BUFFER_BETA_START    = float(os.getenv("BUFFER_BETA_START", 0.4))
