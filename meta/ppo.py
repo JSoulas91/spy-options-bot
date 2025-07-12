@@ -152,35 +152,38 @@ class PPOAgent:
         states, next_states = states.to(device), next_states.to(device)
         actions_dir = actions_dir.to(device)
         target_conf = target_conf.to(device)
-
+    
         if weights is None:
             weights = torch.ones_like(actions_dir, dtype=torch.float32)
         weights = weights.to(device)
-
+    
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
             last_value = next_v.mean().item()
-
+    
         _, _, values = self.net(states)
         returns = self._discounted_returns(rewards, dones, last_value, self.gamma).to(device)
         advantages = returns - values.detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
+    
+        # Forward pass
         dir_logits, conf_pred, value_pred = self.net(states)
         dist = Categorical(logits=dir_logits)
         log_probs = dist.log_prob(actions_dir)
-
+    
         if old_logp is None:
             old_logp = log_probs.detach()
-
+    
+        # PPO policy loss
         ratios = torch.exp(log_probs - old_logp)
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         policy_loss = -torch.min(surr1, surr2)
-
-          # 🎯 Confidence loss (only for selected trades via conf_mask)
-        conf_pred = conf_pred.squeeze(-1)  # Shape: (batch,)
-        conf_loss = nn.functional.mse_loss(conf_pred, target_conf, reduction="none")  # Still (batch,)
+        policy_loss = (policy_loss * weights).mean()
+    
+        # Confidence loss (MSE)
+        conf_pred = conf_pred.squeeze(-1)
+        conf_loss = nn.functional.mse_loss(conf_pred, target_conf, reduction="none")
     
         if conf_mask is not None:
             conf_mask = conf_mask.to(conf_pred.device)
@@ -188,47 +191,49 @@ class PPOAgent:
             conf_loss = conf_loss.sum() / (conf_mask.sum() + 1e-8)
         else:
             conf_loss = conf_loss.mean()
-        
-        # ❗ Overconfidence penalty (only on bad trades via penalty mask)
+    
+        # Overconfidence penalty
         if confidence_penalty_mask is not None:
             confidence_penalty_mask = confidence_penalty_mask.to(conf_pred.device)
             penalty_loss = (conf_pred ** 2) * confidence_penalty_mask
             penalty_loss = penalty_loss.sum() / (confidence_penalty_mask.sum() + 1e-8)
             conf_loss += self.overconfidence_penalty * penalty_loss
-        
-        # 🧠 Value loss with Huber loss
+    
+        # Value loss
         value_loss = nn.functional.smooth_l1_loss(value_pred.squeeze(-1), returns, reduction="none")
-
-        # 🔥 Entropy loss
+        value_loss = (value_loss * weights).mean()
+    
+        # Entropy loss
         entropy = dist.entropy()
-        entropy_loss = -self.entropy_coef * entropy
-
+        entropy_loss = -self.entropy_coef * (entropy * weights).mean()
+    
+        # Total loss
         total_loss = (
             policy_loss +
             self.conf_loss_w * conf_loss +
             value_loss +
             entropy_loss
         )
-
-        # ✅ KL divergence penalty for confidence drift
+    
+        # KL confidence penalty (optional)
         if self.use_kl_conf_penalty and prev_conf is not None:
             prev_conf = prev_conf.to(device)
             kl_conf = nn.functional.mse_loss(conf_pred.detach(), prev_conf, reduction="none").squeeze(-1)
-            kl_penalty = self.kl_conf_coef * kl_conf
+            kl_penalty = self.kl_conf_coef * (kl_conf * weights).mean()
             total_loss += kl_penalty
-
-        total_loss = (total_loss * weights).mean()
-
+    
+        # Backward pass
         self.optimizer.zero_grad()
         total_loss.backward()
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
-
+    
+        # Logging
         with torch.no_grad():
             approx_kl = (old_logp - log_probs).mean().item()
-
+    
         logger.debug("Loss components — policy: %.6f  conf: %.6f  value: %.6f  entropy: %.6f  KL: %.6f",
-                     policy_loss.mean().item(), conf_loss.mean().item(), value_loss.mean().item(),
+                     policy_loss.item(), conf_loss.item(), value_loss.item(),
                      entropy.mean().item(), approx_kl)
-
+    
         return (advantages.detach() ** 2)
