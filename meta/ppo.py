@@ -9,7 +9,7 @@ from typing import Optional, List
 from meta.meta_agent_info import get_meta_agent_dims
 from config import META_MODEL_PATH
 from utils.logger import bot_logger as logger
-
+from utils.telegram_utils import send_telegram_message
 
 def report_memory_usage(tag=""):
     """Logs and sends current RAM usage to Telegram."""
