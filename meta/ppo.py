@@ -168,6 +168,21 @@ class PPOAgent:
     
         # Forward pass
         dir_logits, conf_pred, value_pred = self.net(states)
+        
+        # Debug: log output shapes and check for NaNs/Infs
+        logger.debug("✅ Forward pass outputs: dir_logits %s, conf_pred %s, value_pred %s",
+                     dir_logits.shape, conf_pred.shape, value_pred.shape)
+        
+        if torch.isnan(dir_logits).any() or torch.isinf(dir_logits).any():
+            logger.error("❌ NaN or Inf in dir_logits")
+        
+        if torch.isnan(conf_pred).any() or torch.isinf(conf_pred).any():
+            logger.error("❌ NaN or Inf in conf_pred")
+        
+        if torch.isnan(value_pred).any() or torch.isinf(value_pred).any():
+            logger.error("❌ NaN or Inf in value_pred")
+        
+        # Continue as usual
         dist = Categorical(logits=dir_logits)
         log_probs = dist.log_prob(actions_dir)
     
@@ -222,9 +237,37 @@ class PPOAgent:
             kl_penalty = self.kl_conf_coef * (kl_conf * weights).mean()
             total_loss += kl_penalty
     
+        # Sanity checks before backward
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            logger.error("❌ total_loss has NaNs or Infs!")
+            logger.error("policy_loss: %s", policy_loss)
+            logger.error("conf_loss: %s", conf_loss)
+            logger.error("value_loss: %s", value_loss)
+            logger.error("entropy_loss: %s", entropy_loss)
+            raise RuntimeError("NaN or Inf detected in total_loss.")
+        
+        for name, param in self.net.named_parameters():
+            if torch.isnan(param).any():
+                logger.error(f"❌ NaN in parameter: {name}")
+            if param.grad is not None and torch.isnan(param.grad).any():
+                logger.error(f"❌ NaN in gradient before backward: {name}")
+        
+        import time
+        start_time = time.time()
+        
         # Backward pass
         self.optimizer.zero_grad()
-        total_loss.backward()
+        torch.autograd.set_detect_anomaly(True)  # helps trace problematic ops
+        try:
+            total_loss.backward()
+        except Exception as e:
+            logger.exception("❌ Exception during backward pass: %s", str(e))
+            raise
+        
+        duration = time.time() - start_time
+        logger.debug("✅ Backward pass completed in %.4f seconds", duration)
+        
+        # Gradient clipping and step
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
     
