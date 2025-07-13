@@ -267,6 +267,9 @@ class PPOAgent:
             if param.grad is not None and torch.isnan(param.grad).any():
                 logger.error(f"❌ NaN in gradient before backward: {name}")
         
+        # RAM usage before backward
+        report_memory_usage("🔍 Before backward pass")
+        
         import time
         start_time = time.time()
         
@@ -281,6 +284,9 @@ class PPOAgent:
         
         duration = time.time() - start_time
         logger.debug("✅ Backward pass completed in %.4f seconds", duration)
+        
+        # RAM usage after backward
+        report_memory_usage("✅ After backward pass")
         
         # Gradient clipping and step
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
