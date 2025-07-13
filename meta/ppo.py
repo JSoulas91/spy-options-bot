@@ -175,8 +175,14 @@ class PPOAgent:
         advantages = returns - values.detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     
+       # RAM usage before forward
+        report_memory_usage("🔍 Before forward pass")
+        
         # Forward pass
         dir_logits, conf_pred, value_pred = self.net(states)
+        
+        # RAM usage after forward
+        report_memory_usage("✅ After forward pass")
         
         # Debug: log output shapes and check for NaNs/Infs
         logger.debug("✅ Forward pass outputs: dir_logits %s, conf_pred %s, value_pred %s",
