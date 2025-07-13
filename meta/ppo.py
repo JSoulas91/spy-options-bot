@@ -1,3 +1,4 @@
+import psutil
 import os
 import torch
 import torch.nn as nn
@@ -9,6 +10,14 @@ from meta.meta_agent_info import get_meta_agent_dims
 from config import META_MODEL_PATH
 from utils.logger import bot_logger as logger
 
+
+def report_memory_usage(tag=""):
+    """Logs and sends current RAM usage to Telegram."""
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    message = f"[{tag}] RAM usage: {mem_mb:.2f} MB"
+    print(message)
+    send_telegram_message(message)
 
 class DualHeadLSTM(nn.Module):
     def __init__(self, state_dim: int, hidden: int = 64, lstm_hid: int = 32):
