@@ -182,14 +182,27 @@ class PPOAgent:
     
         for i in range(0, total_size, mini_batch_size):
             batch_idx = indices[i:i + mini_batch_size]
-    
+        
             s = states[batch_idx]
             a = actions_dir[batch_idx]
             c = target_conf[batch_idx]
+        
             r = returns[batch_idx]
+            if r.ndim > 1:
+                r = r.squeeze(-1)
+        
             adv = advantages[batch_idx]
+            if adv.ndim > 1:
+                adv = adv.squeeze(-1)
+        
             w = weights[batch_idx]
+            if w.ndim > 1:
+                w = w.squeeze(-1)
+        
             olp = old_logp[batch_idx] if old_logp is not None else None
+            if olp is not None and olp.ndim > 1:
+                olp = olp.squeeze(-1)
+        
             pcm = confidence_penalty_mask[batch_idx] if confidence_penalty_mask is not None else None
             cm = conf_mask[batch_idx] if conf_mask is not None else None
             pconf = prev_conf[batch_idx] if prev_conf is not None else None
