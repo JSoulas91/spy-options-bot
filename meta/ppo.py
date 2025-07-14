@@ -160,7 +160,8 @@ class PPOAgent:
         mini_batch_size: int = 32
     ) -> torch.Tensor:
         device = next(self.net.parameters()).device
-        states, next_states = states.to(device), next_states.to(device)
+        states = states.to(device)  # [B, T, D]
+        next_states = next_states.to(device)
         actions_dir = actions_dir.to(device)
         target_conf = target_conf.to(device)
     
@@ -168,38 +169,37 @@ class PPOAgent:
             weights = torch.ones_like(actions_dir, dtype=torch.float32)
         weights = weights.to(device)
     
-        # Compute next value estimate
+        # Compute last value from final next_state
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
             last_value = next_v.mean().item()
     
-        # Compute current value estimates
         _, _, values = self.net(states)
-        values = values.squeeze(-1)  # shape: (batch,)
+        values = values.squeeze(-1)
+    
         returns = self._discounted_returns(rewards, dones, last_value, self.gamma).to(device)
         returns = returns.view(-1)
     
-        # Compute advantages
         advantages_full = returns - values.detach()
         advantages_full = (advantages_full - advantages_full.mean()) / (advantages_full.std() + 1e-8)
     
-        total_size = states.size(0)
-        indices = torch.randperm(total_size)
+        batch_size = states.size(0)
+        indices = torch.randperm(batch_size)
     
-        for i in range(0, total_size, mini_batch_size):
-            batch_idx = indices[i:i + mini_batch_size]
+        for i in range(0, batch_size, mini_batch_size):
+            idx = indices[i:i + mini_batch_size]
     
-            s = states[batch_idx]
-            a = actions_dir[batch_idx]
-            c = target_conf[batch_idx].view(-1)
-            r = returns[batch_idx].view(-1)
-            adv = advantages_full[batch_idx].view(-1)
-            w = weights[batch_idx].view(-1)
+            s = states[idx]                  # [mb, seq_len, D]
+            a = actions_dir[idx]
+            c = target_conf[idx].view(-1)
+            r = returns[idx].view(-1)
+            adv = advantages_full[idx].view(-1)
+            w = weights[idx].view(-1)
     
-            olp = old_logp[batch_idx].view(-1) if old_logp is not None else None
-            pcm = confidence_penalty_mask[batch_idx].view(-1) if confidence_penalty_mask is not None else None
-            cm = conf_mask[batch_idx].view(-1) if conf_mask is not None else None
-            pconf = prev_conf[batch_idx].view(-1) if prev_conf is not None else None
+            olp = old_logp[idx].view(-1) if old_logp is not None else None
+            pcm = confidence_penalty_mask[idx].view(-1) if confidence_penalty_mask is not None else None
+            cm = conf_mask[idx].view(-1) if conf_mask is not None else None
+            pconf = prev_conf[idx].view(-1) if prev_conf is not None else None
     
             dir_logits, conf_pred, value_pred = self.net(s)
             dist = Categorical(logits=dir_logits)
@@ -208,7 +208,6 @@ class PPOAgent:
             if olp is None:
                 olp = log_probs.detach()
     
-            # PPO surrogate loss
             ratios = torch.exp(log_probs - olp)
             surr1 = ratios * adv
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * adv
@@ -224,7 +223,7 @@ class PPOAgent:
             else:
                 conf_loss = conf_loss.mean()
     
-            # Confidence penalty
+            # Overconfidence penalty
             if pcm is not None:
                 pcm = pcm.to(conf_pred.device)
                 penalty_loss = (conf_pred ** 2) * pcm
@@ -236,7 +235,7 @@ class PPOAgent:
             value_loss = nn.functional.smooth_l1_loss(value_pred, r, reduction="none")
             value_loss = (value_loss * w).mean()
     
-            # Entropy bonus
+            # Entropy
             entropy = dist.entropy()
             entropy_loss = -self.entropy_coef * (entropy * w).mean()
     
@@ -247,7 +246,7 @@ class PPOAgent:
                 entropy_loss
             )
     
-            # KL divergence penalty on confidence if enabled
+            # KL penalty for confidence
             if self.use_kl_conf_penalty and pconf is not None:
                 pconf = pconf.to(device)
                 kl_conf = nn.functional.mse_loss(conf_pred.detach(), pconf, reduction="none")
