@@ -163,51 +163,52 @@ class PPOAgent:
         states, next_states = states.to(device), next_states.to(device)
         actions_dir = actions_dir.to(device)
         target_conf = target_conf.to(device)
-    
+
         if weights is None:
             weights = torch.ones_like(actions_dir, dtype=torch.float32)
         weights = weights.to(device)
-    
+
         with torch.no_grad():
             _, _, next_v = self.net(next_states)
             last_value = next_v.mean().item()
-    
+
         _, _, values = self.net(states)
         returns = self._discounted_returns(rewards, dones, last_value, self.gamma).to(device)
-        advantages = returns - values.detach()
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-    
+        advantages_full = returns - values.detach()
+        advantages_full = (advantages_full - advantages_full.mean()) / (advantages_full.std() + 1e-8)
+
         total_size = states.size(0)
         indices = torch.randperm(total_size)
-    
+
         for i in range(0, total_size, mini_batch_size):
             batch_idx = indices[i:i + mini_batch_size]
-    
+
             s = states[batch_idx]
             a = actions_dir[batch_idx]
             c = target_conf[batch_idx]
             r = returns[batch_idx].view(-1)
-            adv = advantages[batch_idx].view(-1)
+            adv = advantages_full[batch_idx].view(-1)
             w = weights[batch_idx].view(-1)
-    
+
             olp = old_logp[batch_idx].view(-1) if old_logp is not None else None
             pcm = confidence_penalty_mask[batch_idx].view(-1) if confidence_penalty_mask is not None else None
             cm = conf_mask[batch_idx].view(-1) if conf_mask is not None else None
             pconf = prev_conf[batch_idx].view(-1) if prev_conf is not None else None
-    
+
             dir_logits, conf_pred, value_pred = self.net(s)
             dist = Categorical(logits=dir_logits)
             log_probs = dist.log_prob(a)
-    
+
             if olp is None:
                 olp = log_probs.detach()
-    
+
             ratios = torch.exp(log_probs - olp)
+
             surr1 = ratios * adv
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * adv
             policy_loss = -torch.min(surr1, surr2)
             policy_loss = (policy_loss * w).mean()
-    
+
             # Confidence loss
             conf_pred = conf_pred.squeeze(-1)
             conf_loss = nn.functional.mse_loss(conf_pred, c, reduction="none")
@@ -216,38 +217,38 @@ class PPOAgent:
                 conf_loss = (conf_loss * cm).sum() / (cm.sum() + 1e-8)
             else:
                 conf_loss = conf_loss.mean()
-    
+
             # Confidence penalty
             if pcm is not None:
                 pcm = pcm.to(conf_pred.device)
                 penalty_loss = (conf_pred ** 2) * pcm
                 penalty_loss = penalty_loss.sum() / (pcm.sum() + 1e-8)
                 conf_loss += self.overconfidence_penalty * penalty_loss
-    
+
             # Value loss
             value_loss = nn.functional.smooth_l1_loss(value_pred.squeeze(-1), r, reduction="none")
             value_loss = (value_loss * w).mean()
-    
+
             # Entropy loss
             entropy = dist.entropy()
             entropy_loss = -self.entropy_coef * (entropy * w).mean()
-    
+
             total_loss = (
                 policy_loss +
                 self.conf_loss_w * conf_loss +
                 value_loss +
                 entropy_loss
             )
-    
+
             if self.use_kl_conf_penalty and pconf is not None:
                 pconf = pconf.to(device)
                 kl_conf = nn.functional.mse_loss(conf_pred.detach(), pconf, reduction="none")
                 kl_penalty = self.kl_conf_coef * (kl_conf.view(-1) * w).mean()
                 total_loss += kl_penalty
-    
+
             self.optimizer.zero_grad()
             total_loss.backward()
             nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip_norm)
             self.optimizer.step()
-    
-        return advantages.detach() ** 2
+
+        return advantages_full.detach() ** 2
