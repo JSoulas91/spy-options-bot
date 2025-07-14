@@ -182,33 +182,20 @@ class PPOAgent:
     
         for i in range(0, total_size, mini_batch_size):
             batch_idx = indices[i:i + mini_batch_size]
-        
+    
             s = states[batch_idx]
             a = actions_dir[batch_idx]
             c = target_conf[batch_idx]
-        
-            r = returns[batch_idx]
-            if r.ndim > 1:
-                r = r.squeeze(-1)
-        
-            adv = advantages[batch_idx]
-            if adv.ndim > 1:
-                adv = adv.squeeze(-1)
-        
-            w = weights[batch_idx]
-            if w.ndim > 1:
-                w = w.squeeze(-1)
-        
-            olp = old_logp[batch_idx] if old_logp is not None else None
-            if olp is not None and olp.ndim > 1:
-                olp = olp.squeeze(-1)
-        
-            pcm = confidence_penalty_mask[batch_idx] if confidence_penalty_mask is not None else None
-            cm = conf_mask[batch_idx] if conf_mask is not None else None
-            pconf = prev_conf[batch_idx] if prev_conf is not None else None
+            r = returns[batch_idx].view(-1)
+            adv = advantages[batch_idx].view(-1)
+            w = weights[batch_idx].view(-1)
+    
+            olp = old_logp[batch_idx].view(-1) if old_logp is not None else None
+            pcm = confidence_penalty_mask[batch_idx].view(-1) if confidence_penalty_mask is not None else None
+            cm = conf_mask[batch_idx].view(-1) if conf_mask is not None else None
+            pconf = prev_conf[batch_idx].view(-1) if prev_conf is not None else None
     
             dir_logits, conf_pred, value_pred = self.net(s)
-    
             dist = Categorical(logits=dir_logits)
             log_probs = dist.log_prob(a)
     
@@ -216,14 +203,6 @@ class PPOAgent:
                 olp = log_probs.detach()
     
             ratios = torch.exp(log_probs - olp)
-    
-            # ✅ Ensure shape match between ratios and adv
-            if adv.ndim == 2:
-                adv = adv.squeeze(-1)
-            elif adv.ndim == 0:
-                adv = adv.unsqueeze(0)
-    
-            # ✅ PPO surrogate objective
             surr1 = ratios * adv
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * adv
             policy_loss = -torch.min(surr1, surr2)
@@ -232,13 +211,13 @@ class PPOAgent:
             # Confidence loss
             conf_pred = conf_pred.squeeze(-1)
             conf_loss = nn.functional.mse_loss(conf_pred, c, reduction="none")
-    
             if cm is not None:
                 cm = cm.to(conf_pred.device)
                 conf_loss = (conf_loss * cm).sum() / (cm.sum() + 1e-8)
             else:
                 conf_loss = conf_loss.mean()
     
+            # Confidence penalty
             if pcm is not None:
                 pcm = pcm.to(conf_pred.device)
                 penalty_loss = (conf_pred ** 2) * pcm
@@ -249,7 +228,7 @@ class PPOAgent:
             value_loss = nn.functional.smooth_l1_loss(value_pred.squeeze(-1), r, reduction="none")
             value_loss = (value_loss * w).mean()
     
-            # Entropy bonus
+            # Entropy loss
             entropy = dist.entropy()
             entropy_loss = -self.entropy_coef * (entropy * w).mean()
     
@@ -262,8 +241,8 @@ class PPOAgent:
     
             if self.use_kl_conf_penalty and pconf is not None:
                 pconf = pconf.to(device)
-                kl_conf = nn.functional.mse_loss(conf_pred.detach(), pconf, reduction="none").squeeze(-1)
-                kl_penalty = self.kl_conf_coef * (kl_conf * w).mean()
+                kl_conf = nn.functional.mse_loss(conf_pred.detach(), pconf, reduction="none")
+                kl_penalty = self.kl_conf_coef * (kl_conf.view(-1) * w).mean()
                 total_loss += kl_penalty
     
             self.optimizer.zero_grad()
