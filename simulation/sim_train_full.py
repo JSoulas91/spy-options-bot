@@ -76,6 +76,53 @@ model_inference = ModelInference()
 
 print(f"SIM_DAYS={SIM_DAYS}, TRADES_PER_DAY={TRADES_PER_DAY}, START_PRICE={START_PRICE}")
 
+def summarize_simulation_results(trade_history: list, skipped_count: int):
+    from collections import defaultdict
+
+    pnl_buckets = defaultdict(int)
+    total_pnl = 0.0
+    rewards = []
+    wins = 0
+    losses = 0
+
+    for trade in trade_history:
+        pct = trade.get("pct_pnl", 0)
+        reward = trade.get("reward", 0)
+        rewards.append(reward)
+        total_pnl += pct
+        if pct >= 0:
+            wins += 1
+        else:
+            losses += 1
+
+        abs_pct = abs(pct)
+        bucket = f"{int(abs_pct // 10) * 10}-{int(abs_pct // 10) * 10 + 10}%"
+        key = f"+{bucket}" if pct >= 0 else f"-{bucket}"
+        if abs_pct >= 50:
+            key = "+50%+" if pct >= 0 else "-50%+"
+        pnl_buckets[key] += 1
+
+    avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+    std_reward = np.std(rewards) if rewards else 1.0
+    sharpe = avg_reward / std_reward if std_reward != 0 else 0.0
+
+    msg_lines = [
+        "📊 *Simulation Summary*",
+        f"Total trades: *{len(trade_history)}*",
+        f"✅ Wins: *{wins}* | ❌ Losses: *{losses}*",
+        f"📈 Total %PnL: *{total_pnl:.2f}%*",
+        f"🎯 Average reward: *{avg_reward:.4f}*",
+        f"⚖️ Sharpe ratio: *{sharpe:.2f}*",
+        f"🚫 Trades skipped: *{skipped_count}*",
+        "",
+        "📊 *PnL Buckets*"
+    ]
+
+    for bucket in sorted(pnl_buckets.keys(), key=lambda x: (x[0], int(x.strip("+-%").split('-')[0]))):
+        msg_lines.append(f"{bucket}: *{pnl_buckets[bucket]}*")
+
+    return "\n".join(msg_lines)
+
 def debug_inputs(label: str, **kwargs):
     logger.debug(f"\n[DEBUG] {label} input diagnostics:")
     for name, val in kwargs.items():
@@ -1872,10 +1919,13 @@ def main():
             traceback.print_exc()
 
     logger.info("✅ Simulation complete.")
+
     try:
-        send_telegram_message("✅ Simulation finished and saved to meta/meta_log.jsonl")
+        skipped_trades = SIM_DAYS * TRADES_PER_DAY - len(TRADE_HISTORY)
+        summary_msg = summarize_simulation_results(TRADE_HISTORY, skipped_trades)
+        send_telegram_message(summary_msg)
     except Exception:
-        logger.warning("⚠️ Failed to send Telegram completion message.")
+        logger.warning("⚠️ Failed to send Telegram simulation summary.")
         traceback.print_exc()
 
 
