@@ -1928,7 +1928,13 @@ def main():
 
     try:
         skipped_trades = SIM_DAYS * TRADES_PER_DAY - len(TRADE_HISTORY)
-        summary_msg = summarize_simulation_results(TRADE_HISTORY, skipped_trades)
+        diagnostics = {
+            "Meta actions made": meta_stats.get("decisions_made", 0),
+            "Empty states": meta_stats.get("empty_states", 0),
+            "Missing classifier": meta_stats.get("no_classifier", 0),
+            "Other skips": meta_stats.get("other_skips", 0),
+        }
+        summary_msg = summarize_simulation_results(TRADE_HISTORY, skipped_trades, diagnostics)
         send_telegram_message(summary_msg)
     except Exception:
         logger.warning("⚠️ Failed to send Telegram simulation summary.")
