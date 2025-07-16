@@ -121,6 +121,12 @@ def summarize_simulation_results(trade_history: list, skipped_count: int):
     for bucket in sorted(pnl_buckets.keys(), key=lambda x: (x[0], int(x.strip("+-%").split('-')[0]))):
         msg_lines.append(f"{bucket}: *{pnl_buckets[bucket]}*")
 
+    if diagnostics:
+        msg_lines.append("")
+        msg_lines.append("🧠 *Meta Agent Diagnostics*")
+        for k, v in diagnostics.items():
+            msg_lines.append(f"{k}: *{v}*")
+            
     return "\n".join(msg_lines)
 
 def debug_inputs(label: str, **kwargs):
