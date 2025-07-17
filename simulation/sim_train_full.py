@@ -1784,6 +1784,14 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data, m
     
 def main():
     global ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES
+    
+    # ✅ Initialize meta-agent diagnostics
+    meta_stats = {
+        "decisions_made": 0,
+        "empty_states": 0,
+        "no_classifier": 0,
+        "other_skips": 0
+    }
 
      #=== Inject dummy trades before simulation starts ===
     if len(TRADE_HISTORY) < 10:
