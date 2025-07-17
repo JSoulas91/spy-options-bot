@@ -1008,7 +1008,7 @@ def build_meta_state_for_exit(
         logger.error(traceback.format_exc())
         return np.stack([_pad([PAD_VAL] * STATE_DIM) for _ in range(STATE_SEQUENCE_LENGTH)], axis=0)
 
-def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
+def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data, meta_stats: dict):
     logger.debug(f"🚀 Starting simulate_trade | Day: {day}, Trade Index: {trade_idx}")
 
     max_required = 50000
@@ -1503,37 +1503,43 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
     except Exception as e:
         logger.exception("❌ Failed to build meta_entry")
         return None
-
+    
     if meta_entry is None:
+        meta_stats["empty_states"] += 1
         logger.error(f"🚫 meta_entry is None — trade {trade_idx} on day {day} cannot proceed.")
-        raise ValueError("❌ Fatal: meta_entry is None")
+        return None
     
     if is_padded(meta_entry):
+        meta_stats["empty_states"] += 1
         logger.error(f"🚫 Padded meta_entry detected for trade {trade_idx} on day {day} — aborting.")
-        return None
-        
         try:
             meta_np = np.array(meta_entry)
             logger.error(f"🧩 meta_entry shape: {meta_np.shape}")
             logger.error(f"🧩 meta_entry preview (first 10): {meta_np.flatten()[:10].tolist()}")
             logger.error(f"🧩 meta_entry unique values: {np.unique(meta_np)}")
-    
         except Exception as log_err:
             logger.exception("❌ Failed to log meta_entry structure")
+        return None
     
-        raise ValueError(f"❌ Fatal: meta_entry is padded — trade {trade_idx}, day {day}")
+    if classifier_output is None:
+        meta_stats["no_classifier"] += 1
+        logger.error(f"🚫 classifier_output is None — trade {trade_idx} on day {day}")
+        return None
     
+    # Meta agent action
     try:
         action, agent_confidence = meta_agent.select_action(meta_entry)
         logger.debug(f"🎯 Meta-agent action={action}, confidence={agent_confidence:.2f}")
+        meta_stats["decisions_made"] += 1
     except Exception as e:
         logger.exception("❌ Meta-agent select_action failed")
         return None
-
+    
     if action == 0:
+        meta_stats["other_skips"] += 1
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: meta-agent skipped (action=0)")
         return None
-
+    
     duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
     logger.debug(f"📈 Planned trade duration: {duration} (swing={is_swing})")
 
@@ -1584,7 +1590,6 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         logger.debug(f"Types: bars_1m={type(bars_1m)}, past_trades={type(past_trades)}, long_term_data={type(long_term_data)}")
         logger.debug(f"Classifier output keys: {list(classifier_output.keys())}")
     
-        # 🔍 Deep debug before building exit meta-state
         try:
             log_input_debug_info(
                 entry_or_exit="EXIT",
@@ -1600,7 +1605,7 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
             )
         except Exception as dbg_e:
             logger.exception("❌ log_input_debug_info failed before meta_exit")
-            
+    
         meta_exit = build_meta_state_for_exit(
             data_1m=bars_1m,
             data_5m=bars_5m,
@@ -1623,10 +1628,12 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data):
         return None
     
     if meta_exit is None:
+        meta_stats["empty_states"] += 1
         logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: meta_exit returned None")
         return None
     
     if is_padded(meta_exit):
+        meta_stats["empty_states"] += 1
         logger.debug(f"🚫 Skipping trade {trade_idx} on day {day}: meta_exit is padded")
         return None
     
