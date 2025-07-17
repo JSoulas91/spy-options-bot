@@ -76,7 +76,7 @@ model_inference = ModelInference()
 
 print(f"SIM_DAYS={SIM_DAYS}, TRADES_PER_DAY={TRADES_PER_DAY}, START_PRICE={START_PRICE}")
 
-def summarize_simulation_results(trade_history: list, skipped_count: int):
+def summarize_simulation_results(trade_history: list, skipped_count: int, diagnostics: dict = None):
     from collections import defaultdict
 
     pnl_buckets = defaultdict(int)
