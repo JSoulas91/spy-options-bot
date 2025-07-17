@@ -1868,7 +1868,7 @@ def main():
                             logger.debug(f"✅ Trade appended to TRADE_HISTORY: total={len(TRADE_HISTORY)}")
                         continue  # Skip meta-agent logic
 
-                    log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data)
+                    log_entry = simulate_trade(day, trade_idx, ACCUMULATED_CLOSES, ACCUMULATED_VOLUMES, vix_shift, long_term_data, meta_stats)
 
                     if log_entry:
                         trades.append(log_entry)
