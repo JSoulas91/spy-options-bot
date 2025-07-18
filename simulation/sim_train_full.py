@@ -1539,7 +1539,6 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data, m
         meta_stats["other_skips"] += 1
         logger.debug(f"⏩ Skipping trade {trade_idx} on day {day}: meta-agent skipped (action=0)")
     
-        # Construct fake trade result for skip
         trade_result = {
             "skipped_trade": True,
             "setup_quality": setup_quality,
@@ -1550,15 +1549,18 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data, m
         reward = reward_shaper.compute_shaped_reward(
             trade_result=trade_result,
             classifier_output={"confidence": classifier_confidence, "entropy": entropy},
-            regime="neutral",  # Replace with actual regime if available
+            regime="neutral",
             agent_confidence=agent_confidence,
         )
     
         if logger:
             logger.info(
-                f"🚫 Skipped trade {trade_idx}: Setup={setup_quality:.2f}, ClassifierConf={classifier_confidence:.2f}, AgentConf={agent_confidence:.2f}, Reward={reward:.3f}"
+                f"🚫 Skipped trade {trade_idx}: Setup={setup_quality:.2f}, "
+                f"ClassifierConf={classifier_confidence:.2f}, AgentConf={agent_confidence:.2f}, "
+                f"Reward={reward:.3f}"
             )
     
+        # ⛑️ Critical fix: include classifier features + output
         return {
             "skipped_trade": True,
             "reward": reward,
@@ -1566,6 +1568,8 @@ def simulate_trade(day, trade_idx, closes, volumes, vix_shift, long_term_data, m
             "setup_quality": setup_quality,
             "agent_confidence": agent_confidence,
             "meta_state": meta_entry,
+            "classifier_output": classifier_output,
+            "classifier_features": features_df.iloc[-1].to_dict() if isinstance(features_df, pd.DataFrame) else {},
         }
     
     duration = RNG.randint(10, 40) if not is_swing else RNG.randint(100, 300)
