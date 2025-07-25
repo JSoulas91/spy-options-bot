@@ -3,7 +3,6 @@ import math
 import os
 import csv
 import numpy as np
-
 from utils.logger import bot_logger as logger
 
 
@@ -41,7 +40,6 @@ class RewardShaper:
         regime: str,
         agent_confidence: float = 0.5
     ):
-        # Handle skipped trades
         if trade_result.get("skipped_trade", False):
             confidence = classifier_output.get("confidence", 0.5)
             setup_quality = trade_result.get("setup_quality", 0.5)
@@ -51,7 +49,6 @@ class RewardShaper:
             else:
                 penalty = -0.2
 
-            # Encourage exploration when PPO lacks confidence but classifier is strong
             if agent_confidence < 0.4 and confidence > 0.65:
                 exploration_reward = 0.3
                 if self.debug:
@@ -62,7 +59,6 @@ class RewardShaper:
                 logger.info(f"🚫 Skip penalty: {penalty:.3f}, conf={confidence:.2f}, setup={setup_quality:.2f}")
             return penalty
 
-        # Standard trade shaping
         pct_pnl = trade_result.get("pct_pnl", 0.0)
         duration = trade_result.get("duration", 1)
         was_successful = trade_result.get("was_successful", False)
@@ -71,36 +67,37 @@ class RewardShaper:
         assert -1000 < pct_pnl < 1000, f"Unrealistic pct_pnl={pct_pnl}, possible bug in trade_result"
 
         abs_pnl = abs(pct_pnl)
-        bonus_scaler = min(1.0, abs_pnl / 10.0)
+
+        # 🛠 More aggressive bonus scaling for large wins
+        bonus_scaler = min(1.2, abs_pnl / 8.0) if pct_pnl > 0 else min(1.0, abs_pnl / 12.0)
 
         confidence = classifier_output.get("confidence", 0.5)
         entropy = classifier_output.get("entropy", 0.0)
 
-        base_reward = np.tanh(pct_pnl / 30.0)
-        duration_penalty = -0.015 * math.log1p(duration)
+        # 🧠 Boost base reward for small-medium wins
+        base_reward = np.tanh(pct_pnl / 15.0)
+        duration_penalty = -0.012 * math.log1p(duration)
         reward = base_reward + duration_penalty
 
         if pct_pnl < -20:
             logger.warning(f"⚠️ Severe loss: pct_pnl={pct_pnl:.2f} → Applying strong penalty")
-            reward -= (abs(pct_pnl) / 15.0)  # was /20
+            reward -= (abs(pct_pnl) / 20.0)
 
-        # Classifier shaping
-        confidence_bonus = (confidence - 0.5) * 2.5 if was_successful and confidence > 0.55 else 0.0
-        entropy_penalty = -entropy * 0.4
+        confidence_bonus = (confidence - 0.5) * 2.8 if was_successful and confidence > 0.55 else 0.0
+        entropy_penalty = -entropy * 0.3
+
         classifier_shaping = confidence_bonus + entropy_penalty
-
         regime_bonus = 0.1 if regime == "bull" else -0.1 if regime == "bear" else 0.0
 
-        # Streak
         streak_bonus = 0.0
         if was_successful:
             self.win_streak += 1
             self.loss_streak = 0
-            streak_bonus += min(self.win_streak, 3) * 0.3
+            streak_bonus += min(self.win_streak, 4) * 0.25
         else:
             self.loss_streak += 1
             self.win_streak = 0
-            streak_bonus -= min(self.loss_streak, 3) * 0.2
+            streak_bonus -= min(self.loss_streak, 4) * 0.2
 
         self.reward_history.append(reward)
         if len(self.reward_history) > self.max_history:
@@ -108,35 +105,33 @@ class RewardShaper:
         sharpe_boost = 0.0
         if len(self.reward_history) >= 10:
             returns = np.array(self.reward_history)
-            mean_r = np.mean(returns)
-            std_r = np.std(returns) + 1e-6
-            sharpe = mean_r / std_r
+            sharpe = np.mean(returns) / (np.std(returns) + 1e-6)
             if sharpe < 0.5:
-                sharpe_boost = 0.8 * (0.5 - sharpe)
+                sharpe_boost = 0.5 * (0.5 - sharpe)
 
         drawdown = trade_result.get("max_drawdown", 0.0)
-        risk_penalty = -0.5 * (drawdown / (abs(pct_pnl) + 5.0))
+        risk_penalty = -0.4 * (drawdown / (abs(pct_pnl) + 5.0))
 
-        entry_timing_bonus = (trade_result.get("entry_quality", 0.5) - 0.5) * 2.0  # was 1.5
+        entry_timing_bonus = (trade_result.get("entry_quality", 0.5) - 0.5) * 1.6
         rrr = trade_result.get("risk_reward_ratio", 1.0)
-        rrr_bonus = np.tanh(rrr - 1.0) * 0.8
+        rrr_bonus = np.tanh(rrr - 1.0) * 0.7
 
         confidence_alignment_penalty = 0.0
         if confidence < 0.55 and was_successful:
-            confidence_alignment_penalty = -0.3
+            confidence_alignment_penalty = -0.2
         elif confidence > 0.7 and not was_successful:
             confidence_alignment_penalty = -0.5
 
-        setup_bonus = (trade_result.get("setup_quality", 0.5) - 0.5) * 1.0
+        setup_bonus = (trade_result.get("setup_quality", 0.5) - 0.5) * 1.2
         exploration_bonus = trade_result.get("exploration_bonus", 0.0)
-        trades_today = trade_result.get("trades_today", 0)
-        trade_count_bonus = 0.4 if 2 <= trades_today <= 6 else -0.2 if trades_today == 0 or trades_today > 8 else 0.0
-        missed_opportunity_penalty = -0.5 if trade_result.get("skipped_strong_signal", False) else 0.0
-        direction_bonus = 0.4 if trade_result.get("direction_correct", None) is True else -0.4 if trade_result.get("direction_correct", None) is False else 0.0
-        speed_bonus = 0.5 * math.exp(-trade_result.get("time_to_target", 30) / 20)
 
-        # Agent shaping
-        agent_conf_penalty = -0.6 if agent_confidence > 0.8 and not was_successful else 0.3 if agent_confidence > 0.8 and was_successful else 0.0
+        trades_today = trade_result.get("trades_today", 0)
+        trade_count_bonus = 0.3 if 2 <= trades_today <= 6 else -0.2 if trades_today == 0 or trades_today > 8 else 0.0
+        missed_opportunity_penalty = -0.5 if trade_result.get("skipped_strong_signal", False) else 0.0
+        direction_bonus = 0.3 if trade_result.get("direction_correct", None) is True else -0.3 if trade_result.get("direction_correct", None) is False else 0.0
+        speed_bonus = 0.4 * math.exp(-trade_result.get("time_to_target", 30) / 25)
+
+        agent_conf_penalty = -0.5 if agent_confidence > 0.8 and not was_successful else 0.2 if agent_confidence > 0.8 and was_successful else 0.0
         agent_classifier_agreement = 0.4 if agent_confidence > 0.75 and confidence > 0.75 and was_successful else -0.4 if agent_confidence > 0.75 and confidence > 0.75 else 0.0
 
         bonus_total = bonus_scaler * (
@@ -179,15 +174,13 @@ class RewardShaper:
             logger.info(f"  agent_conf_penalty={agent_conf_penalty:.4f}, agent_classifier_agreement={agent_classifier_agreement:.4f}")
             logger.info(f"  total_reward={total_reward:.4f}")
 
-        # Final safety clamps
+        # 🧯 Reward clamps for stability
         if pct_pnl <= -20.0:
             logger.warning(f"❌ Forcing reward cap for severe loss: {pct_pnl:.2f}")
             total_reward = min(total_reward, -2.0)
         elif -20.0 < pct_pnl < -2.0 and total_reward > 0:
-            logger.warning(f"⚠️ Moderate loss with positive reward → Clamping to 0")
             total_reward = min(total_reward, 0.0)
         if pct_pnl > 1.5 and total_reward < 0:
-            logger.warning(f"⚠️ Positive trade with negative reward → Clamping to 0")
             total_reward = max(total_reward, 0.0)
 
         return np.clip(total_reward, -10.0, 10.0)
